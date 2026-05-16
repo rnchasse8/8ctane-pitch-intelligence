@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>8ctane — Bulk Outing Import</title>
+<link rel="stylesheet" href="style.css">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<style>
+.import-page { max-width: 680px; margin: 3rem auto; padding: 0 1.5rem; }
+.import-title { font-family:'Barlow Condensed',sans-serif; font-size:28px; font-weight:800; margin-bottom:.25rem; }
+.import-sub { font-size:13px; color:var(--muted); margin-bottom:2rem; line-height:1.6; }
+.outing-import-row {
+  background: var(--surface); border:1px solid var(--border); border-radius:7px;
+  padding:.875rem 1.25rem; margin-bottom:.5rem;
+  display:flex; align-items:center; justify-content:space-between; gap:1rem;
+}
+.outing-import-row.done   { border-left:3px solid var(--good); }
+.outing-import-row.error  { border-left:3px solid var(--danger); }
+.outing-import-row.active { border-left:3px solid var(--cyan); }
+.outing-import-left { display:flex; align-items:center; gap:12px; }
+.outing-import-date { font-family:'DM Mono',monospace; font-size:12px; color:var(--cyan); min-width:90px; }
+.outing-import-opp  { font-family:'Barlow Condensed',sans-serif; font-size:16px; font-weight:700; }
+.outing-import-meta { font-size:11px; color:var(--muted); }
+.outing-import-status { font-family:'DM Mono',monospace; font-size:11px; }
+.status-pending { color:var(--muted2); }
+.status-saving  { color:var(--cyan); }
+.status-done    { color:var(--good); }
+.status-error   { color:var(--danger); }
+.progress-bar-wrap { background:var(--border); border-radius:3px; height:6px; margin:1.5rem 0; overflow:hidden; }
+.progress-bar-fill { height:6px; background:var(--cyan); border-radius:3px; transition:width .3s; }
+.import-actions { display:flex; gap:.75rem; margin-bottom:1.5rem; align-items:center; }
+.athlete-select { background:var(--surface2); border:1px solid var(--border2); color:var(--text); font-family:'Barlow',sans-serif; font-size:13px; padding:8px 12px; border-radius:5px; outline:none; flex:1; }
+.athlete-select:focus { border-color:var(--cyan); }
+.result-summary { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.25rem; margin-top:1rem; display:none; }
+.result-summary.show { display:block; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="header-left">
+      <a href="index.html"><img src="logo.png" alt="8ctane Baseball" class="nav-logo"></a>
+      <span class="nav-divider"></span>
+      <span class="nav-product">Bulk Import</span>
+    </div>
+    <div class="header-right">
+      <a href="athletes.html" class="btn-ghost">← Athletes</a>
+    </div>
+  </div>
+</header>
+
+<div class="import-page">
+  <div class="import-title">Bulk Outing Import</div>
+  <p class="import-sub">
+    Importing <strong id="outing-count">8 outings</strong> for <strong>Thomas Harrington</strong>
+    — 2026 season (Mar 31 – May 13). Select the athlete to save to, then click Import All.
+  </p>
+
+  <div class="import-actions">
+    <select class="athlete-select" id="athlete-select">
+      <option value="">Loading athletes...</option>
+    </select>
+    <button class="btn-primary" id="btn-import" onclick="startImport()" disabled style="opacity:.4">Import All Outings</button>
+  </div>
+
+  <div class="progress-bar-wrap" id="progress-wrap" style="display:none">
+    <div class="progress-bar-fill" id="progress-bar" style="width:0%"></div>
+  </div>
+
+  <div id="outing-rows"></div>
+
+  <div class="result-summary" id="result-summary">
+    <div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;margin-bottom:.5rem" id="result-title"></div>
+    <div style="font-size:13px;color:var(--muted)" id="result-body"></div>
+    <div style="margin-top:1rem;display:flex;gap:.75rem">
+      <a href="athletes.html" class="btn-primary">View in Athletes →</a>
+    </div>
+  </div>
+</div>
+
+<script>
+const OUTINGS = [{"date":"2026-03-31","opponent":"COL","total_pitches":76,"whiffs":14,"calledStrikes":0,"walks":2,"ks":2,"avgEV":87.3,"hardHitPct":38.5,"pitchMap":{"FF":{"count":22,"whiffs":2,"cstrikes":3,"hip":3,"avgVelo":92.1,"peakVelo":93.8,"whiffPct":9.1,"cswPct":22.7,"avgXwoba":0.312,"avgEV":88.4,"avgIVB":1.24,"avgHB":-1.02,"avgVAA":-4.8,"avgHAA":1.1},"ST":{"count":18,"whiffs":6,"cstrikes":1,"hip":2,"avgVelo":81.4,"peakVelo":83.1,"whiffPct":33.3,"cswPct":38.9,"avgXwoba":0.198,"avgEV":82.1,"avgIVB":0.48,"avgHB":1.18,"avgVAA":-5.9,"avgHAA":-1.3},"FS":{"count":12,"whiffs":2,"cstrikes":1,"hip":2,"avgVelo":86.2,"peakVelo":88.1,"whiffPct":16.7,"cswPct":25.0,"avgXwoba":0.284,"avgEV":84.2,"avgIVB":0.31,"avgHB":-0.78,"avgVAA":-5.2,"avgHAA":0.8},"FC":{"count":10,"whiffs":1,"cstrikes":2,"hip":1,"avgVelo":87.4,"peakVelo":89.2,"whiffPct":10.0,"cswPct":30.0,"avgXwoba":0.201,"avgEV":86.1,"avgIVB":0.68,"avgHB":0.12,"avgVAA":-4.9,"avgHAA":0.2},"CU":{"count":8,"whiffs":2,"cstrikes":1,"hip":1,"avgVelo":80.1,"peakVelo":81.4,"whiffPct":25.0,"cswPct":37.5,"avgXwoba":0.142,"avgEV":81.3,"avgIVB":-0.88,"avgHB":0.94,"avgVAA":-6.4,"avgHAA":-1.1},"SL":{"count":4,"whiffs":1,"cstrikes":0,"hip":1,"avgVelo":82.8,"peakVelo":83.4,"whiffPct":25.0,"cswPct":25.0,"avgXwoba":0.318,"avgEV":88.2,"avgIVB":0.14,"avgHB":0.22,"avgVAA":-5.6,"avgHAA":-0.4},"SI":{"count":2,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":93.2,"peakVelo":93.6,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":0.62,"avgHB":-0.54,"avgVAA":-4.6,"avgHAA":0.6}}},{"date":"2026-04-05","opponent":"COL","total_pitches":61,"whiffs":12,"calledStrikes":0,"walks":1,"ks":3,"avgEV":86.8,"hardHitPct":35.2,"pitchMap":{"FF":{"count":17,"whiffs":1,"cstrikes":3,"hip":2,"avgVelo":92.4,"peakVelo":94.1,"whiffPct":5.9,"cswPct":23.5,"avgXwoba":0.388,"avgEV":91.2,"avgIVB":1.31,"avgHB":-1.08,"avgVAA":-4.7,"avgHAA":1.2},"ST":{"count":16,"whiffs":5,"cstrikes":2,"hip":2,"avgVelo":81.8,"peakVelo":83.4,"whiffPct":31.3,"cswPct":43.8,"avgXwoba":0.214,"avgEV":83.4,"avgIVB":0.44,"avgHB":1.21,"avgVAA":-5.8,"avgHAA":-1.4},"FS":{"count":10,"whiffs":2,"cstrikes":1,"hip":2,"avgVelo":86.4,"peakVelo":87.8,"whiffPct":20.0,"cswPct":30.0,"avgXwoba":0.312,"avgEV":85.1,"avgIVB":0.28,"avgHB":-0.81,"avgVAA":-5.3,"avgHAA":0.7},"FC":{"count":8,"whiffs":1,"cstrikes":1,"hip":1,"avgVelo":87.6,"peakVelo":88.9,"whiffPct":12.5,"cswPct":25.0,"avgXwoba":0.188,"avgEV":84.8,"avgIVB":0.71,"avgHB":0.09,"avgVAA":-5.0,"avgHAA":0.1},"CU":{"count":6,"whiffs":2,"cstrikes":1,"hip":0,"avgVelo":80.4,"peakVelo":81.8,"whiffPct":33.3,"cswPct":50.0,"avgXwoba":null,"avgEV":null,"avgIVB":-0.91,"avgHB":0.98,"avgVAA":-6.5,"avgHAA":-1.2},"SL":{"count":2,"whiffs":1,"cstrikes":0,"hip":0,"avgVelo":82.6,"peakVelo":83.1,"whiffPct":50.0,"cswPct":50.0,"avgXwoba":null,"avgEV":null,"avgIVB":0.11,"avgHB":0.19,"avgVAA":-5.7,"avgHAA":-0.3},"SI":{"count":2,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":93.4,"peakVelo":93.8,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":0.64,"avgHB":-0.51,"avgVAA":-4.5,"avgHAA":0.6}}},{"date":"2026-04-11","opponent":"LOU","total_pitches":83,"whiffs":18,"calledStrikes":0,"walks":3,"ks":7,"avgEV":85.9,"hardHitPct":32.1,"pitchMap":{"FF":{"count":22,"whiffs":2,"cstrikes":4,"hip":3,"avgVelo":92.7,"peakVelo":94.4,"whiffPct":9.1,"cswPct":27.3,"avgXwoba":0.341,"avgEV":89.8,"avgIVB":1.28,"avgHB":-1.11,"avgVAA":-4.7,"avgHAA":1.2},"ST":{"count":20,"whiffs":7,"cstrikes":2,"hip":2,"avgVelo":81.9,"peakVelo":83.8,"whiffPct":35.0,"cswPct":45.0,"avgXwoba":0.221,"avgEV":81.8,"avgIVB":0.46,"avgHB":1.24,"avgVAA":-5.9,"avgHAA":-1.4},"FS":{"count":14,"whiffs":3,"cstrikes":2,"hip":3,"avgVelo":86.6,"peakVelo":88.4,"whiffPct":21.4,"cswPct":35.7,"avgXwoba":0.298,"avgEV":83.6,"avgIVB":0.33,"avgHB":-0.82,"avgVAA":-5.2,"avgHAA":0.8},"FC":{"count":11,"whiffs":2,"cstrikes":2,"hip":1,"avgVelo":87.8,"peakVelo":89.4,"whiffPct":18.2,"cswPct":36.4,"avgXwoba":0.174,"avgEV":82.4,"avgIVB":0.69,"avgHB":0.11,"avgVAA":-5.0,"avgHAA":0.2},"CU":{"count":10,"whiffs":3,"cstrikes":1,"hip":1,"avgVelo":80.6,"peakVelo":82.1,"whiffPct":30.0,"cswPct":40.0,"avgXwoba":0.131,"avgEV":78.4,"avgIVB":-0.94,"avgHB":1.01,"avgVAA":-6.6,"avgHAA":-1.2},"SL":{"count":4,"whiffs":1,"cstrikes":0,"hip":1,"avgVelo":82.9,"peakVelo":83.6,"whiffPct":25.0,"cswPct":25.0,"avgXwoba":0.441,"avgEV":94.2,"avgIVB":0.12,"avgHB":0.21,"avgVAA":-5.6,"avgHAA":-0.4},"SI":{"count":2,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":93.6,"peakVelo":94.1,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":0.61,"avgHB":-0.53,"avgVAA":-4.6,"avgHAA":0.6}}},{"date":"2026-04-17","opponent":"OMA","total_pitches":84,"whiffs":16,"calledStrikes":0,"walks":2,"ks":4,"avgEV":88.1,"hardHitPct":41.2,"pitchMap":{"FF":{"count":24,"whiffs":2,"cstrikes":4,"hip":4,"avgVelo":92.3,"peakVelo":94.0,"whiffPct":8.3,"cswPct":25.0,"avgXwoba":0.398,"avgEV":92.4,"avgIVB":1.26,"avgHB":-1.06,"avgVAA":-4.8,"avgHAA":1.1},"ST":{"count":18,"whiffs":6,"cstrikes":1,"hip":2,"avgVelo":81.6,"peakVelo":83.2,"whiffPct":33.3,"cswPct":38.9,"avgXwoba":0.241,"avgEV":84.8,"avgIVB":0.43,"avgHB":1.19,"avgVAA":-5.9,"avgHAA":-1.3},"FS":{"count":14,"whiffs":2,"cstrikes":2,"hip":3,"avgVelo":86.3,"peakVelo":88.2,"whiffPct":14.3,"cswPct":28.6,"avgXwoba":0.441,"avgEV":88.2,"avgIVB":0.29,"avgHB":-0.79,"avgVAA":-5.3,"avgHAA":0.8},"FC":{"count":12,"whiffs":2,"cstrikes":2,"hip":2,"avgVelo":87.5,"peakVelo":89.1,"whiffPct":16.7,"cswPct":33.3,"avgXwoba":0.198,"avgEV":84.6,"avgIVB":0.66,"avgHB":0.08,"avgVAA":-5.1,"avgHAA":0.1},"CU":{"count":10,"whiffs":3,"cstrikes":1,"hip":1,"avgVelo":80.3,"peakVelo":81.7,"whiffPct":30.0,"cswPct":40.0,"avgXwoba":0.164,"avgEV":80.1,"avgIVB":-0.89,"avgHB":0.96,"avgVAA":-6.5,"avgHAA":-1.1},"SL":{"count":4,"whiffs":1,"cstrikes":0,"hip":1,"avgVelo":82.7,"peakVelo":83.3,"whiffPct":25.0,"cswPct":25.0,"avgXwoba":0.312,"avgEV":86.8,"avgIVB":0.13,"avgHB":0.18,"avgVAA":-5.7,"avgHAA":-0.3},"SI":{"count":2,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":93.3,"peakVelo":93.7,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":0.63,"avgHB":-0.52,"avgVAA":-4.6,"avgHAA":0.6}}},{"date":"2026-04-24","opponent":"STP","total_pitches":82,"whiffs":19,"calledStrikes":0,"walks":3,"ks":7,"avgEV":84.6,"hardHitPct":28.8,"pitchMap":{"FF":{"count":21,"whiffs":2,"cstrikes":4,"hip":2,"avgVelo":92.8,"peakVelo":94.3,"whiffPct":9.5,"cswPct":28.6,"avgXwoba":0.281,"avgEV":87.4,"avgIVB":1.32,"avgHB":-1.14,"avgVAA":-4.6,"avgHAA":1.2},"ST":{"count":20,"whiffs":8,"cstrikes":1,"hip":2,"avgVelo":82.1,"peakVelo":83.9,"whiffPct":40.0,"cswPct":45.0,"avgXwoba":0.198,"avgEV":81.2,"avgIVB":0.51,"avgHB":1.28,"avgVAA":-5.8,"avgHAA":-1.4},"FS":{"count":14,"whiffs":3,"cstrikes":2,"hip":2,"avgVelo":86.8,"peakVelo":88.6,"whiffPct":21.4,"cswPct":35.7,"avgXwoba":0.312,"avgEV":84.4,"avgIVB":0.34,"avgHB":-0.84,"avgVAA":-5.2,"avgHAA":0.8},"FC":{"count":12,"whiffs":2,"cstrikes":2,"hip":1,"avgVelo":87.9,"peakVelo":89.6,"whiffPct":16.7,"cswPct":33.3,"avgXwoba":0.141,"avgEV":81.8,"avgIVB":0.72,"avgHB":0.13,"avgVAA":-4.9,"avgHAA":0.2},"CU":{"count":9,"whiffs":3,"cstrikes":1,"hip":0,"avgVelo":80.8,"peakVelo":82.2,"whiffPct":33.3,"cswPct":44.4,"avgXwoba":null,"avgEV":null,"avgIVB":-0.96,"avgHB":1.04,"avgVAA":-6.6,"avgHAA":-1.2},"SL":{"count":4,"whiffs":1,"cstrikes":0,"hip":0,"avgVelo":83.1,"peakVelo":83.8,"whiffPct":25.0,"cswPct":25.0,"avgXwoba":null,"avgEV":null,"avgIVB":0.16,"avgHB":0.24,"avgVAA":-5.5,"avgHAA":-0.4},"SI":{"count":2,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":93.8,"peakVelo":94.2,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":0.65,"avgHB":-0.55,"avgVAA":-4.5,"avgHAA":0.6}}},{"date":"2026-04-30","opponent":"MEM","total_pitches":85,"whiffs":17,"calledStrikes":0,"walks":1,"ks":6,"avgEV":86.4,"hardHitPct":34.1,"pitchMap":{"FF":{"count":23,"whiffs":2,"cstrikes":4,"hip":3,"avgVelo":92.5,"peakVelo":94.2,"whiffPct":8.7,"cswPct":26.1,"avgXwoba":0.328,"avgEV":90.1,"avgIVB":1.29,"avgHB":-1.09,"avgVAA":-4.7,"avgHAA":1.2},"ST":{"count":21,"whiffs":7,"cstrikes":2,"hip":2,"avgVelo":81.8,"peakVelo":83.6,"whiffPct":33.3,"cswPct":42.9,"avgXwoba":0.224,"avgEV":82.8,"avgIVB":0.47,"avgHB":1.22,"avgVAA":-5.9,"avgHAA":-1.3},"FS":{"count":14,"whiffs":3,"cstrikes":2,"hip":3,"avgVelo":86.5,"peakVelo":88.3,"whiffPct":21.4,"cswPct":35.7,"avgXwoba":0.388,"avgEV":87.1,"avgIVB":0.31,"avgHB":-0.81,"avgVAA":-5.3,"avgHAA":0.8},"FC":{"count":14,"whiffs":2,"cstrikes":3,"hip":2,"avgVelo":87.7,"peakVelo":89.3,"whiffPct":14.3,"cswPct":35.7,"avgXwoba":0.164,"avgEV":83.4,"avgIVB":0.68,"avgHB":0.10,"avgVAA":-5.0,"avgHAA":0.1},"CU":{"count":11,"whiffs":3,"cstrikes":1,"hip":1,"avgVelo":80.5,"peakVelo":81.9,"whiffPct":27.3,"cswPct":36.4,"avgXwoba":0.148,"avgEV":79.8,"avgIVB":-0.92,"avgHB":0.99,"avgVAA":-6.5,"avgHAA":-1.1},"SI":{"count":2,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":93.5,"peakVelo":93.9,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":0.62,"avgHB":-0.52,"avgVAA":-4.6,"avgHAA":0.6}}},{"date":"2026-05-07","opponent":"OMA","total_pitches":68,"whiffs":7,"calledStrikes":0,"walks":3,"ks":4,"avgEV":88.4,"hardHitPct":42.8,"pitchMap":{"FF":{"count":28,"whiffs":1,"cstrikes":3,"hip":2,"avgVelo":92.5,"peakVelo":93.7,"whiffPct":3.6,"cswPct":14.3,"avgXwoba":0.412,"avgEV":94.8,"avgIVB":1.22,"avgHB":-1.04,"avgVAA":-4.8,"avgHAA":1.1},"ST":{"count":14,"whiffs":4,"cstrikes":1,"hip":3,"avgVelo":81.4,"peakVelo":83.1,"whiffPct":28.6,"cswPct":35.7,"avgXwoba":0.312,"avgEV":86.4,"avgIVB":0.41,"avgHB":1.16,"avgVAA":-5.9,"avgHAA":-1.3},"FS":{"count":10,"whiffs":1,"cstrikes":1,"hip":3,"avgVelo":85.9,"peakVelo":87.4,"whiffPct":10.0,"cswPct":20.0,"avgXwoba":0.498,"avgEV":88.8,"avgIVB":0.28,"avgHB":-0.76,"avgVAA":-5.3,"avgHAA":0.7},"FC":{"count":8,"whiffs":0,"cstrikes":1,"hip":1,"avgVelo":87.2,"peakVelo":88.8,"whiffPct":0,"cswPct":12.5,"avgXwoba":0.184,"avgEV":82.1,"avgIVB":0.64,"avgHB":0.07,"avgVAA":-5.1,"avgHAA":0.1},"CU":{"count":8,"whiffs":1,"cstrikes":0,"hip":0,"avgVelo":80.2,"peakVelo":81.6,"whiffPct":12.5,"cswPct":12.5,"avgXwoba":null,"avgEV":null,"avgIVB":-0.86,"avgHB":0.93,"avgVAA":-6.4,"avgHAA":-1.1},"SL":{"count":0,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":null,"peakVelo":null,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":null,"avgHB":null,"avgVAA":null,"avgHAA":null},"SI":{"count":0,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":null,"peakVelo":null,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":null,"avgHB":null,"avgVAA":null,"avgHAA":null}}},{"date":"2026-05-13","opponent":"LOU","total_pitches":48,"whiffs":6,"calledStrikes":0,"walks":1,"ks":2,"avgEV":91.1,"hardHitPct":50.0,"pitchMap":{"FF":{"count":16,"whiffs":1,"cstrikes":3,"hip":2,"avgVelo":92.6,"peakVelo":94.1,"whiffPct":6.3,"cswPct":25.0,"avgXwoba":0.543,"avgEV":98.6,"avgIVB":1.31,"avgHB":-1.06,"avgVAA":-4.7,"avgHAA":1.2},"ST":{"count":15,"whiffs":4,"cstrikes":1,"hip":3,"avgVelo":81.7,"peakVelo":83.6,"whiffPct":26.7,"cswPct":33.3,"avgXwoba":0.493,"avgEV":83.9,"avgIVB":0.44,"avgHB":1.18,"avgVAA":-5.8,"avgHAA":-1.3},"FS":{"count":8,"whiffs":1,"cstrikes":1,"hip":3,"avgVelo":86.5,"peakVelo":88.0,"whiffPct":12.5,"cswPct":25.0,"avgXwoba":0.068,"avgEV":82.3,"avgIVB":0.29,"avgHB":-0.80,"avgVAA":-5.2,"avgHAA":0.8},"FC":{"count":4,"whiffs":0,"cstrikes":0,"hip":1,"avgVelo":87.7,"peakVelo":88.6,"whiffPct":0,"cswPct":0,"avgXwoba":0.403,"avgEV":105.0,"avgIVB":0.67,"avgHB":0.08,"avgVAA":-5.0,"avgHAA":0.1},"CU":{"count":3,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":80.6,"peakVelo":81.1,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":-0.88,"avgHB":0.96,"avgVAA":-6.4,"avgHAA":-1.1},"SL":{"count":1,"whiffs":0,"cstrikes":0,"hip":1,"avgVelo":82.4,"peakVelo":82.4,"whiffPct":0,"cswPct":0,"avgXwoba":0.849,"avgEV":110.6,"avgIVB":0.12,"avgHB":0.20,"avgVAA":-5.6,"avgHAA":-0.4},"SI":{"count":1,"whiffs":0,"cstrikes":0,"hip":0,"avgVelo":93.1,"peakVelo":93.1,"whiffPct":0,"cswPct":0,"avgXwoba":null,"avgEV":null,"avgIVB":0.62,"avgHB":-0.51,"avgVAA":-4.5,"avgHAA":0.6}}}];
+
+let SCRIPT_URL = localStorage.getItem('8ctane_script_url') || '';
+let athletes = [];
+let importRunning = false;
+
+async function api(action, body={}) {
+  const res = await fetch(`${SCRIPT_URL}?action=${action}`, {
+    method:'POST', body: JSON.stringify({action,...body})
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+async function init() {
+  if (!SCRIPT_URL) {
+    SCRIPT_URL = prompt('Paste your Apps Script URL:');
+    if (SCRIPT_URL) localStorage.setItem('8ctane_script_url', SCRIPT_URL);
+  }
+  try {
+    const { athletes: aths } = await api('getAthletes');
+    athletes = aths;
+    const sel = document.getElementById('athlete-select');
+    sel.innerHTML = '<option value="">Select athlete...</option>' +
+      aths.map(a => `<option value="${a.id}">${a.name} — ${a.team||''} ${a.level||''}</option>`).join('');
+    // Auto-select Thomas if present
+    const thomas = aths.find(a => a.name.toLowerCase().includes('harrington'));
+    if (thomas) { sel.value = thomas.id; checkReady(); }
+  } catch(e) {
+    document.getElementById('athlete-select').innerHTML = `<option>Error loading: ${e.message}</option>`;
+  }
+  renderRows();
+}
+
+function checkReady() {
+  const ready = document.getElementById('athlete-select').value;
+  const btn = document.getElementById('btn-import');
+  btn.disabled = !ready;
+  btn.style.opacity = ready ? '1' : '.4';
+}
+
+function renderRows() {
+  document.getElementById('outing-count').textContent = `${OUTINGS.length} outings`;
+  document.getElementById('outing-rows').innerHTML = OUTINGS.map((o,i) => {
+    const pitches = Object.keys(o.pitchMap).filter(pt=>o.pitchMap[pt].count>0);
+    const whiffRate = o.total_pitches ? (o.whiffs/o.total_pitches*100).toFixed(1) : '—';
+    return `<div class="outing-import-row" id="row-${i}">
+      <div class="outing-import-left">
+        <div class="outing-import-date">${o.date}</div>
+        <div>
+          <div class="outing-import-opp">vs. ${o.opponent}</div>
+          <div class="outing-import-meta">${o.total_pitches} pitches · ${whiffRate}% whiff · ${o.ks}K ${o.walks}BB · ${pitches.join(', ')}</div>
+        </div>
+      </div>
+      <div class="outing-import-status status-pending" id="status-${i}">Pending</div>
+    </div>`;
+  }).join('');
+}
+
+async function startImport() {
+  if (importRunning) return;
+  const athleteId = document.getElementById('athlete-select').value;
+  if (!athleteId) return;
+
+  importRunning = true;
+  document.getElementById('btn-import').disabled = true;
+  document.getElementById('btn-import').textContent = 'Importing...';
+  document.getElementById('progress-wrap').style.display = '';
+
+  let done = 0, errors = 0;
+
+  for (let i = 0; i < OUTINGS.length; i++) {
+    const o = OUTINGS[i];
+    const row = document.getElementById(`row-${i}`);
+    const status = document.getElementById(`status-${i}`);
+
+    row.className = 'outing-import-row active';
+    status.className = 'outing-import-status status-saving';
+    status.textContent = 'Saving...';
+
+    try {
+      // Filter out empty pitch types
+      const cleanMap = {};
+      Object.entries(o.pitchMap).forEach(([pt,s]) => { if (s.count > 0) cleanMap[pt] = s; });
+
+      await api('addOuting', {
+        athleteId,
+        date: o.date,
+        opponent: o.opponent,
+        notes: '',
+        pitchMap: cleanMap,
+        stats: {
+          total: o.total_pitches,
+          whiffs: o.whiffs,
+          calledStrikes: o.calledStrikes,
+          walks: o.walks,
+          ks: o.ks,
+          avgEV: o.avgEV,
+          hardHitPct: o.hardHitPct,
+        }
+      });
+
+      row.className = 'outing-import-row done';
+      status.className = 'outing-import-status status-done';
+      status.textContent = '✓ Saved';
+      done++;
+    } catch(e) {
+      row.className = 'outing-import-row error';
+      status.className = 'outing-import-status status-error';
+      status.textContent = '✗ Error';
+      errors++;
+    }
+
+    const pct = Math.round((i+1)/OUTINGS.length*100);
+    document.getElementById('progress-bar').style.width = pct+'%';
+
+    // Small delay to avoid rate limiting
+    await new Promise(r => setTimeout(r, 600));
+  }
+
+  const summary = document.getElementById('result-summary');
+  document.getElementById('result-title').textContent = errors === 0
+    ? `✓ All ${done} outings imported successfully`
+    : `${done} outings imported, ${errors} failed`;
+  document.getElementById('result-body').textContent =
+    `Thomas Harrington's 2026 season is now in the Athletes system. Head to his profile to see season overview, trends, and year-over-year comparisons.`;
+  summary.classList.add('show');
+  importRunning = false;
+}
+
+document.getElementById('athlete-select').addEventListener('change', checkReady);
+init();
+</script>
+
+<footer class="site-footer">
+  <img src="logo.png" alt="8ctane Baseball" style="height:28px;opacity:.5">
+  <span>Bulk Import · 8ctane Pitch Intelligence</span>
+</footer>
+
+</body>
+</html>
