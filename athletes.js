@@ -825,8 +825,6 @@ function renderYoY() {
     }
   });
 }
-  }
-  empty.style.display = 'none';
 
 /* ==================== COMPARE ==================== */
 function populateCompareSelectors() {
