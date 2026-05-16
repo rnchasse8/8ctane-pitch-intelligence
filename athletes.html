@@ -76,6 +76,7 @@
     <nav class="tabs" id="profile-tabs">
       <button class="tab active" data-ptab="overview">Season Overview</button>
       <button class="tab" data-ptab="trends">Trends</button>
+      <button class="tab" data-ptab="yoy">Year-over-Year</button>
       <button class="tab" data-ptab="outings">Outings</button>
       <button class="tab" data-ptab="compare">Compare</button>
     </nav>
@@ -126,6 +127,69 @@
           <div class="chart-wrap" style="height:220px"><canvas id="trend-mix-chart" role="img" aria-label="Mix trend"></canvas></div>
         </div>
       </div>
+    </div>
+
+    <!-- YEAR-OVER-YEAR -->
+    <div class="ptab-panel" id="ptab-yoy">
+
+      <div class="section">
+        <div class="section-hd">Performance by year — all pitches</div>
+        <div class="table-scroll">
+          <table class="data-table" id="yoy-perf-table">
+            <thead><tr>
+              <th>Pitch</th>
+              <th id="yoy-year-1-perf-hd"></th>
+              <th id="yoy-year-2-perf-hd"></th>
+              <th>Δ Whiff%</th>
+              <th>Δ CSW%</th>
+              <th>Δ xwOBA</th>
+            </tr></thead>
+            <tbody id="yoy-perf-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top:1.5rem">
+        <div class="section-hd">Pitch shape by year</div>
+        <div class="table-scroll">
+          <table class="data-table" id="yoy-shape-table">
+            <thead><tr>
+              <th>Pitch</th>
+              <th id="yoy-year-1-shape-hd"></th>
+              <th id="yoy-year-2-shape-hd"></th>
+              <th>Δ Velo</th>
+              <th>Δ IVB</th>
+              <th>Δ HB</th>
+              <th>Δ VAA</th>
+            </tr></thead>
+            <tbody id="yoy-shape-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="chart-grid-2" style="margin-top:1.5rem">
+        <div class="chart-card">
+          <div class="chart-card-title">Pitch mix — year over year</div>
+          <div class="chart-wrap" style="height:240px"><canvas id="yoy-mix-chart" role="img" aria-label="Pitch mix year over year"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">Whiff% — year over year</div>
+          <div class="chart-wrap" style="height:240px"><canvas id="yoy-whiff-chart" role="img" aria-label="Whiff% year over year"></canvas></div>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top:1.5rem">
+        <div class="section-hd">Movement plot — year over year</div>
+        <div class="chart-card" style="padding:1.25rem">
+          <div class="chart-wrap" style="height:400px"><canvas id="yoy-movement-chart" role="img" aria-label="Movement plot year over year"></canvas></div>
+          <div class="chart-footnote">Circles = earlier year · Triangles = later year · Hover for pitch + year</div>
+        </div>
+      </div>
+
+      <div id="yoy-empty" class="empty-state" style="display:none">
+        Add outings from at least two different seasons to see year-over-year comparisons.
+      </div>
+
     </div>
 
     <!-- OUTINGS LIST -->
