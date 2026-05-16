@@ -175,21 +175,15 @@
     <!-- MOVEMENT -->
     <div class="tab-panel" id="panel-movement">
       <div class="section">
-        <div class="section-hd">Movement plot — pfx_x vs pfx_z (pitcher's perspective)</div>
+        <div class="section-hd">Movement plot — horizontal break vs. induced vertical break</div>
         <div class="chart-card" style="padding:1.25rem">
           <div class="chart-wrap" style="height:420px"><canvas id="movement-chart" role="img" aria-label="Movement scatter plot by pitch type"></canvas></div>
-          <div class="chart-footnote">Arm-side = positive pfx_x (right for RHP) · Rise = positive pfx_z · Each dot = one pitch</div>
+          <div class="chart-footnote">Arm-side = positive HB (right for RHP) · Rise = positive IVB · Each dot = one pitch · Hover for values</div>
         </div>
       </div>
-      <div class="chart-grid-2" style="margin-top:1rem">
-        <div class="chart-card">
-          <div class="chart-card-title">Avg horizontal break by pitch</div>
-          <div class="chart-wrap" style="height:200px"><canvas id="hb-chart" role="img" aria-label="Average horizontal break by pitch"></canvas></div>
-        </div>
-        <div class="chart-card">
-          <div class="chart-card-title">Avg vertical break by pitch</div>
-          <div class="chart-wrap" style="height:200px"><canvas id="vb-chart" role="img" aria-label="Average vertical break by pitch"></canvas></div>
-        </div>
+      <div class="section" style="margin-top:1rem">
+        <div class="section-hd">Pitch movement & approach averages</div>
+        <div id="movement-stat-cards" class="mov-cards-wrap"></div>
       </div>
     </div>
 

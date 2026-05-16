@@ -3,6 +3,38 @@
    app.js
    ============================================= */
 
+/* ==================== BASELINES ==================== */
+let MLB_BASELINES = {};
+
+fetch('baselines.json')
+  .then(r => r.json())
+  .then(data => { MLB_BASELINES = data; })
+  .catch(() => { console.warn('baselines.json not found — running without MLB comparisons.'); });
+
+function getBaseline(pt, metric) {
+  const b = MLB_BASELINES[pt] || MLB_BASELINES[pt === 'FA' ? 'FF' : null];
+  return b ? b[metric] : null;
+}
+
+function deltaTag(val, baseline, higherIsBetter) {
+  if (baseline === null || val === null || isNaN(val) || isNaN(baseline)) return '';
+  const diff = val - baseline;
+  const pct = Math.abs(diff).toFixed(1);
+  if (Math.abs(diff) < 0.5) return `<span class="delta neutral">~avg</span>`;
+  const better = higherIsBetter ? diff > 0 : diff < 0;
+  const arrow = diff > 0 ? '▲' : '▼';
+  const cls = better ? 'delta-good' : 'delta-bad';
+  return `<span class="${cls}">${arrow}${pct}</span>`;
+}
+
+function veloDelta(val, baseline) {
+  if (!baseline || !val || isNaN(val)) return '';
+  const diff = (parseFloat(val) - baseline).toFixed(1);
+  const cls = diff >= 0 ? 'delta-good' : 'delta-bad';
+  const arrow = diff >= 0 ? '▲' : '▼';
+  return `<span class="${cls}">${arrow}${Math.abs(diff)}</span>`;
+}
+
 const PITCH_COLORS = {
   FF:'#378ADD', FA:'#378ADD', SI:'#888780', FC:'#534AB7',
   SL:'#E24B4A', ST:'#D85A30', CU:'#1D9E75', KC:'#1D9E75',
@@ -267,32 +299,67 @@ function renderPlayerHeader() {
 function renderArsenal() {
   const { pitchMap, total } = singleData;
   const sorted = sortedPitches(pitchMap);
+  const hasBaselines = Object.keys(MLB_BASELINES).length > 0;
+
+  // Update table headers to include MLB avg columns if baselines loaded
+  document.querySelector('#arsenal-table thead tr').innerHTML = hasBaselines
+    ? `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th>
+       <th>Whiff%</th><th>MLB avg</th><th>CSW%</th><th>MLB avg</th>
+       <th>xwOBA</th><th>MLB avg</th><th>Avg EV</th>`
+    : `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th>
+       <th>Whiff%</th><th>CSW%</th><th>Ball%</th><th>HIP</th><th>Avg EV</th><th>xwOBA</th>`;
+
   document.getElementById('arsenal-tbody').innerHTML = sorted.map(([pt, s]) => {
     const usagePct = (s.count/total*100).toFixed(1);
     const avgV  = s.velos.length ? avg(s.velos).toFixed(1) : '—';
-    const whiff = s.count ? (s.whiffs/s.count*100).toFixed(0) : 0;
-    const csw   = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(0) : 0;
+    const whiff = s.count ? (s.whiffs/s.count*100).toFixed(1) : 0;
+    const csw   = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0;
     const ball  = s.count ? (s.balls/s.count*100).toFixed(0) : 0;
     const avgEV = s.launch_speeds.length ? avg(s.launch_speeds).toFixed(1) : '—';
     const xwoba = s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—';
     const wC  = whiff >= 30 ? 'v-good' : whiff >= 15 ? 'v-warn' : 'v-bad';
     const cC  = csw >= 30 ? 'v-good' : csw >= 20 ? 'v-warn' : 'v-bad';
-    const xwC = xwoba !== '—' ? (xwoba <= .250 ? 'v-good' : xwoba <= .350 ? 'v-warn' : 'v-bad') : 'v-num';
-    return `<tr>
-      <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
-      <td class="v-num">${s.count}</td>
-      <td><div class="usage-bar-wrap">
-        <div class="usage-bar-bg"><div class="usage-bar-fill" style="width:${usagePct}%;background:${pc(pt)}"></div></div>
-        <span class="v-num" style="font-size:11px">${usagePct}%</span>
-      </div></td>
-      <td class="v-num">${avgV}</td>
-      <td class="${wC}">${whiff}%</td>
-      <td class="${cC}">${csw}%</td>
-      <td class="v-num">${ball}%</td>
-      <td class="v-num">${s.hip}</td>
-      <td class="v-num">${avgEV}</td>
-      <td class="${xwC}">${xwoba}</td>
-    </tr>`;
+    const xwC = xwoba !== '—' ? (parseFloat(xwoba) <= .250 ? 'v-good' : parseFloat(xwoba) <= .350 ? 'v-warn' : 'v-bad') : 'v-num';
+
+    const mlbWhiff   = getBaseline(pt, 'whiff_pct');
+    const mlbCsw     = getBaseline(pt, 'csw_pct');
+    const mlbXwoba   = getBaseline(pt, 'avg_xwoba');
+    const mlbVelo    = getBaseline(pt, 'avg_velo');
+
+    if (hasBaselines) {
+      return `<tr>
+        <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
+        <td class="v-num">${s.count}</td>
+        <td><div class="usage-bar-wrap">
+          <div class="usage-bar-bg"><div class="usage-bar-fill" style="width:${usagePct}%;background:${pc(pt)}"></div></div>
+          <span class="v-num" style="font-size:11px">${usagePct}%</span>
+        </div></td>
+        <td class="v-num">${avgV} ${veloDelta(avgV, mlbVelo)}</td>
+        <td class="${wC}">${whiff}%</td>
+        <td class="mlb-avg">${mlbWhiff !== null ? mlbWhiff+'%' : '—'} ${deltaTag(parseFloat(whiff), mlbWhiff, true)}</td>
+        <td class="${cC}">${csw}%</td>
+        <td class="mlb-avg">${mlbCsw !== null ? mlbCsw+'%' : '—'} ${deltaTag(parseFloat(csw), mlbCsw, true)}</td>
+        <td class="${xwC}">${xwoba}</td>
+        <td class="mlb-avg">${mlbXwoba !== null ? mlbXwoba : '—'} ${deltaTag(parseFloat(xwoba), mlbXwoba, false)}</td>
+        <td class="v-num">${avgEV}</td>
+      </tr>`;
+    } else {
+      return `<tr>
+        <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
+        <td class="v-num">${s.count}</td>
+        <td><div class="usage-bar-wrap">
+          <div class="usage-bar-bg"><div class="usage-bar-fill" style="width:${usagePct}%;background:${pc(pt)}"></div></div>
+          <span class="v-num" style="font-size:11px">${usagePct}%</span>
+        </div></td>
+        <td class="v-num">${avgV}</td>
+        <td class="${wC}">${whiff}%</td>
+        <td class="${cC}">${csw}%</td>
+        <td class="v-num">${ball}%</td>
+        <td class="v-num">${s.hip}</td>
+        <td class="v-num">${avgEV}</td>
+        <td class="${xwC}">${xwoba}</td>
+      </tr>`;
+    }
   }).join('');
 
   // Donut
@@ -404,50 +471,105 @@ function renderCounts() {
 }
 
 /* ---- Movement ---- */
+/* VAA / HAA computed at plate using kinematic equations
+   vx_f = vx0 + ax*t,  vy_f = vy0 + ay*t,  vz_f = vz0 + az*t
+   t ≈ distance_to_plate / |vy0|  (60.5ft - extension) */
+function computeApproachAngles(r) {
+  const vx0 = pf(r.vx0), vy0 = pf(r.vy0), vz0 = pf(r.vz0);
+  const ax  = pf(r.ax),  ay  = pf(r.ay),  az  = pf(r.az);
+  const ext = pf(r.release_extension) || 6.0;
+  if (!vy0) return { vaa: null, haa: null };
+  const dist = 60.5 - ext;           // ft from release to plate
+  const t    = dist / Math.abs(vy0); // time in seconds
+  const vxf  = vx0 + ax * t;
+  const vyf  = vy0 + ay * t;
+  const vzf  = vz0 + az * t;
+  const vaa  = Math.atan(vzf / Math.abs(vyf)) * (180 / Math.PI);
+  const haa  = Math.atan(vxf / Math.abs(vyf)) * (180 / Math.PI);
+  return { vaa: +vaa.toFixed(1), haa: +haa.toFixed(1) };
+}
+
 function renderMovement() {
   const { rows, pitchMap } = singleData;
-  const allTypes = Object.keys(pitchMap);
+  const sorted = sortedPitches(pitchMap);
 
+  // Scatter plot — clean, centered axes
   destroyChart('movement-chart');
   charts['movement-chart'] = new Chart(document.getElementById('movement-chart'), {
     type: 'scatter',
-    data: { datasets: allTypes.map(pt => ({
+    data: { datasets: sorted.map(([pt]) => ({
       label: pn(pt),
-      data: rows.filter(r=>r._pt===pt&&r.pfx_x&&r.pfx_z).map(r=>({x:pf(r.pfx_x),y:pf(r.pfx_z)})),
-      backgroundColor: pc(pt)+'bb', pointRadius:5, pointHoverRadius:7,
+      data: rows.filter(r => r._pt===pt && r.pfx_x && r.pfx_z)
+                .map(r => ({ x: pf(r.pfx_x), y: pf(r.pfx_z) })),
+      backgroundColor: pc(pt) + 'bb',
+      pointRadius: 5, pointHoverRadius: 8,
     }))},
     options: {
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ display:true, position:'right', labels:{ color:'#72747c', font:{size:11,family:'DM Mono'}, padding:10 } } },
-      scales:{
-        x:{ title:{display:true,text:'Horizontal break (pfx_x)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' },
-        y:{ title:{display:true,text:'Vertical break (pfx_z)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' }
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'right', labels: { color:'#72747c', font:{ size:11, family:'DM Mono' }, padding:12, boxWidth:10 } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: HB ${ctx.parsed.x.toFixed(2)}, IVB ${ctx.parsed.y.toFixed(2)}` } }
+      },
+      scales: {
+        x: { title:{ display:true, text:'Horizontal break (in)', color:'#72747c', font:{size:11} }, ticks:{ color:'#72747c', font:{size:10} }, grid:{ color:'rgba(255,255,255,0.05)' }, position:'center' },
+        y: { title:{ display:true, text:'Induced vertical break (in)', color:'#72747c', font:{size:11} }, ticks:{ color:'#72747c', font:{size:10} }, grid:{ color:'rgba(255,255,255,0.05)' }, position:'center' }
       }
     }
   });
 
-  // Avg HB / VB bars
-  const sorted = sortedPitches(pitchMap);
-  const hbData = sorted.map(([,s])=>+avg(s.pfx_xs).toFixed(2));
-  const vbData = sorted.map(([,s])=>+avg(s.pfx_zs).toFixed(2));
-  const labels = sorted.map(([pt])=>pn(pt));
-  const colors = sorted.map(([pt])=>pc(pt));
-
-  destroyChart('hb-chart');
-  charts['hb-chart'] = new Chart(document.getElementById('hb-chart'), {
-    type: 'bar',
-    data: { labels, datasets:[{ data:hbData, backgroundColor:colors, borderRadius:3, borderSkipped:false }] },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
-      scales:{ y:{ ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.04)'}}, x:{ticks:{color:'#72747c',font:{size:10}},grid:{display:false}} } }
+  // Build per-pitch stat objects with VAA/HAA
+  const pitchStats = sorted.map(([pt, s]) => {
+    const pitchRows = rows.filter(r => r._pt === pt);
+    const angles = pitchRows.map(computeApproachAngles).filter(a => a.vaa !== null);
+    const avgVAA = angles.length ? avg(angles.map(a => a.vaa)) : null;
+    const avgHAA = angles.length ? avg(angles.map(a => a.haa)) : null;
+    const peakVelo = s.velos.length ? Math.max(...s.velos) : null;
+    return {
+      pt,
+      avgVelo:  s.velos.length    ? avg(s.velos).toFixed(1)   : '—',
+      peakVelo: peakVelo           ? peakVelo.toFixed(1)        : '—',
+      ivb:      s.pfx_zs.length   ? avg(s.pfx_zs).toFixed(1)  : '—',
+      hb:       s.pfx_xs.length   ? avg(s.pfx_xs).toFixed(1)  : '—',
+      vaa:      avgVAA !== null    ? avgVAA.toFixed(1)          : '—',
+      haa:      avgHAA !== null    ? avgHAA.toFixed(1)          : '—',
+    };
   });
 
-  destroyChart('vb-chart');
-  charts['vb-chart'] = new Chart(document.getElementById('vb-chart'), {
-    type: 'bar',
-    data: { labels, datasets:[{ data:vbData, backgroundColor:colors, borderRadius:3, borderSkipped:false }] },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
-      scales:{ y:{ ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.04)'}}, x:{ticks:{color:'#72747c',font:{size:10}},grid:{display:false}} } }
-  });
+  // Stat cards grid — one row per pitch
+  document.getElementById('movement-stat-cards').innerHTML = pitchStats.map(p => `
+    <div class="mov-pitch-row">
+      <div class="mov-pitch-label">
+        <span class="pitch-dot" style="background:${pc(p.pt)};width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:7px;vertical-align:middle"></span>
+        <span class="mov-pitch-name">${pn(p.pt)}</span>
+      </div>
+      <div class="mov-stat-group">
+        <div class="mov-stat">
+          <div class="mov-stat-val">${p.avgVelo}</div>
+          <div class="mov-stat-lbl">Avg velo</div>
+        </div>
+        <div class="mov-stat">
+          <div class="mov-stat-val">${p.peakVelo}</div>
+          <div class="mov-stat-lbl">Peak velo</div>
+        </div>
+        <div class="mov-stat">
+          <div class="mov-stat-val">${p.ivb}"</div>
+          <div class="mov-stat-lbl">IVB</div>
+        </div>
+        <div class="mov-stat">
+          <div class="mov-stat-val">${p.hb}"</div>
+          <div class="mov-stat-lbl">HB</div>
+        </div>
+        <div class="mov-stat">
+          <div class="mov-stat-val">${p.vaa}°</div>
+          <div class="mov-stat-lbl">VAA</div>
+        </div>
+        <div class="mov-stat">
+          <div class="mov-stat-val">${p.haa}°</div>
+          <div class="mov-stat-lbl">HAA</div>
+        </div>
+      </div>
+    </div>
+  `).join('');
 }
 
 /* ---- Hard Contact ---- */
@@ -514,20 +636,48 @@ function renderInsights() {
     const whiff   = s.count ? s.whiffs/s.count*100 : 0;
     const csw     = s.count ? (s.whiffs+s.cstrikes)/s.count*100 : 0;
     const avgXw   = s.xwobas.length ? avg(s.xwobas) : null;
-    const avgEV   = s.launch_speeds.length ? avg(s.launch_speeds) : null;
+
+    // Pull MLB baselines for this pitch type
+    const mlbWhiff  = getBaseline(pt, 'whiff_pct');
+    const mlbCsw    = getBaseline(pt, 'csw_pct');
+    const mlbXwoba  = getBaseline(pt, 'avg_xwoba');
+    const mlbVelo   = getBaseline(pt, 'avg_velo');
+    const avgV      = s.velos.length ? avg(s.velos) : null;
+
+    // Whiff vs MLB average
+    if (mlbWhiff && s.count >= 5) {
+      const diff = whiff - mlbWhiff;
+      if (diff >= 8)
+        insights.push({ type:'good', title:`${pn(pt)} — elite whiff rate`, body:`${whiff.toFixed(1)}% whiff vs. MLB avg ${mlbWhiff}% — ${diff.toFixed(1)}pp above average. This pitch is swing-and-miss at an elite level.` });
+      else if (diff <= -6 && (pt==='FF'||pt==='FA'||pt==='SI'))
+        insights.push({ type:'warn', title:`${pn(pt)} — below-avg whiff rate`, body:`${whiff.toFixed(1)}% vs. MLB avg ${mlbWhiff}%. Hitters are making contact on this pitch — use it as a tunnel/setup pitch rather than a finish pitch.` });
+      else if (diff <= -8)
+        insights.push({ type:'danger', title:`${pn(pt)} — low whiff rate`, body:`${whiff.toFixed(1)}% vs. MLB avg ${mlbWhiff}% (${Math.abs(diff).toFixed(1)}pp below). Evaluate whether this pitch belongs in the arsenal in two-strike counts.` });
+    }
+
+    // Velocity vs MLB average
+    if (mlbVelo && avgV && (pt==='FF'||pt==='FA'||pt==='SI')) {
+      const veloDiff = avgV - mlbVelo;
+      if (veloDiff <= -2)
+        insights.push({ type:'warn', title:`Below-avg ${pn(pt)} velocity`, body:`${avgV.toFixed(1)} mph vs. MLB avg ${mlbVelo} mph (${Math.abs(veloDiff).toFixed(1)} mph deficit). Must compensate with sequencing, tunneling, and secondary pitch quality.` });
+      else if (veloDiff >= 2)
+        insights.push({ type:'good', title:`Above-avg ${pn(pt)} velocity`, body:`${avgV.toFixed(1)} mph vs. MLB avg ${mlbVelo} mph (+${veloDiff.toFixed(1)} mph). Velocity is a weapon — use it to set up secondaries.` });
+    }
+
+    // xwOBA vs MLB average
+    if (mlbXwoba && avgXw && s.hip >= 3) {
+      const xwDiff = avgXw - mlbXwoba;
+      if (xwDiff <= -0.05)
+        insights.push({ type:'good', title:`${pn(pt)} — elite contact suppression`, body:`${avgXw.toFixed(3)} xwOBA vs. MLB avg ${mlbXwoba} — generating significantly weaker contact than league average.` });
+      else if (xwDiff >= 0.07)
+        insights.push({ type:'danger', title:`${pn(pt)} — contact quality concern`, body:`${avgXw.toFixed(3)} xwOBA vs. MLB avg ${mlbXwoba} (${xwDiff.toFixed(3)} above average). Hitters doing real damage — evaluate location and sequencing.` });
+    }
 
     if ((pt==='FF'||pt==='FA') && usage > 40)
       insights.push({ type:'warn', title:'4-seam overuse', body:`${usage.toFixed(0)}% usage on 4-seam is above optimal for a sequencing-based profile. Consider redistributing 10–15pp toward your best secondary offering to reduce predictability.` });
-    if ((pt==='FF'||pt==='FA') && whiff < 12)
-      insights.push({ type:'danger', title:'Low 4-seam whiff rate', body:`${whiff.toFixed(0)}% whiff on 4-seam is below average (MLB avg ~17%). This pitch is contact-prone — use it as a tunnel or setup pitch rather than a finish pitch.` });
-    if (whiff >= 35 && usage < 20)
-      insights.push({ type:'good', title:`${pn(pt)} is underused`, body:`${whiff.toFixed(0)}% whiff rate on just ${usage.toFixed(0)}% usage. This is your best swing-and-miss pitch — increase deployment across more counts, including 0-0 and 2-0.` });
-    if (whiff >= 30 && s.count >= 5)
-      insights.push({ type:'good', title:`${pn(pt)} — elite swing-and-miss`, body:`${whiff.toFixed(0)}% whiff / ${csw.toFixed(0)}% CSW. Trust this pitch in all counts including 3-2 and high-leverage situations.` });
-    if (avgXw && avgXw > .380 && s.hip > 2)
-      insights.push({ type:'danger', title:`${pn(pt)} contact quality concern`, body:`${avgXw.toFixed(3)} xwOBA on ${s.hip} balls in play. Hitters are doing damage — evaluate pitch location and sequencing context.` });
-    if (avgXw && avgXw < .200 && s.hip >= 2)
-      insights.push({ type:'good', title:`${pn(pt)} — elite contact suppression`, body:`${avgXw.toFixed(3)} xwOBA on contact. Generating weak contact consistently. Rely on this pitch in two-strike situations.` });
+
+    if (whiff >= 30 && usage < 20 && s.count >= 5)
+      insights.push({ type:'good', title:`${pn(pt)} is underused`, body:`${whiff.toFixed(1)}% whiff rate on just ${usage.toFixed(0)}% usage. This is your best swing-and-miss pitch — increase deployment across more counts, including 0-0 and 2-0.` });
   });
 
   const fp = countMap['0-0']||{};
