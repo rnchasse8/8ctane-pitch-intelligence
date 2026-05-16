@@ -659,212 +659,165 @@ async function confirmDeleteOuting(outingId, date) {
 
 /* ==================== YEAR-OVER-YEAR ==================== */
 function renderYoY() {
-  // Group outings by year
-  const byYear = {};
-  athleteOutings.forEach(o => {
-    const year = o.date ? o.date.substring(0, 4) : 'Unknown';
-    if (!byYear[year]) byYear[year] = [];
-    byYear[year].push(o);
-  });
-
-  const years = Object.keys(byYear).sort();
-
-  const empty = document.getElementById('yoy-empty');
-  if (years.length < 2) {
-    empty.style.display = '';
-    ['yoy-perf-table','yoy-shape-table'].forEach(id => document.getElementById(id).style.display = 'none');
-    ['yoy-mix-chart','yoy-whiff-chart','yoy-movement-chart'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.closest('.chart-card').style.display = 'none';
-    });
+  if (!athleteOutings.length) {
+    document.getElementById('yoy-empty').style.display = '';
     return;
   }
-  empty.style.display = 'none';
+  document.getElementById('yoy-empty').style.display = 'none';
 
-  // Build aggregated pitch map per year
-  function aggregateYear(outings) {
-    const map = {};
-    outings.forEach(o => {
-      let pm = {};
-      try { pm = typeof o.pitch_stats === 'object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json || '{}'); } catch(e) {}
-      Object.entries(pm).forEach(([pt, s]) => {
-        if (!map[pt]) map[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], ivbs:[], hbs:[], vaas:[], haas:[] };
-        const c = map[pt];
-        c.count      += (s.count     || 0);
-        c.whiffs     += (s.whiffs    || 0);
-        c.cstrikes   += (s.cstrikes  || 0);
-        c.hip        += (s.hip       || 0);
-        if (s.avgVelo)   c.velos.push(pf(s.avgVelo));
-        if (s.avgXwoba)  c.xwobas.push(pf(s.avgXwoba));
-        if (s.avgIVB)    c.ivbs.push(pf(s.avgIVB));
-        if (s.avgHB)     c.hbs.push(pf(s.avgHB));
-        if (s.avgVAA)    c.vaas.push(pf(s.avgVAA));
-        if (s.avgHAA)    c.haas.push(pf(s.avgHAA));
-      });
+  // Aggregate all outings into a single season pitch map
+  const combined = {};
+  athleteOutings.forEach(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    Object.entries(pm).forEach(([pt, s]) => {
+      if (!s.count || s.count === 0) return;
+      if (!combined[pt]) combined[pt] = { count:0, velos:[], peakVelos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, ivbs:[], hbs:[], vaas:[], haas:[] };
+      const c = combined[pt];
+      c.count    += s.count   || 0;
+      c.whiffs   += s.whiffs  || 0;
+      c.cstrikes += s.cstrikes|| 0;
+      c.hip      += s.hip     || 0;
+      if (s.avgVelo)   c.velos.push(pf(s.avgVelo));
+      if (s.peakVelo)  c.peakVelos.push(pf(s.peakVelo));
+      if (s.avgXwoba)  c.xwobas.push(pf(s.avgXwoba));
+      if (s.avgEV)     c.evs.push(pf(s.avgEV));
+      if (s.avgIVB)    c.ivbs.push(pf(s.avgIVB));
+      if (s.avgHB)     c.hbs.push(pf(s.avgHB));
+      if (s.avgVAA)    c.vaas.push(pf(s.avgVAA));
+      if (s.avgHAA)    c.haas.push(pf(s.avgHAA));
     });
-    return map;
-  }
+  });
 
-  const yearMaps = {};
-  years.forEach(y => { yearMaps[y] = aggregateYear(byYear[y]); });
+  const total = Object.values(combined).reduce((a,s)=>a+s.count, 0);
+  const sorted = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
 
-  // We only render two years for clarity — if more exist use first and last
-  const y1 = years[0];
-  const y2 = years[years.length - 1];
-  const m1 = yearMaps[y1];
-  const m2 = yearMaps[y2];
+  // ---- Shape stat cards (same layout as analyzer) ----
+  const shapeHeader = `<div class="mov-header-row">
+    <div class="mov-header-label">Pitch</div>
+    <div class="mov-header-stats">
+      <div class="mov-header-stat">Avg velo</div>
+      <div class="mov-header-stat">Peak velo</div>
+      <div class="mov-header-stat">IVB</div>
+      <div class="mov-header-stat">HB</div>
+      <div class="mov-header-stat">VAA</div>
+      <div class="mov-header-stat">HAA</div>
+    </div>
+  </div>`;
 
-  // All pitch types across both years
-  const allPT = [...new Set([...Object.keys(m1), ...Object.keys(m2)])]
-    .sort((a,b) => ((m2[b]?.count||0) + (m1[b]?.count||0)) - ((m2[a]?.count||0) + (m1[a]?.count||0)));
-
-  const t1 = Object.values(m1).reduce((a,s)=>a+s.count, 0);
-  const t2 = Object.values(m2).reduce((a,s)=>a+s.count, 0);
-
-  // Helper — get metric string
-  const ms = (map, pt, fn) => {
-    const s = map[pt];
-    if (!s) return '—';
-    return fn(s);
-  };
-
-  const whiffStr  = (map, pt) => ms(map, pt, s => s.count ? (s.whiffs/s.count*100).toFixed(1)+'%' : '—');
-  const cswStr    = (map, pt) => ms(map, pt, s => s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1)+'%' : '—');
-  const xwobaStr  = (map, pt) => ms(map, pt, s => s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—');
-  const veloStr   = (map, pt) => ms(map, pt, s => s.velos.length ? avg(s.velos).toFixed(1) : '—');
-  const ivbStr    = (map, pt) => ms(map, pt, s => s.ivbs.length ? avg(s.ivbs).toFixed(1)+'"' : '—');
-  const hbStr     = (map, pt) => ms(map, pt, s => s.hbs.length ? avg(s.hbs).toFixed(1)+'"' : '—');
-  const vaaStr    = (map, pt) => ms(map, pt, s => s.vaas.length ? avg(s.vaas).toFixed(1)+'°' : '—');
-  const usagePct  = (map, pt, total) => map[pt] && total ? (map[pt].count/total*100).toFixed(1)+'%' : '—';
-
-  function deltaCell(v1str, v2str, higherBetter, decimals=1) {
-    const v1 = parseFloat(v1str), v2 = parseFloat(v2str);
-    if (isNaN(v1) || isNaN(v2)) return '<td class="v-num">—</td>';
-    const d = +(v2 - v1).toFixed(decimals);
-    const better = higherBetter ? d > 0 : d < 0;
-    const cls = Math.abs(d) < 0.5 ? 'v-num' : better ? 'v-good' : 'v-bad';
-    const arrow = d > 0 ? '▲' : d < 0 ? '▼' : '';
-    return `<td class="${cls}">${arrow}${Math.abs(d)}</td>`;
-  }
+  const shapeRows = sorted.map(([pt, s]) => {
+    const avgV  = s.velos.length    ? avg(s.velos).toFixed(1)    : '—';
+    const pkV   = s.peakVelos.length? Math.max(...s.peakVelos).toFixed(1) : '—';
+    const ivb   = s.ivbs.length     ? avg(s.ivbs).toFixed(1)+'"' : '—';
+    const hb    = s.hbs.length      ? avg(s.hbs).toFixed(1)+'"'  : '—';
+    const vaa   = s.vaas.length     ? avg(s.vaas).toFixed(1)+'°' : '—';
+    const haa   = s.haas.length     ? avg(s.haas).toFixed(1)+'°' : '—';
+    return `<div class="mov-pitch-row">
+      <div class="mov-pitch-label">
+        <span class="pitch-dot" style="background:${pc(pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex-shrink:0"></span>
+        <span class="mov-pitch-name">${pn(pt)}</span>
+      </div>
+      <div class="mov-stat-group">
+        <div class="mov-stat"><div class="mov-stat-val">${avgV}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${pkV}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${ivb}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${hb}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${vaa}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${haa}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('metrics-shape-cards').innerHTML = shapeHeader + shapeRows;
 
   // ---- Performance table ----
-  document.getElementById('yoy-year-1-perf-hd').textContent = y1;
-  document.getElementById('yoy-year-2-perf-hd').textContent = y2;
+  document.getElementById('metrics-perf-body').innerHTML = sorted.map(([pt, s]) => {
+    const usagePct = total ? (s.count/total*100).toFixed(1) : 0;
+    const whiff    = s.count ? (s.whiffs/s.count*100).toFixed(1) : '—';
+    const csw      = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : '—';
+    const xwoba    = s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—';
+    const ev       = s.evs.length    ? avg(s.evs).toFixed(1) : '—';
+    const hhPct    = s.evs.length    ? (s.hardHits/s.evs.length*100).toFixed(0)+'%' : '—';
+    const mlbW     = MLB_BASELINE_REF[pt]?.whiff_pct;
+    const mlbC     = MLB_BASELINE_REF[pt]?.csw_pct;
+    const mlbX     = MLB_BASELINE_REF[pt]?.avg_xwoba;
+    const wC  = parseFloat(whiff) >= 30 ? 'v-good' : parseFloat(whiff) >= 15 ? 'v-warn' : 'v-bad';
+    const cC  = parseFloat(csw) >= 30 ? 'v-good' : parseFloat(csw) >= 20 ? 'v-warn' : 'v-bad';
+    const xC  = xwoba !== '—' ? (parseFloat(xwoba) <= .250 ? 'v-good' : parseFloat(xwoba) <= .350 ? 'v-warn' : 'v-bad') : 'v-num';
 
-  document.getElementById('yoy-perf-body').innerHTML = allPT.map(pt => {
-    const w1 = whiffStr(m1,pt), w2 = whiffStr(m2,pt);
-    const c1 = cswStr(m1,pt),   c2 = cswStr(m2,pt);
-    const x1 = xwobaStr(m1,pt), x2 = xwobaStr(m2,pt);
-    const u1 = usagePct(m1,pt,t1), u2 = usagePct(m2,pt,t2);
+    function mlbDelta(val, base, higherBetter) {
+      if (!base || val === '—') return `<span class="v-num">${base||'—'}</span>`;
+      const d = (parseFloat(val) - base).toFixed(1);
+      const better = higherBetter ? d > 0 : d < 0;
+      const cls = Math.abs(d) < 0.5 ? '' : better ? 'delta-good' : 'delta-bad';
+      const arrow = d > 0 ? '▲' : d < 0 ? '▼' : '';
+      return `<span class="v-num">${base}</span> <span class="${cls}">${arrow}${Math.abs(d)}</span>`;
+    }
+
     return `<tr>
       <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
-      <td>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:2px">${u1} usage</div>
-        <div>W: <span class="v-num">${w1}</span> &nbsp; CSW: <span class="v-num">${c1}</span> &nbsp; xwOBA: <span class="v-num">${x1}</span></div>
-      </td>
-      <td>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:2px">${u2} usage</div>
-        <div>W: <span class="v-num">${w2}</span> &nbsp; CSW: <span class="v-num">${c2}</span> &nbsp; xwOBA: <span class="v-num">${x2}</span></div>
-      </td>
-      ${deltaCell(w1,w2,true)} ${deltaCell(c1,c2,true)} ${deltaCell(x1,x2,false,3)}
+      <td class="v-num">${s.count}</td>
+      <td class="v-num">${usagePct}%</td>
+      <td class="${wC}">${whiff}%</td>
+      <td class="mlb-avg">${mlbDelta(whiff, mlbW, true)}</td>
+      <td class="${cC}">${csw}%</td>
+      <td class="mlb-avg">${mlbDelta(csw, mlbC, true)}</td>
+      <td class="${xC}">${xwoba}</td>
+      <td class="mlb-avg">${mlbDelta(xwoba, mlbX, false)}</td>
+      <td class="v-num">${ev}</td>
+      <td class="v-num">${hhPct}</td>
     </tr>`;
   }).join('');
 
-  // ---- Shape table ----
-  document.getElementById('yoy-year-1-shape-hd').textContent = y1;
-  document.getElementById('yoy-year-2-shape-hd').textContent = y2;
-
-  document.getElementById('yoy-shape-body').innerHTML = allPT.map(pt => {
-    const v1 = veloStr(m1,pt),  v2 = veloStr(m2,pt);
-    const i1 = ivbStr(m1,pt),   i2 = ivbStr(m2,pt);
-    const h1 = hbStr(m1,pt),    h2 = hbStr(m2,pt);
-    const a1 = vaaStr(m1,pt),   a2 = vaaStr(m2,pt);
-    return `<tr>
-      <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
-      <td><span class="v-num">${v1}</span> velo &nbsp; <span class="v-num">${i1}</span> IVB &nbsp; <span class="v-num">${h1}</span> HB &nbsp; <span class="v-num">${a1}</span> VAA</td>
-      <td><span class="v-num">${v2}</span> velo &nbsp; <span class="v-num">${i2}</span> IVB &nbsp; <span class="v-num">${h2}</span> HB &nbsp; <span class="v-num">${a2}</span> VAA</td>
-      ${deltaCell(v1,v2,true)} ${deltaCell(i1,i2,true)} ${deltaCell(h1,h2,null)} ${deltaCell(a1,a2,false)}
-    </tr>`;
-  }).join('');
-
-  // ---- Pitch mix grouped bar ----
-  if (profileCharts['yoy-mix']) profileCharts['yoy-mix'].destroy();
-  profileCharts['yoy-mix'] = new Chart(document.getElementById('yoy-mix-chart'), {
+  // ---- Velo bar chart ----
+  if (profileCharts['metrics-velo']) profileCharts['metrics-velo'].destroy();
+  profileCharts['metrics-velo'] = new Chart(document.getElementById('metrics-velo-chart'), {
     type: 'bar',
     data: {
-      labels: allPT.map(pn),
+      labels: sorted.map(([pt])=>pn(pt)),
       datasets: [
-        { label: y1, data: allPT.map(pt => t1 ? +((m1[pt]?.count||0)/t1*100).toFixed(1) : 0), backgroundColor: allPT.map(pt => pc(pt)+'88'), borderRadius:3, borderSkipped:false },
-        { label: y2, data: allPT.map(pt => t2 ? +((m2[pt]?.count||0)/t2*100).toFixed(1) : 0), backgroundColor: allPT.map(pt => pc(pt)),     borderRadius:3, borderSkipped:false },
+        { label:'Avg velo',  data:sorted.map(([,s])=>s.velos.length?+avg(s.velos).toFixed(1):0),           backgroundColor:sorted.map(([pt])=>pc(pt)+'88'), borderRadius:3, borderSkipped:false },
+        { label:'Peak velo', data:sorted.map(([,s])=>s.peakVelos.length?+Math.max(...s.peakVelos).toFixed(1):0), backgroundColor:sorted.map(([pt])=>pc(pt)),     borderRadius:3, borderSkipped:false },
       ]
     },
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ display:true, position:'top', labels:{ color:'#72747c', font:{size:11,family:'DM Mono'}, padding:16 } } },
-      scales:{
-        y:{ beginAtZero:true, ticks:{callback:v=>v+'%',color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.04)'} },
-        x:{ ticks:{color:'#72747c',font:{size:11}}, grid:{display:false} }
-      }
-    }
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:true, position:'top', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:12 } } },
+      scales:{ y:{ ticks:{callback:v=>v+' mph',color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.04)'}}, x:{ticks:{color:'#72747c',font:{size:11}},grid:{display:false}} } }
   });
 
-  // ---- Whiff% grouped bar ----
-  if (profileCharts['yoy-whiff']) profileCharts['yoy-whiff'].destroy();
-  const whiffPitches = allPT.filter(pt => m1[pt]?.count > 3 || m2[pt]?.count > 3);
-  profileCharts['yoy-whiff'] = new Chart(document.getElementById('yoy-whiff-chart'), {
+  // ---- Whiff% vs MLB avg grouped bar ----
+  if (profileCharts['metrics-whiff']) profileCharts['metrics-whiff'].destroy();
+  const whiffPitches = sorted.filter(([,s])=>s.count>=3);
+  profileCharts['metrics-whiff'] = new Chart(document.getElementById('metrics-whiff-chart'), {
     type: 'bar',
     data: {
-      labels: whiffPitches.map(pn),
+      labels: whiffPitches.map(([pt])=>pn(pt)),
       datasets: [
-        { label: y1, data: whiffPitches.map(pt => m1[pt]?.count ? +(m1[pt].whiffs/m1[pt].count*100).toFixed(1) : 0), backgroundColor: whiffPitches.map(pt=>pc(pt)+'88'), borderRadius:3, borderSkipped:false },
-        { label: y2, data: whiffPitches.map(pt => m2[pt]?.count ? +(m2[pt].whiffs/m2[pt].count*100).toFixed(1) : 0), backgroundColor: whiffPitches.map(pt=>pc(pt)),     borderRadius:3, borderSkipped:false },
+        { label:'Season whiff%', data:whiffPitches.map(([,s])=>s.count?+(s.whiffs/s.count*100).toFixed(1):0), backgroundColor:whiffPitches.map(([pt])=>pc(pt)), borderRadius:3, borderSkipped:false },
+        { label:'MLB avg',       data:whiffPitches.map(([pt])=>MLB_BASELINE_REF[pt]?.whiff_pct||0),           backgroundColor:'rgba(255,255,255,0.08)',           borderRadius:3, borderSkipped:false },
       ]
     },
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ display:true, position:'top', labels:{ color:'#72747c', font:{size:11,family:'DM Mono'}, padding:16 } } },
-      scales:{
-        y:{ beginAtZero:true, ticks:{callback:v=>v+'%',color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.04)'} },
-        x:{ ticks:{color:'#72747c',font:{size:11}}, grid:{display:false} }
-      }
-    }
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:true, position:'top', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:12 } } },
+      scales:{ y:{ beginAtZero:true, ticks:{callback:v=>v+'%',color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.04)'}}, x:{ticks:{color:'#72747c',font:{size:11}},grid:{display:false}} } }
   });
 
-  // ---- Movement scatter — circles = y1, triangles = y2 ----
-  if (profileCharts['yoy-movement']) profileCharts['yoy-movement'].destroy();
-
-  // We need raw pitch-by-pitch movement data — stored in pitch_stats per outing as avgIVB/avgHB
-  // Plot one point per outing per pitch type using stored averages
-  const movDS = [];
-  allPT.forEach(pt => {
-    // Year 1
-    const y1points = byYear[y1].map(o => {
+  // ---- Movement scatter — one point per outing per pitch ----
+  if (profileCharts['metrics-movement']) profileCharts['metrics-movement'].destroy();
+  const movDS = sorted.map(([pt]) => {
+    const points = athleteOutings.map(o => {
       let pm = {};
       try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
       const s = pm[pt];
-      if (!s || !s.avgHB || !s.avgIVB) return null;
+      if (!s?.avgHB || !s?.avgIVB) return null;
       return { x: pf(s.avgHB), y: pf(s.avgIVB) };
     }).filter(Boolean);
+    return { label:pn(pt), data:points, backgroundColor:pc(pt)+'cc', pointRadius:6, pointHoverRadius:9 };
+  }).filter(ds => ds.data.length);
 
-    // Year 2
-    const y2points = byYear[y2].map(o => {
-      let pm = {};
-      try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
-      const s = pm[pt];
-      if (!s || !s.avgHB || !s.avgIVB) return null;
-      return { x: pf(s.avgHB), y: pf(s.avgIVB) };
-    }).filter(Boolean);
-
-    if (y1points.length) movDS.push({ label:`${pn(pt)} (${y1})`, data:y1points, backgroundColor:pc(pt)+'99', pointStyle:'circle', pointRadius:6 });
-    if (y2points.length) movDS.push({ label:`${pn(pt)} (${y2})`, data:y2points, backgroundColor:pc(pt),      pointStyle:'triangle', pointRadius:7 });
-  });
-
-  profileCharts['yoy-movement'] = new Chart(document.getElementById('yoy-movement-chart'), {
-    type: 'scatter',
-    data: { datasets: movDS },
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ display:true, position:'right', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:8, usePointStyle:true } } },
+  profileCharts['metrics-movement'] = new Chart(document.getElementById('metrics-movement-chart'), {
+    type:'scatter', data:{ datasets:movDS },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:true, position:'right', labels:{ color:'#72747c', font:{size:11,family:'DM Mono'}, padding:10 } } },
       scales:{
         x:{ title:{display:true,text:'Horizontal break (in)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' },
         y:{ title:{display:true,text:'Induced vertical break (in)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' }
@@ -872,6 +825,8 @@ function renderYoY() {
     }
   });
 }
+  }
+  empty.style.display = 'none';
 
 /* ==================== COMPARE ==================== */
 function populateCompareSelectors() {
