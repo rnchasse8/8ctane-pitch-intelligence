@@ -535,41 +535,37 @@ function renderMovement() {
     };
   });
 
-  // Stat cards grid — one row per pitch
-  document.getElementById('movement-stat-cards').innerHTML = pitchStats.map(p => `
+  // Stat cards grid — header + one row per pitch
+  const header = `<div class="mov-header-row">
+    <div class="mov-header-label">Pitch</div>
+    <div class="mov-header-stats">
+      <div class="mov-header-stat">Avg velo</div>
+      <div class="mov-header-stat">Peak velo</div>
+      <div class="mov-header-stat">IVB</div>
+      <div class="mov-header-stat">HB</div>
+      <div class="mov-header-stat">VAA</div>
+      <div class="mov-header-stat">HAA</div>
+    </div>
+  </div>`;
+
+  const rows = pitchStats.map(p => `
     <div class="mov-pitch-row">
       <div class="mov-pitch-label">
-        <span class="pitch-dot" style="background:${pc(p.pt)};width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:7px;vertical-align:middle"></span>
+        <span class="pitch-dot" style="background:${pc(p.pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex-shrink:0"></span>
         <span class="mov-pitch-name">${pn(p.pt)}</span>
       </div>
       <div class="mov-stat-group">
-        <div class="mov-stat">
-          <div class="mov-stat-val">${p.avgVelo}</div>
-          <div class="mov-stat-lbl">Avg velo</div>
-        </div>
-        <div class="mov-stat">
-          <div class="mov-stat-val">${p.peakVelo}</div>
-          <div class="mov-stat-lbl">Peak velo</div>
-        </div>
-        <div class="mov-stat">
-          <div class="mov-stat-val">${p.ivb}"</div>
-          <div class="mov-stat-lbl">IVB</div>
-        </div>
-        <div class="mov-stat">
-          <div class="mov-stat-val">${p.hb}"</div>
-          <div class="mov-stat-lbl">HB</div>
-        </div>
-        <div class="mov-stat">
-          <div class="mov-stat-val">${p.vaa}°</div>
-          <div class="mov-stat-lbl">VAA</div>
-        </div>
-        <div class="mov-stat">
-          <div class="mov-stat-val">${p.haa}°</div>
-          <div class="mov-stat-lbl">HAA</div>
-        </div>
+        <div class="mov-stat"><div class="mov-stat-val">${p.avgVelo}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${p.peakVelo}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${p.ivb}"</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${p.hb}"</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${p.vaa}°</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${p.haa}°</div></div>
       </div>
     </div>
   `).join('');
+
+  document.getElementById('movement-stat-cards').innerHTML = header + rows;
 }
 
 /* ---- Hard Contact ---- */

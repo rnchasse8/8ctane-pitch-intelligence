@@ -97,7 +97,7 @@
       <button class="tab active" data-tab="arsenal">Arsenal</button>
       <button class="tab" data-tab="splits">Splits</button>
       <button class="tab" data-tab="counts">Counts</button>
-      <button class="tab" data-tab="movement">Movement</button>
+      <button class="tab" data-tab="movement">Pitch Shapes</button>
       <button class="tab" data-tab="contact">Hard Contact</button>
       <button class="tab" data-tab="insights">Insights</button>
     </nav>
@@ -173,18 +173,18 @@
       </div>
     </div>
 
-    <!-- MOVEMENT -->
+    <!-- PITCH SHAPES -->
     <div class="tab-panel" id="panel-movement">
       <div class="section">
+        <div class="section-hd">Pitch shape averages</div>
+        <div id="movement-stat-cards" class="mov-cards-wrap"></div>
+      </div>
+      <div class="section" style="margin-top:1.5rem">
         <div class="section-hd">Movement plot — horizontal break vs. induced vertical break</div>
         <div class="chart-card" style="padding:1.25rem">
           <div class="chart-wrap" style="height:420px"><canvas id="movement-chart" role="img" aria-label="Movement scatter plot by pitch type"></canvas></div>
           <div class="chart-footnote">Arm-side = positive HB (right for RHP) · Rise = positive IVB · Each dot = one pitch · Hover for values</div>
         </div>
-      </div>
-      <div class="section" style="margin-top:1rem">
-        <div class="section-hd">Pitch movement & approach averages</div>
-        <div id="movement-stat-cards" class="mov-cards-wrap"></div>
       </div>
     </div>
 
