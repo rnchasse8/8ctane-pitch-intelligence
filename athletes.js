@@ -356,36 +356,80 @@ function renderSeasonOverview() {
 function renderTrends() {
   if (!athleteOutings.length) return;
   const sorted = [...athleteOutings].sort((a,b) => a.date.localeCompare(b.date));
-  const labels = sorted.map(o => o.date);
 
-  // Velocity trend
+  // Clean labels: "Apr 11 vs LOU"
+  const labels = sorted.map(o => {
+    const d = new Date(o.date + 'T12:00:00');
+    const dateStr = d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    return o.opponent ? `${dateStr} vs ${o.opponent}` : dateStr;
+  });
+
+  // Shared x-axis options
+  const xAxis = { ticks:{ color:'#72747c', font:{size:10}, maxRotation:40, minRotation:30 }, grid:{display:false} };
+  const yPct  = { ticks:{ callback:v=>v+'%', color:'#72747c', font:{size:10} }, grid:{color:'rgba(255,255,255,0.04)'} };
+  const yMph  = { ticks:{ callback:v=>v+' mph', color:'#72747c', font:{size:10} }, grid:{color:'rgba(255,255,255,0.04)'} };
+  const legend = { display:true, position:'bottom', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:12, boxWidth:10 } };
+
+  // ---- Avg velocity ----
   const veloData = sorted.map(o => pf(o.ff_velo) || null);
   if (profileCharts['trend-velo']) profileCharts['trend-velo'].destroy();
   profileCharts['trend-velo'] = new Chart(document.getElementById('trend-velo-chart'), {
     type: 'line',
-    data: { labels, datasets:[{ label:'4-Seam avg velo', data:veloData, borderColor:'#378ADD', backgroundColor:'rgba(55,138,221,0.1)', fill:true, tension:.3, pointRadius:5, pointBackgroundColor:'#378ADD' }] },
-    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
-      scales:{ y:{ticks:{callback:v=>v+' mph',color:'#72747c',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'}}, x:{ticks:{color:'#72747c',font:{size:10}},grid:{display:false}} } }
+    data: { labels, datasets:[{
+      label:'Avg velo', data:veloData,
+      borderColor:'#378ADD', backgroundColor:'rgba(55,138,221,0.1)',
+      fill:true, tension:.3, pointRadius:5, pointBackgroundColor:'#378ADD'
+    }]},
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{ y:yMph, x:xAxis } }
   });
 
-  // Whiff trend — top 3 pitches
+  // ---- Peak velocity ----
+  const peakData = sorted.map(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    const ff = pm['FF'] || pm['FA'];
+    return ff?.peakVelo ? pf(ff.peakVelo) : null;
+  });
+  if (profileCharts['trend-peak']) profileCharts['trend-peak'].destroy();
+  profileCharts['trend-peak'] = new Chart(document.getElementById('trend-peak-chart'), {
+    type: 'line',
+    data: { labels, datasets:[{
+      label:'Peak velo', data:peakData,
+      borderColor:'#00d4ff', backgroundColor:'rgba(0,212,255,0.08)',
+      fill:true, tension:.3, pointRadius:5, pointBackgroundColor:'#00d4ff',
+      borderDash:[],
+    },{
+      label:'Avg velo', data:veloData,
+      borderColor:'#378ADD', backgroundColor:'transparent',
+      tension:.3, pointRadius:4, pointBackgroundColor:'#378ADD',
+      borderDash:[4,3],
+    }]},
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:true, position:'bottom', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:12, boxWidth:10 } } },
+      scales:{ y:yMph, x:xAxis } }
+  });
+
+  // ---- Whiff trend ----
   const pitchKeys = [['FF','#378ADD'],['ST','#D85A30'],['CU','#1D9E75'],['FS','#BA7517']];
-  const whiffKey = { FF:'ff_whiff', ST:'st_whiff', CU:'cu_whiff', FS:'fs_whiff' };
-  const whiffDs = pitchKeys.filter(([pt]) => sorted.some(o => pf(o[whiffKey[pt]]) > 0)).map(([pt, col]) => ({
-    label: pn(pt),
-    data: sorted.map(o => pf(o[whiffKey[pt]]) || null),
-    borderColor: col, backgroundColor: 'transparent',
-    tension:.3, pointRadius:4, pointBackgroundColor:col,
-  }));
+  const whiffKey  = { FF:'ff_whiff', ST:'st_whiff', CU:'cu_whiff', FS:'fs_whiff' };
+  const whiffDs = pitchKeys
+    .filter(([pt]) => sorted.some(o => pf(o[whiffKey[pt]]) > 0))
+    .map(([pt, col]) => ({
+      label: pn(pt), data: sorted.map(o => pf(o[whiffKey[pt]]) || null),
+      borderColor:col, backgroundColor:'transparent',
+      tension:.3, pointRadius:4, pointBackgroundColor:col,
+    }));
   if (profileCharts['trend-whiff']) profileCharts['trend-whiff'].destroy();
   profileCharts['trend-whiff'] = new Chart(document.getElementById('trend-whiff-chart'), {
     type:'line', data:{ labels, datasets:whiffDs },
     options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ display:true, position:'bottom', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:12, boxWidth:10 } } },
-      scales:{ y:{ticks:{callback:v=>v+'%',color:'#72747c',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'}}, x:{ticks:{color:'#72747c',font:{size:10}},grid:{display:false}} } }
+      plugins:{ legend },
+      scales:{ y:yPct, x:xAxis } }
   });
 
-  // Mix trend — stacked area
+  // ---- Mix trend ----
   const mixPitches = [['FF','#378ADD'],['ST','#D85A30'],['FS','#BA7517'],['FC','#534AB7'],['CU','#1D9E75']];
   const mixKey = { FF:'ff_pct', ST:'st_pct', FS:'fs_pct', FC:'fc_pct', CU:'cu_pct' };
   const mixDs = mixPitches.map(([pt,col]) => ({
@@ -397,8 +441,8 @@ function renderTrends() {
   profileCharts['trend-mix'] = new Chart(document.getElementById('trend-mix-chart'), {
     type:'line', data:{ labels, datasets:mixDs },
     options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ display:true, position:'bottom', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:10, boxWidth:10 } } },
-      scales:{ y:{stacked:true,ticks:{callback:v=>v+'%',color:'#72747c',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'}}, x:{ticks:{color:'#72747c',font:{size:10}},grid:{display:false}} } }
+      plugins:{ legend },
+      scales:{ y:{ stacked:true, ...yPct }, x:xAxis } }
   });
 }
 
