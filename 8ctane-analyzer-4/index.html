@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>8ctane Baseball — Pitch Intelligence</title>
+<link rel="stylesheet" href="style.css">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="header-inner">
+    <div class="header-left">
+      <img src="logo.png" alt="8ctane Baseball" class="nav-logo">
+      <span class="nav-divider"></span>
+      <span class="nav-product">Pitch Intelligence</span>
+    </div>
+    <div class="header-right">
+      <a href="athletes.html" class="btn-ghost">Athletes →</a>
+      <span class="mode-badge" id="mode-badge">SINGLE START</span>
+      <button class="btn-ghost" id="toggle-mode-btn" onclick="toggleMode()">Switch to Multi-Start</button>
+    </div>
+  </div>
+</header>
+
+<!-- UPLOAD — SINGLE -->
+<div id="upload-single" class="upload-page">
+  <div class="upload-hero">
+    <div class="upload-logo-wrap">
+      <img src="logo.png" alt="8ctane Baseball" class="hero-logo">
+    </div>
+    <h1 class="upload-title">Pitch Intelligence</h1>
+    <p class="upload-sub">Upload a Baseball Savant pitch-by-pitch CSV to generate a full arsenal report — movement plots, count usage, hard contact log, sequencing recommendations, and more.</p>
+    <div class="drop-area" id="drop-single">
+      <div class="drop-icon">⚾</div>
+      <div class="drop-label">Drop Statcast CSV here</div>
+      <div class="drop-hint">or</div>
+      <button class="btn-primary" onclick="document.getElementById('file-single').click()">Select File</button>
+      <input type="file" id="file-single" accept=".csv" style="display:none">
+    </div>
+    <p class="upload-note">Supports any pitcher's Statcast search export. Pitch types read from <code>pitch_type</code> column.</p>
+  </div>
+</div>
+
+<!-- UPLOAD — MULTI -->
+<div id="upload-multi" class="upload-page" style="display:none">
+  <div class="upload-hero">
+    <img src="logo.png" alt="8ctane Baseball" class="hero-logo" style="margin-bottom:1.5rem">
+    <h1 class="upload-title">Multi-Start Comparison</h1>
+    <p class="upload-sub">Upload two Statcast CSV exports to compare starts side-by-side and track pitch mix trends.</p>
+    <div class="multi-upload-grid">
+      <div class="drop-area drop-sm" id="drop-start1" data-slot="1">
+        <div class="drop-icon" style="font-size:28px">⚾</div>
+        <div class="drop-label" style="font-size:14px">Start 1</div>
+        <div class="drop-status" id="status-1">No file loaded</div>
+        <button class="btn-primary btn-sm" onclick="document.getElementById('file-start1').click()">Select CSV</button>
+        <input type="file" id="file-start1" accept=".csv" style="display:none">
+      </div>
+      <div class="multi-vs">VS</div>
+      <div class="drop-area drop-sm" id="drop-start2" data-slot="2">
+        <div class="drop-icon" style="font-size:28px">⚾</div>
+        <div class="drop-label" style="font-size:14px">Start 2</div>
+        <div class="drop-status" id="status-2">No file loaded</div>
+        <button class="btn-primary btn-sm" onclick="document.getElementById('file-start2').click()">Select CSV</button>
+        <input type="file" id="file-start2" accept=".csv" style="display:none">
+      </div>
+    </div>
+    <button class="btn-primary" id="btn-compare" onclick="runComparison()" disabled style="margin-top:1.5rem;opacity:.4">Generate Comparison</button>
+  </div>
+</div>
+
+<!-- SINGLE REPORT -->
+<div id="report-single" style="display:none">
+  <div class="report-toolbar">
+    <button class="btn-ghost" onclick="resetSingle()">← New Upload</button>
+    <div style="display:flex;gap:.5rem">
+      <button class="btn-ghost" onclick="window.print()">🖨 Print / PDF</button>
+    </div>
+  </div>
+
+  <!-- Player Header -->
+  <div class="player-header" id="player-header">
+    <div class="player-header-left">
+      <div class="player-name" id="ph-name"></div>
+      <div class="player-meta" id="ph-meta"></div>
+    </div>
+    <div class="kpi-strip" id="ph-kpis"></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs-wrap">
+    <nav class="tabs" id="main-tabs">
+      <button class="tab active" data-tab="arsenal">Arsenal</button>
+      <button class="tab" data-tab="splits">Splits</button>
+      <button class="tab" data-tab="counts">Counts</button>
+      <button class="tab" data-tab="movement">Movement</button>
+      <button class="tab" data-tab="contact">Hard Contact</button>
+      <button class="tab" data-tab="insights">Insights</button>
+    </nav>
+  </div>
+
+  <div class="report-body">
+
+    <!-- ARSENAL -->
+    <div class="tab-panel active" id="panel-arsenal">
+      <div class="section">
+        <div class="section-hd">Arsenal breakdown</div>
+        <div class="table-scroll">
+          <table class="data-table" id="arsenal-table">
+            <thead><tr>
+              <th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th>
+              <th>Whiff%</th><th>CSW%</th><th>Ball%</th><th>HIP</th><th>Avg EV</th><th>xwOBA</th>
+            </tr></thead>
+            <tbody id="arsenal-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chart-grid-2">
+        <div class="chart-card">
+          <div class="chart-card-title">Pitch mix</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="mix-chart" role="img" aria-label="Pitch mix donut chart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">CSW% by pitch</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="csw-chart" role="img" aria-label="CSW% by pitch type"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SPLITS -->
+    <div class="tab-panel" id="panel-splits">
+      <div class="splits-grid">
+        <div class="section">
+          <div class="section-hd" style="color:#378ADD">vs. Right-handed hitters</div>
+          <div class="table-scroll">
+            <table class="data-table"><thead><tr><th>Pitch</th><th>N</th><th>Usage</th><th>Whiff%</th><th>CSW%</th><th>xwOBA</th></tr></thead>
+            <tbody id="splits-rhh"></tbody></table>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-hd" style="color:#D85A30">vs. Left-handed hitters</div>
+          <div class="table-scroll">
+            <table class="data-table"><thead><tr><th>Pitch</th><th>N</th><th>Usage</th><th>Whiff%</th><th>CSW%</th><th>xwOBA</th></tr></thead>
+            <tbody id="splits-lhh"></tbody></table>
+          </div>
+        </div>
+      </div>
+      <div class="chart-grid-2" style="margin-top:1.5rem">
+        <div class="chart-card">
+          <div class="chart-card-title">Pitch mix — vs. RHH</div>
+          <div class="chart-wrap" style="height:200px"><canvas id="split-rhh-chart" role="img" aria-label="Pitch mix vs RHH"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">Pitch mix — vs. LHH</div>
+          <div class="chart-wrap" style="height:200px"><canvas id="split-lhh-chart" role="img" aria-label="Pitch mix vs LHH"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COUNTS -->
+    <div class="tab-panel" id="panel-counts">
+      <div class="section">
+        <div class="section-hd">Pitch usage by count</div>
+        <div class="count-grid" id="count-grid"></div>
+      </div>
+      <div class="section" style="margin-top:1.5rem">
+        <div class="section-hd">Stacked usage — all counts</div>
+        <div class="chart-card"><div class="chart-wrap" style="height:240px"><canvas id="count-stack-chart" role="img" aria-label="Stacked pitch usage by count"></canvas></div></div>
+      </div>
+    </div>
+
+    <!-- MOVEMENT -->
+    <div class="tab-panel" id="panel-movement">
+      <div class="section">
+        <div class="section-hd">Movement plot — horizontal break vs. induced vertical break</div>
+        <div class="chart-card" style="padding:1.25rem">
+          <div class="chart-wrap" style="height:420px"><canvas id="movement-chart" role="img" aria-label="Movement scatter plot by pitch type"></canvas></div>
+          <div class="chart-footnote">Arm-side = positive HB (right for RHP) · Rise = positive IVB · Each dot = one pitch · Hover for values</div>
+        </div>
+      </div>
+      <div class="section" style="margin-top:1rem">
+        <div class="section-hd">Pitch movement & approach averages</div>
+        <div id="movement-stat-cards" class="mov-cards-wrap"></div>
+      </div>
+    </div>
+
+    <!-- HARD CONTACT -->
+    <div class="tab-panel" id="panel-contact">
+      <div class="section">
+        <div class="section-hd">Hard contact log (EV ≥ 90 mph or extra-base hit)</div>
+        <div class="table-scroll" id="hc-table-wrap"></div>
+      </div>
+      <div class="chart-grid-2" style="margin-top:1.5rem">
+        <div class="chart-card">
+          <div class="chart-card-title">Avg exit velocity by pitch</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="ev-chart" role="img" aria-label="Avg EV by pitch type"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">Hard hit % by pitch (EV ≥ 95)</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="hh-chart" role="img" aria-label="Hard hit rate by pitch type"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INSIGHTS -->
+    <div class="tab-panel" id="panel-insights">
+      <div class="section">
+        <div class="section-hd">Automated findings</div>
+        <div class="insight-grid" id="insight-grid"></div>
+      </div>
+      <div class="section" style="margin-top:1.5rem">
+        <div class="section-hd">Count-by-count sequencing recommendations</div>
+        <div id="seq-recs"></div>
+      </div>
+      <div class="section" style="margin-top:1.5rem">
+        <div class="section-hd">Handedness sequencing</div>
+        <div id="hand-recs"></div>
+      </div>
+    </div>
+
+  </div><!-- end report-body -->
+</div><!-- end report-single -->
+
+<!-- MULTI-START REPORT -->
+<div id="report-multi" style="display:none">
+  <div class="report-toolbar">
+    <button class="btn-ghost" onclick="resetMulti()">← New Comparison</button>
+    <button class="btn-ghost" onclick="window.print()">🖨 Print / PDF</button>
+  </div>
+  <div class="player-header">
+    <div class="player-header-left">
+      <div class="player-name" id="multi-name"></div>
+      <div class="player-meta" id="multi-meta"></div>
+    </div>
+  </div>
+  <div class="section" style="margin:1.5rem 2rem 0">
+    <div class="section-hd">Pitch mix — start over start</div>
+    <div class="chart-card"><div class="chart-wrap" style="height:280px"><canvas id="multi-mix-chart" role="img" aria-label="Pitch mix comparison across two starts"></canvas></div></div>
+  </div>
+  <div class="section" style="margin:1.5rem 2rem 0">
+    <div class="section-hd">Key metrics comparison</div>
+    <div id="multi-metrics-grid" class="chart-grid-2"></div>
+  </div>
+  <div class="section" style="margin:1.5rem 2rem 0">
+    <div class="section-hd">Movement — Start 1 vs Start 2</div>
+    <div class="chart-card"><div class="chart-wrap" style="height:380px"><canvas id="multi-movement-chart" role="img" aria-label="Movement comparison scatter plot"></canvas></div></div>
+  </div>
+  <div class="section" style="margin:1.5rem 2rem 2rem">
+    <div class="section-hd">Trend findings</div>
+    <div class="insight-grid" id="multi-insights"></div>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <img src="logo.png" alt="8ctane Baseball" style="height:28px;opacity:.5">
+  <span>Pitch Intelligence · Powered by Statcast</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
