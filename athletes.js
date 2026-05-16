@@ -592,8 +592,8 @@ function processOutingRows(rows) {
       cswPct:   s.count         ? +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0,
       avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
       avgEV:    s.launch_speeds.length ? +avg(s.launch_speeds).toFixed(1) : null,
-      avgIVB:   s.pfx_zs.length ? +avg(s.pfx_zs).toFixed(2) : null,
-      avgHB:    s.pfx_xs.length ? +avg(s.pfx_xs).toFixed(2) : null,
+      avgIVB:   s.pfx_zs.length ? +(avg(s.pfx_zs) * 12).toFixed(1) : null,
+      avgHB:    s.pfx_xs.length ? +(-avg(s.pfx_xs) * 12).toFixed(1) : null,
       avgVAA:   angles.length   ? +avg(angles.map(a=>a.vaa)).toFixed(1) : null,
       avgHAA:   angles.length   ? +avg(angles.map(a=>a.haa)).toFixed(1) : null,
     };

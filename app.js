@@ -500,7 +500,7 @@ function renderMovement() {
     data: { datasets: sorted.map(([pt]) => ({
       label: pn(pt),
       data: rows.filter(r => r._pt===pt && r.pfx_x && r.pfx_z)
-                .map(r => ({ x: pf(r.pfx_x), y: pf(r.pfx_z) })),
+                .map(r => ({ x: -pf(r.pfx_x)*12, y: pf(r.pfx_z)*12 })),
       backgroundColor: pc(pt) + 'bb',
       pointRadius: 5, pointHoverRadius: 8,
     }))},
@@ -528,8 +528,8 @@ function renderMovement() {
       pt,
       avgVelo:  s.velos.length    ? avg(s.velos).toFixed(1)   : '—',
       peakVelo: peakVelo           ? peakVelo.toFixed(1)        : '—',
-      ivb:      s.pfx_zs.length   ? avg(s.pfx_zs).toFixed(1)  : '—',
-      hb:       s.pfx_xs.length   ? avg(s.pfx_xs).toFixed(1)  : '—',
+      ivb:      s.pfx_zs.length   ? (avg(s.pfx_zs) * 12).toFixed(1)  : '—',
+      hb:       s.pfx_xs.length   ? (-avg(s.pfx_xs) * 12).toFixed(1) : '—',
       vaa:      avgVAA !== null    ? avgVAA.toFixed(1)          : '—',
       haa:      avgHAA !== null    ? avgHAA.toFixed(1)          : '—',
     };
@@ -548,7 +548,7 @@ function renderMovement() {
     </div>
   </div>`;
 
-  const rows = pitchStats.map(p => `
+  const statRows = pitchStats.map(p => `
     <div class="mov-pitch-row">
       <div class="mov-pitch-label">
         <span class="pitch-dot" style="background:${pc(p.pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex-shrink:0"></span>
@@ -565,7 +565,7 @@ function renderMovement() {
     </div>
   `).join('');
 
-  document.getElementById('movement-stat-cards').innerHTML = header + rows;
+  document.getElementById('movement-stat-cards').innerHTML = header + statRows;
 }
 
 /* ---- Hard Contact ---- */
@@ -785,12 +785,12 @@ function runComparison() {
   destroyChart('multi-movement-chart');
   const ds1 = allPT.map(pt => ({
     label:`${pn(pt)} (${d1})`,
-    data: s1.rows.filter(r=>r._pt===pt&&r.pfx_x&&r.pfx_z).map(r=>({x:pf(r.pfx_x),y:pf(r.pfx_z)})),
+    data: s1.rows.filter(r=>r._pt===pt&&r.pfx_x&&r.pfx_z).map(r=>({x:-pf(r.pfx_x)*12,y:pf(r.pfx_z)*12})),
     backgroundColor: pc(pt)+'99', pointRadius:4, pointStyle:'circle',
   }));
   const ds2 = allPT.map(pt => ({
     label:`${pn(pt)} (${d2})`,
-    data: s2.rows.filter(r=>r._pt===pt&&r.pfx_x&&r.pfx_z).map(r=>({x:pf(r.pfx_x),y:pf(r.pfx_z)})),
+    data: s2.rows.filter(r=>r._pt===pt&&r.pfx_x&&r.pfx_z).map(r=>({x:-pf(r.pfx_x)*12,y:pf(r.pfx_z)*12})),
     backgroundColor: pc(pt), pointRadius:4, pointStyle:'triangle',
   }));
   charts['multi-movement-chart'] = new Chart(document.getElementById('multi-movement-chart'), {
@@ -799,8 +799,8 @@ function runComparison() {
     options:{ responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{ display:true, position:'right', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:8 } } },
       scales:{
-        x:{ title:{display:true,text:'Horizontal break (pfx_x)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' },
-        y:{ title:{display:true,text:'Vertical break (pfx_z)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' }
+        x:{ title:{display:true,text:'Horizontal break — arm-side (in)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' },
+        y:{ title:{display:true,text:'Induced vertical break (in)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' }
       }
     }
   });
