@@ -819,8 +819,8 @@ function renderYoY() {
     options:{ responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{ display:true, position:'right', labels:{ color:'#72747c', font:{size:11,family:'DM Mono'}, padding:10 } } },
       scales:{
-        x:{ title:{display:true,text:'Horizontal break (in)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' },
-        y:{ title:{display:true,text:'Induced vertical break (in)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' }
+        x:{ position:'center', title:{display:false}, ticks:{color:'#72747c',font:{size:10},stepSize:5}, grid:{color:'rgba(255,255,255,0.06)'}, min:-25, max:25 },
+        y:{ position:'center', title:{display:false}, ticks:{color:'#72747c',font:{size:10},stepSize:5}, grid:{color:'rgba(255,255,255,0.06)'}, min:-20, max:25 }
       }
     }
   });

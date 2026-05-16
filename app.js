@@ -501,18 +501,31 @@ function renderMovement() {
       label: pn(pt),
       data: rows.filter(r => r._pt===pt && r.pfx_x && r.pfx_z)
                 .map(r => ({ x: -pf(r.pfx_x)*12, y: pf(r.pfx_z)*12 })),
-      backgroundColor: pc(pt) + 'bb',
+      backgroundColor: pc(pt) + 'cc',
       pointRadius: 5, pointHoverRadius: 8,
     }))},
     options: {
       responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top: 16, right: 8, bottom: 8, left: 8 } },
       plugins: {
-        legend: { display: true, position: 'right', labels: { color:'#72747c', font:{ size:11, family:'DM Mono' }, padding:12, boxWidth:10 } },
-        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: HB ${ctx.parsed.x.toFixed(2)}, IVB ${ctx.parsed.y.toFixed(2)}` } }
+        legend: { display: true, position: 'right', labels: { color:'#72747c', font:{ size:11, family:'DM Mono' }, padding:14, boxWidth:10 } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: HB ${ctx.parsed.x.toFixed(1)}", IVB ${ctx.parsed.y.toFixed(1)}"` } }
       },
       scales: {
-        x: { title:{ display:true, text:'Horizontal break (in)', color:'#72747c', font:{size:11} }, ticks:{ color:'#72747c', font:{size:10} }, grid:{ color:'rgba(255,255,255,0.05)' }, position:'center' },
-        y: { title:{ display:true, text:'Induced vertical break (in)', color:'#72747c', font:{size:11} }, ticks:{ color:'#72747c', font:{size:10} }, grid:{ color:'rgba(255,255,255,0.05)' }, position:'center' }
+        x: {
+          position: 'center',
+          title: { display: false },
+          ticks: { color:'#72747c', font:{size:10}, stepSize: 5 },
+          grid: { color:'rgba(255,255,255,0.06)' },
+          min: -25, max: 25,
+        },
+        y: {
+          position: 'center',
+          title: { display: false },
+          ticks: { color:'#72747c', font:{size:10}, stepSize: 5 },
+          grid: { color:'rgba(255,255,255,0.06)' },
+          min: -20, max: 25,
+        }
       }
     }
   });
@@ -799,8 +812,8 @@ function runComparison() {
     options:{ responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{ display:true, position:'right', labels:{ color:'#72747c', font:{size:10,family:'DM Mono'}, padding:8 } } },
       scales:{
-        x:{ title:{display:true,text:'Horizontal break — arm-side (in)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' },
-        y:{ title:{display:true,text:'Induced vertical break (in)',color:'#72747c',font:{size:11}}, ticks:{color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.05)'}, position:'center' }
+        x:{ position:'center', title:{display:false}, ticks:{color:'#72747c',font:{size:10},stepSize:5}, grid:{color:'rgba(255,255,255,0.06)'}, min:-25, max:25 },
+        y:{ position:'center', title:{display:false}, ticks:{color:'#72747c',font:{size:10},stepSize:5}, grid:{color:'rgba(255,255,255,0.06)'}, min:-20, max:25 }
       }
     }
   });
