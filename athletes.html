@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>8ctane — Athletes</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="athletes.css">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="header-left">
+      <a href="index.html"><img src="logo.png" alt="8ctane Baseball" class="nav-logo"></a>
+      <span class="nav-divider"></span>
+      <span class="nav-product">Athlete Manager</span>
+    </div>
+    <div class="header-right">
+      <a href="index.html" class="btn-ghost">← Analyzer</a>
+    </div>
+  </div>
+</header>
+
+<!-- CONFIG BANNER (shown until script URL is set) -->
+<div id="config-banner" class="config-banner" style="display:none">
+  <div class="config-inner">
+    <strong>Setup required</strong> — paste your Apps Script Web App URL to connect to Google Sheets.
+    <input type="text" id="script-url-input" placeholder="https://script.google.com/macros/s/.../exec" class="url-input">
+    <button class="btn-primary btn-sm" onclick="saveScriptUrl()">Save & Connect</button>
+  </div>
+</div>
+
+<!-- VIEWS -->
+<div id="view-roster" class="view">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Athletes</h1>
+      <p class="page-sub" id="roster-count">Loading...</p>
+    </div>
+    <button class="btn-primary" onclick="showAddAthlete()">+ Add Athlete</button>
+  </div>
+
+  <div id="athlete-grid" class="athlete-grid"></div>
+  <div id="roster-empty" class="empty-state" style="display:none">
+    No athletes yet. Add your first athlete to get started.
+  </div>
+</div>
+
+<div id="view-profile" class="view" style="display:none">
+  <div class="page-header">
+    <button class="btn-ghost" onclick="showRoster()">← All Athletes</button>
+    <div style="display:flex;gap:.5rem">
+      <button class="btn-ghost" id="btn-add-outing" onclick="showAddOuting()">+ Add Outing</button>
+      <button class="btn-ghost" id="btn-view-analyzer" onclick="openInAnalyzer()">Open in Analyzer</button>
+    </div>
+  </div>
+
+  <!-- Athlete hero -->
+  <div class="athlete-hero" id="profile-hero">
+    <div class="athlete-hero-left">
+      <div class="athlete-avatar" id="profile-avatar"></div>
+      <div>
+        <div class="athlete-hero-name" id="profile-name"></div>
+        <div class="athlete-hero-meta" id="profile-meta"></div>
+      </div>
+    </div>
+    <div class="kpi-strip" id="profile-kpis"></div>
+  </div>
+
+  <!-- Profile tabs -->
+  <div class="tabs-wrap" style="margin-top:1rem">
+    <nav class="tabs" id="profile-tabs">
+      <button class="tab active" data-ptab="overview">Season Overview</button>
+      <button class="tab" data-ptab="trends">Trends</button>
+      <button class="tab" data-ptab="outings">Outings</button>
+      <button class="tab" data-ptab="compare">Compare</button>
+    </nav>
+  </div>
+
+  <div class="report-body">
+
+    <!-- OVERVIEW -->
+    <div class="ptab-panel active" id="ptab-overview">
+      <div class="section">
+        <div class="section-hd">Season-to-date arsenal</div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr>
+              <th>Pitch</th><th>Total pitches</th><th>Usage</th>
+              <th>Avg velo</th><th>Whiff%</th><th>CSW%</th><th>xwOBA</th>
+              <th>MLB avg whiff%</th>
+            </tr></thead>
+            <tbody id="season-arsenal-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chart-grid-2" style="margin-top:1rem">
+        <div class="chart-card">
+          <div class="chart-card-title">Season pitch mix</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="season-mix-chart" role="img" aria-label="Season pitch mix"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">Season CSW% by pitch</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="season-csw-chart" role="img" aria-label="Season CSW by pitch"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRENDS -->
+    <div class="ptab-panel" id="ptab-trends">
+      <div class="section">
+        <div class="section-hd">4-seam velocity — outing by outing</div>
+        <div class="chart-card"><div class="chart-wrap" style="height:200px"><canvas id="trend-velo-chart" role="img" aria-label="Velocity trend"></canvas></div></div>
+      </div>
+      <div class="chart-grid-2" style="margin-top:1rem">
+        <div class="chart-card">
+          <div class="chart-card-title">Whiff% trend by pitch</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="trend-whiff-chart" role="img" aria-label="Whiff trend"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">Pitch mix shift over time</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="trend-mix-chart" role="img" aria-label="Mix trend"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OUTINGS LIST -->
+    <div class="ptab-panel" id="ptab-outings">
+      <div class="section">
+        <div class="section-hd">All outings</div>
+        <div id="outings-list"></div>
+      </div>
+    </div>
+
+    <!-- COMPARE -->
+    <div class="ptab-panel" id="ptab-compare">
+      <div class="section">
+        <div class="section-hd">Compare two outings</div>
+        <div class="compare-selectors">
+          <div>
+            <div class="compare-sel-label">Outing 1</div>
+            <select id="compare-sel-1" class="sel-input" onchange="renderComparison()"><option value="">Select outing...</option></select>
+          </div>
+          <div class="multi-vs" style="padding-top:1.5rem">VS</div>
+          <div>
+            <div class="compare-sel-label">Outing 2</div>
+            <select id="compare-sel-2" class="sel-input" onchange="renderComparison()"><option value="">Select outing...</option></select>
+          </div>
+        </div>
+        <div id="compare-result" style="margin-top:1.5rem"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MODALS -->
+<div id="modal-overlay" class="modal-overlay" style="display:none" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title"></div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <img src="logo.png" alt="8ctane Baseball" style="height:28px;opacity:.5">
+  <span>Athlete Manager · Powered by Google Sheets</span>
+  <button class="btn-ghost" style="margin-left:auto;font-size:10px" onclick="showConfigBanner()">⚙ Configure</button>
+</footer>
+
+<script src="baselines-ref.js"></script>
+<script src="athletes.js"></script>
+</body>
+</html>
