@@ -771,36 +771,34 @@ function renderReport() {
     </div>`;
   }
 
-  // Per-pitch stuff scores (simple index vs MLB baseline)
-  const sorted = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
-  const stuffScores = sorted.map(([pt, s]) => {
-    const mlb = MLB_BASELINE_REF[pt];
-    if (!mlb || !hasBaselines) return { pt, score: null };
-    const pitchWhiff = s.count ? s.whiffs/s.count*100 : 0;
-    const pitchCSW   = s.count ? (s.whiffs+s.cstrikes)/s.count*100 : 0;
-    const xw = s.xwobas.length ? avg(s.xwobas) : mlb.avg_xwoba;
-    // Weighted score index vs MLB
-    const whiffIdx = mlb.whiff_pct ? (pitchWhiff / mlb.whiff_pct) * 100 : 100;
-    const cswIdx   = mlb.csw_pct   ? (pitchCSW   / mlb.csw_pct)   * 100 : 100;
-    const xwIdx    = mlb.avg_xwoba && xw ? (mlb.avg_xwoba / xw) * 100 : 100;
-    const score = Math.round((whiffIdx * 0.4) + (cswIdx * 0.3) + (xwIdx * 0.3));
-    return { pt, score: Math.min(160, Math.max(40, score)) };
-  }).filter(d => combined[d.pt]?.count >= 5);
-
   // Build HTML
+  const sorted = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
+
   const levelBadge = isIndependent
     ? `<div class="report-note">Percentile rankings not shown — independent league data compared to MLB baselines would not be meaningful.</div>`
     : '';
 
-  const stuffRow = stuffScores.length ? `
-    <div class="stuff-row">
-      ${stuffScores.map(({pt, score}) => `
-        <div class="stuff-card">
-          <div class="stuff-pitch">${pn(pt)}</div>
-          <div class="stuff-score" style="color:${score>=110?'#e91e8c':score>=95?'#72747c':'#534AB7'}">${score ?? '—'}</div>
-          <div class="stuff-label">Stuff+</div>
-        </div>`).join('')}
-    </div>` : '';
+  // Compute additional metrics
+  const totalHIPBalls = Object.values(combined).reduce((a,s)=>a+s.hip,0);
+
+  // O-Swing%, Z-Contact%, SwStr%, Strike%, Zone% — approximate from what we have
+  // SwStr% = whiffs / total pitches
+  const swStrPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
+  // Strike% = (whiffs + called strikes + fouls + HIP) / total — approximate as CSW proxy
+  // GB% not directly stored but we can skip if null
+  const oSwingPct  = null; // not in our data
+  const zContactPct = null; // not in our data
+  const strikeZonePct = null; // not in our data
+
+  // Get avg peak velo from FF
+  const ffOutingPeaks = [];
+  athleteOutings.forEach(o => {
+    let pm={};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    const ff = pm['FF'] || pm['FA'];
+    if (ff?.peakVelo) ffOutingPeaks.push(pf(ff.peakVelo));
+  });
+  const peakVelo = ffOutingPeaks.length ? Math.max(...ffOutingPeaks) : null;
 
   container.innerHTML = `
     <div class="report-card">
@@ -809,20 +807,17 @@ function renderReport() {
         <div class="report-meta">${currentAthlete.throws}HP · ${currentAthlete.team||''} · ${currentAthlete.level||''} · 2026 Season</div>
         <div class="report-summary-strip">
           ${[
-            { v: athleteOutings.length, l: 'G' },
-            { v: totalPitches, l: 'Pitches' },
-            { v: totalK, l: 'K' },
-            { v: totalBB, l: 'BB' },
-            { v: avgVelo ? avgVelo.toFixed(1) : '—', l: 'FB velo' },
+            { v: athleteOutings.length,              l: 'G' },
+            { v: totalPitches,                       l: 'Pitches' },
+            { v: totalK,                             l: 'K' },
+            { v: totalBB,                            l: 'BB' },
+            { v: avgVelo   ? avgVelo.toFixed(1)  : '—', l: 'FB avg' },
+            { v: peakVelo  ? peakVelo.toFixed(1) : '—', l: 'FB peak' },
           ].map(k=>`<div class="report-sum-stat"><div class="report-sum-val">${k.v}</div><div class="report-sum-lbl">${k.l}</div></div>`).join('')}
         </div>
       </div>
 
       ${levelBadge}
-
-      ${stuffScores.length ? `
-      <div class="report-section-hd">Pitch Stuff+</div>
-      ${stuffRow}` : ''}
 
       <div class="report-section-hd">Season Percentiles${!hasBaselines?' (raw values)':' vs. MLB'}</div>
 
@@ -831,18 +826,20 @@ function renderReport() {
       </div>
 
       <div class="pct-group-hd">Results</div>
-      ${pctBar('Whiff%',    whiffPct,   whiffPct.toFixed(1),   DIST.whiffPct,   '%')}
-      ${pctBar('CSW%',      cswPct,     cswPct.toFixed(1),     DIST.cswPct,     '%')}
-      ${pctBar('K%',        kPct,       kPct.toFixed(1),       DIST.kPct,       '%')}
-      ${pctBar('BB%',       bbPct,      bbPct.toFixed(1),      DIST.bbPct,      '%')}
-      ${avgXwoba !== null ? pctBar('xwOBA', avgXwoba, avgXwoba.toFixed(3), DIST.avgXwoba) : ''}
+      ${avgXwoba !== null ? pctBar('xwOBA',      avgXwoba,    avgXwoba.toFixed(3),    DIST.avgXwoba)        : ''}
+      ${pctBar('Whiff%',       whiffPct,    whiffPct.toFixed(1),    DIST.whiffPct,   '%')}
+      ${pctBar('CSW%',         cswPct,      cswPct.toFixed(1),      DIST.cswPct,     '%')}
+      ${pctBar('K%',           kPct,        kPct.toFixed(1),        DIST.kPct,       '%')}
+      ${pctBar('BB%',          bbPct,       bbPct.toFixed(1),       DIST.bbPct,      '%')}
+      ${pctBar('SwStr%',       swStrPct,    swStrPct.toFixed(1),    DIST.whiffPct,   '%')}
 
-      <div class="pct-group-hd">Contact</div>
-      ${avgEV !== null ? pctBar('Avg EV',     avgEV,      avgEV.toFixed(1),      DIST.avgEV,      ' mph') : ''}
-      ${pctBar('Hard Hit%', hardHitPct, hardHitPct.toFixed(1), DIST.hardHitPct, '%')}
+      <div class="pct-group-hd">Contact quality</div>
+      ${avgEV      !== null ? pctBar('Avg EV',      avgEV,       avgEV.toFixed(1),       DIST.avgEV,       ' mph') : ''}
+      ${pctBar('Hard Hit%',    hardHitPct,  hardHitPct.toFixed(1),  DIST.hardHitPct, '%')}
 
       <div class="pct-group-hd">Stuff</div>
-      ${avgVelo !== null ? pctBar('FB Velocity', avgVelo, avgVelo.toFixed(1), DIST.avgVelo, ' mph') : ''}
+      ${avgVelo    !== null ? pctBar('FB Avg Velo',  avgVelo,     avgVelo.toFixed(1),     DIST.avgVelo,     ' mph') : ''}
+      ${peakVelo   !== null ? pctBar('FB Peak Velo', peakVelo,    peakVelo.toFixed(1),    DIST.avgVelo,     ' mph') : ''}
 
     </div>`;
 }
