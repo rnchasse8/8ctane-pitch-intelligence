@@ -218,6 +218,148 @@
 }
 .sel-input:focus { border-color: var(--cyan); }
 
+/* ---- REPORT / PERCENTILE DASHBOARD ---- */
+.report-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  max-width: 680px;
+  margin: 0 auto;
+}
+.report-header {
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  padding: 1.25rem 1.5rem;
+  text-align: center;
+}
+.report-name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 26px; font-weight: 800;
+  letter-spacing: .02em; margin-bottom: 2px;
+}
+.report-meta {
+  font-size: 12px; color: var(--muted); margin-bottom: .875rem;
+}
+.report-summary-strip {
+  display: flex; justify-content: center;
+  gap: 1.5rem; flex-wrap: wrap;
+}
+.report-sum-stat { text-align: center; }
+.report-sum-val {
+  font-family: 'DM Mono', monospace;
+  font-size: 20px; font-weight: 500;
+}
+.report-sum-lbl {
+  font-size: 10px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.report-note {
+  font-size: 12px; color: var(--muted);
+  text-align: center; padding: .75rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  font-style: italic;
+}
+.report-section-hd {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .14em;
+  color: var(--cyan);
+  padding: .75rem 1.5rem .25rem;
+  border-top: 1px solid var(--border);
+  margin-top: .25rem;
+}
+.pct-axis-labels {
+  display: flex; justify-content: space-between;
+  padding: 0 1.5rem 0 9.5rem;
+  font-size: 10px; color: var(--muted2);
+  font-family: 'DM Mono', monospace;
+  margin-bottom: 4px;
+}
+.pct-group-hd {
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted2);
+  padding: .5rem 1.5rem .125rem;
+  font-family: 'Barlow Condensed', sans-serif;
+}
+.pct-row {
+  display: flex; align-items: center;
+  padding: .3rem 1.5rem;
+  gap: .75rem;
+}
+.pct-row:hover { background: var(--surface2); }
+.pct-label {
+  min-width: 100px; flex-shrink: 0;
+  font-size: 12px; color: var(--text);
+  font-family: 'Barlow', sans-serif;
+}
+.pct-bar-track {
+  flex: 1; height: 20px;
+  background: var(--surface2);
+  border-radius: 3px;
+  overflow: visible;
+  position: relative;
+  border: 1px solid var(--border);
+}
+.pct-bar-fill {
+  height: 100%; border-radius: 3px;
+  position: relative;
+  transition: width .4s ease;
+  display: flex; align-items: center;
+  justify-content: flex-end;
+  min-width: 4px;
+}
+.pct-bar-fill-plain {
+  height: 100%; border-radius: 3px;
+}
+.pct-bubble {
+  position: absolute; right: -10px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px; font-weight: 500;
+  color: #fff;
+  flex-shrink: 0;
+  z-index: 2;
+}
+.pct-value {
+  min-width: 56px; text-align: right;
+  font-family: 'DM Mono', monospace;
+  font-size: 12px; color: var(--text);
+}
+
+/* Stuff+ row */
+.stuff-row {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding: .5rem 1.5rem .75rem;
+}
+.stuff-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: .5rem .875rem;
+  text-align: center;
+  min-width: 80px;
+}
+.stuff-pitch {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px; font-weight: 700;
+  color: var(--muted); margin-bottom: 2px;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.stuff-score {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 28px; font-weight: 800;
+  line-height: 1;
+}
+.stuff-label {
+  font-size: 9px; color: var(--muted2);
+  text-transform: uppercase; letter-spacing: .1em;
+  margin-top: 1px;
+}
+
 /* ---- MODAL ---- */
 .modal-overlay {
   position: fixed; inset: 0;

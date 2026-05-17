@@ -40,6 +40,7 @@ window.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.ptab-panel').forEach(p => p.classList.toggle('active', p.id === `ptab-${name}`));
       if (name === 'trends') renderTrends();
       if (name === 'yoy')    renderYoY();
+      if (name === 'report') renderReport();
       if (name === 'compare') populateCompareSelectors();
     });
   });
@@ -655,6 +656,195 @@ async function confirmDeleteOuting(outingId, date) {
   } catch(e) {
     toast('Error: ' + e.message, 'error');
   }
+}
+
+/* ==================== REPORT / PERCENTILE DASHBOARD ==================== */
+function renderReport() {
+  const container = document.getElementById('report-content');
+  if (!athleteOutings.length) {
+    container.innerHTML = '<div class="empty-state">No outing data available yet.</div>';
+    return;
+  }
+
+  // Detect level — skip MLB percentiles for independent league
+  const level = (currentAthlete.level || '').toLowerCase();
+  const isIndependent = level === 'other' || level === 'atlantic' || level === 'indy';
+  const hasBaselines = Object.keys(MLB_BASELINE_REF).length > 0 && !isIndependent;
+
+  // Aggregate season stats
+  const combined = {};
+  athleteOutings.forEach(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    Object.entries(pm).forEach(([pt, s]) => {
+      if (!s.count) return;
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, velos:[] };
+      const c = combined[pt];
+      c.count    += s.count    || 0;
+      c.whiffs   += s.whiffs   || 0;
+      c.cstrikes += s.cstrikes || 0;
+      c.hip      += s.hip      || 0;
+      if (s.avgVelo)   c.velos.push(pf(s.avgVelo));
+      if (s.avgXwoba)  c.xwobas.push(pf(s.avgXwoba));
+      if (s.avgEV)     c.evs.push(pf(s.avgEV));
+    });
+  });
+
+  const totalPitches = Object.values(combined).reduce((a,s)=>a+s.count,0);
+  const totalWhiffs  = Object.values(combined).reduce((a,s)=>a+s.whiffs,0);
+  const totalCS      = Object.values(combined).reduce((a,s)=>a+s.cstrikes,0);
+  const totalHIP     = Object.values(combined).reduce((a,s)=>a+s.hip,0);
+  const allXwobas    = Object.values(combined).flatMap(s=>s.xwobas);
+  const allEVs       = Object.values(combined).flatMap(s=>s.evs);
+  const allHardHits  = Object.values(combined).reduce((a,s)=>a+s.hardHits,0);
+  const totalBB      = athleteOutings.reduce((a,o)=>a+(+o.walks||0),0);
+  const totalK       = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0),0);
+
+  const whiffPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
+  const cswPct     = totalPitches ? (totalWhiffs+totalCS)/totalPitches*100 : 0;
+  const kPct       = totalHIP+totalK+totalBB > 0 ? totalK/(totalHIP+totalK+totalBB)*100 : 0;
+  const bbPct      = totalHIP+totalK+totalBB > 0 ? totalBB/(totalHIP+totalK+totalBB)*100 : 0;
+  const avgXwoba   = allXwobas.length ? avg(allXwobas) : null;
+  const avgEV      = allEVs.length ? avg(allEVs) : null;
+  const hardHitPct = allEVs.length ? allHardHits/allEVs.length*100 : 0;
+  const ffMap      = combined['FF'] || combined['FA'];
+  const avgVelo    = ffMap?.velos.length ? avg(ffMap.velos) : null;
+
+  // MLB baseline distributions (approximate percentile curves based on 2025-26 data)
+  // Each metric: { p10, p25, p50, p75, p90, higherIsBetter }
+  const DIST = {
+    whiffPct:   { p10:12, p25:17, p50:22, p75:27, p90:33, hib:true  },
+    cswPct:     { p10:14, p25:19, p50:24, p75:29, p90:35, hib:true  },
+    kPct:       { p10:14, p25:18, p50:22, p75:27, p90:32, hib:true  },
+    bbPct:      { p10:4,  p25:6,  p50:8,  p75:11, p90:14, hib:false },
+    avgXwoba:   { p10:.26,p25:.29,p50:.32,p75:.35,p90:.39, hib:false },
+    avgEV:      { p10:85, p25:87, p50:89, p75:91, p90:93, hib:false },
+    hardHitPct: { p10:28, p25:33, p50:38, p75:43, p90:49, hib:false },
+    avgVelo:    { p10:90, p25:92, p50:94, p75:96, p90:98, hib:true  },
+  };
+
+  function getPercentile(val, dist) {
+    if (val === null || val === undefined || isNaN(val)) return null;
+    const { p10, p25, p50, p75, p90, hib } = dist;
+    // Interpolate percentile
+    let pct;
+    if (val <= p10) pct = hib ? 5 : 95;
+    else if (val <= p25) pct = hib ? 15 + (val-p10)/(p25-p10)*15 : 80 - (val-p10)/(p25-p10)*15;
+    else if (val <= p50) pct = hib ? 30 + (val-p25)/(p50-p25)*20 : 65 - (val-p25)/(p50-p25)*20;
+    else if (val <= p75) pct = hib ? 50 + (val-p50)/(p75-p50)*25 : 40 - (val-p50)/(p75-p50)*25;
+    else if (val <= p90) pct = hib ? 75 + (val-p75)/(p90-p75)*15 : 15 - (val-p75)/(p90-p75)*10;
+    else pct = hib ? 92 : 5;
+    return Math.min(99, Math.max(1, Math.round(pct)));
+  }
+
+  function pctColor(p) {
+    if (p === null) return '#555';
+    if (p >= 80) return '#e91e8c';
+    if (p >= 60) return '#e91e8c99';
+    if (p >= 40) return '#72747c';
+    if (p >= 20) return '#534AB7';
+    return '#378ADD';
+  }
+
+  function pctBar(label, val, displayVal, dist, unit='') {
+    if (!hasBaselines) {
+      // No percentiles — just show the raw value as a simple bar
+      return `<div class="pct-row">
+        <div class="pct-label">${label}</div>
+        <div class="pct-bar-track">
+          <div class="pct-bar-fill-plain" style="width:50%;background:var(--cyan)"></div>
+        </div>
+        <div class="pct-value">${displayVal !== null ? displayVal+unit : '—'}</div>
+      </div>`;
+    }
+    const p = getPercentile(val, dist);
+    const color = pctColor(p);
+    const barW = p !== null ? p : 0;
+    return `<div class="pct-row">
+      <div class="pct-label">${label}</div>
+      <div class="pct-bar-track">
+        <div class="pct-bar-fill" style="width:${barW}%;background:${color}">
+          ${p !== null ? `<span class="pct-bubble" style="background:${color}">${p}</span>` : ''}
+        </div>
+      </div>
+      <div class="pct-value">${displayVal !== null ? displayVal+unit : '—'}</div>
+    </div>`;
+  }
+
+  // Per-pitch stuff scores (simple index vs MLB baseline)
+  const sorted = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
+  const stuffScores = sorted.map(([pt, s]) => {
+    const mlb = MLB_BASELINE_REF[pt];
+    if (!mlb || !hasBaselines) return { pt, score: null };
+    const pitchWhiff = s.count ? s.whiffs/s.count*100 : 0;
+    const pitchCSW   = s.count ? (s.whiffs+s.cstrikes)/s.count*100 : 0;
+    const xw = s.xwobas.length ? avg(s.xwobas) : mlb.avg_xwoba;
+    // Weighted score index vs MLB
+    const whiffIdx = mlb.whiff_pct ? (pitchWhiff / mlb.whiff_pct) * 100 : 100;
+    const cswIdx   = mlb.csw_pct   ? (pitchCSW   / mlb.csw_pct)   * 100 : 100;
+    const xwIdx    = mlb.avg_xwoba && xw ? (mlb.avg_xwoba / xw) * 100 : 100;
+    const score = Math.round((whiffIdx * 0.4) + (cswIdx * 0.3) + (xwIdx * 0.3));
+    return { pt, score: Math.min(160, Math.max(40, score)) };
+  }).filter(d => combined[d.pt]?.count >= 5);
+
+  // Build HTML
+  const levelBadge = isIndependent
+    ? `<div class="report-note">Percentile rankings not shown — independent league data compared to MLB baselines would not be meaningful.</div>`
+    : '';
+
+  const stuffRow = stuffScores.length ? `
+    <div class="stuff-row">
+      ${stuffScores.map(({pt, score}) => `
+        <div class="stuff-card">
+          <div class="stuff-pitch">${pn(pt)}</div>
+          <div class="stuff-score" style="color:${score>=110?'#e91e8c':score>=95?'#72747c':'#534AB7'}">${score ?? '—'}</div>
+          <div class="stuff-label">Stuff+</div>
+        </div>`).join('')}
+    </div>` : '';
+
+  container.innerHTML = `
+    <div class="report-card">
+      <div class="report-header">
+        <div class="report-name">${currentAthlete.name}</div>
+        <div class="report-meta">${currentAthlete.throws}HP · ${currentAthlete.team||''} · ${currentAthlete.level||''} · 2026 Season</div>
+        <div class="report-summary-strip">
+          ${[
+            { v: athleteOutings.length, l: 'G' },
+            { v: totalPitches, l: 'Pitches' },
+            { v: totalK, l: 'K' },
+            { v: totalBB, l: 'BB' },
+            { v: avgVelo ? avgVelo.toFixed(1) : '—', l: 'FB velo' },
+          ].map(k=>`<div class="report-sum-stat"><div class="report-sum-val">${k.v}</div><div class="report-sum-lbl">${k.l}</div></div>`).join('')}
+        </div>
+      </div>
+
+      ${levelBadge}
+
+      ${stuffScores.length ? `
+      <div class="report-section-hd">Pitch Stuff+</div>
+      ${stuffRow}` : ''}
+
+      <div class="report-section-hd">Season Percentiles${!hasBaselines?' (raw values)':' vs. MLB'}</div>
+
+      <div class="pct-axis-labels">
+        <span>Poor</span><span>Average</span><span>Great</span>
+      </div>
+
+      <div class="pct-group-hd">Results</div>
+      ${pctBar('Whiff%',    whiffPct,   whiffPct.toFixed(1),   DIST.whiffPct,   '%')}
+      ${pctBar('CSW%',      cswPct,     cswPct.toFixed(1),     DIST.cswPct,     '%')}
+      ${pctBar('K%',        kPct,       kPct.toFixed(1),       DIST.kPct,       '%')}
+      ${pctBar('BB%',       bbPct,      bbPct.toFixed(1),      DIST.bbPct,      '%')}
+      ${avgXwoba !== null ? pctBar('xwOBA', avgXwoba, avgXwoba.toFixed(3), DIST.avgXwoba) : ''}
+
+      <div class="pct-group-hd">Contact</div>
+      ${avgEV !== null ? pctBar('Avg EV',     avgEV,      avgEV.toFixed(1),      DIST.avgEV,      ' mph') : ''}
+      ${pctBar('Hard Hit%', hardHitPct, hardHitPct.toFixed(1), DIST.hardHitPct, '%')}
+
+      <div class="pct-group-hd">Stuff</div>
+      ${avgVelo !== null ? pctBar('FB Velocity', avgVelo, avgVelo.toFixed(1), DIST.avgVelo, ' mph') : ''}
+
+    </div>`;
 }
 
 /* ==================== YEAR-OVER-YEAR ==================== */
