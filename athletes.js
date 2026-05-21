@@ -771,13 +771,13 @@ async function renderSeasonInsight() {
   const zContactPct = avg(athleteOutings.map(o=>pf(o.z_contact_pct)).filter(Boolean));
   const gbPct       = avg(athleteOutings.map(o=>pf(o.gb_pct)).filter(Boolean));
 
-  const prompt = `You are an elite baseball pitching analyst at 8ctane Baseball. Analyze this pitcher's 2026 season data and provide a comprehensive scouting report.
+  const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Your tone is direct, encouraging, and specific — like a coach who knows this pitcher well and wants to help them improve. Use "you" and "your" throughout. Be honest about weaknesses but frame everything constructively. Avoid analytical jargon — say "your curveball is your best swing-and-miss pitch" not "CU xwOBA suppression indicates elite contact quality."
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.team||'unknown team'}, ${currentAthlete.level||''})
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
 ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}%
 
-ARSENAL (sorted by Stuff quality — weight psStuff+, whiff%, and contact suppression heavily when making recommendations):
+ARSENAL (weight psStuff+, whiff%, and contact suppression heavily):
 ${pitchSummary.map(p => {
   const stuffScore = (() => {
     const mlb = MLB_BASELINE_REF[p.code];
@@ -790,41 +790,31 @@ ${pitchSummary.map(p => {
   return `${p.pitch} (${p.code}): psStuff+≈${stuffScore||'N/A'} | ${p.usage}% usage | ${p.avgVelo||'?'} mph | Whiff: ${p.whiffPct}% (MLB avg: ${p.mlbWhiff||'?'}%) | CSW: ${p.cswPct}% | xwOBA: ${p.avgXwoba||'?'} (MLB avg: ${p.mlbXwoba||'?'}) | IVB: ${p.avgIVB||'?'}" HB: ${p.avgHB||'?'}" VAA: ${p.avgVAA||'?'}°`;
 }).join('\n')}
 
-CRITICAL INFERENCE RULES — follow these strictly:
-1. Pitches with psStuff+ > 105 should be PRIORITIZED regardless of current usage. If a pitch has elite stuff but low usage, recommend increasing it.
-2. Pitches with psStuff+ < 95 and high usage should be flagged — high usage of below-average stuff is a problem.
-3. Whiff% vs MLB average is the single most important results metric. A pitch with 40%+ whiff is elite regardless of other metrics.
-4. xwOBA on contact tells you contact quality — a pitch with low xwOBA is suppressing hard contact even if whiff% is modest.
-5. DO NOT recommend removing a pitch solely because it has lower usage — base it on stuff quality and results.
-6. Count strategy must reflect stuff quality: put elite-stuff pitches in high-leverage counts (0-2, 3-2), not just the most-used pitch.
+CRITICAL RULES:
+1. Pitches with psStuff+ > 105 should be PRIORITIZED regardless of current usage.
+2. Pitches with psStuff+ < 95 and high usage should be addressed honestly but constructively.
+3. Whiff% vs MLB average is the most important results metric.
+4. DO NOT recommend removing a pitch based on usage alone — base it on stuff quality.
+5. Write everything as if speaking directly to the pitcher.
 
-Provide your analysis in this EXACT JSON structure (respond with JSON only, no markdown):
+Respond with JSON only (no markdown):
 {
-  "headline": "2-3 word headline capturing the season",
-  "summary": "3-4 sentence overall season summary that references specific stuff grades",
-  "strengths": [{"title": "...", "detail": "..."}],
-  "concerns": [{"title": "...", "detail": "..."}],
+  "headline": "2-3 word headline — encouraging, captures the season",
+  "summary": "3-4 sentences written directly to the pitcher about their season — what they did well, what to build on",
+  "strengths": [{"title": "...", "detail": "written to the pitcher, specific and encouraging"}],
+  "concerns": [{"title": "...", "detail": "written to the pitcher, honest but constructive — frame as opportunity"}],
   "arsenalAssessment": {
-    "keepPitches": [{"pitch": "...", "reason": "..."}],
-    "developPitches": [{"pitch": "...", "reason": "..."}],
-    "addPitch": {"pitch": "...", "reason": "..."},
-    "removePitch": {"pitch": "...", "reason": "..."}
+    "keepPitches": [{"pitch": "...", "reason": "why this pitch is working for you"}],
+    "developPitches": [{"pitch": "...", "reason": "what you can unlock with this pitch"}],
+    "addPitch": {"pitch": "...", "reason": "why adding this would help you"},
+    "removePitch": {"pitch": "...", "reason": "honest explanation of why this isn't serving you"}
   },
   "splitAdvice": {
-    "vsRHH": "2-3 sentences referencing specific pitch matchups vs RHH",
-    "vsLHH": "2-3 sentences referencing specific pitch matchups vs LHH"
+    "vsRHH": "2-3 sentences of direct advice for attacking right-handed hitters",
+    "vsLHH": "2-3 sentences of direct advice for attacking left-handed hitters"
   },
-  "countStrategy": [
-    {
-      "count": "0-0",
-      "recommendation": "specific pitch + location reasoning based on stuff quality",
-      "pitch": "pitch name"
-    }
-  ],
-  "developmentPriorities": ["...", "...", "..."]
-}
-
-countStrategy must cover: 0-0, 0-2, 1-0, 2-0, 3-2. Base pitch selection on psStuff+ and whiff%, not usage frequency.`;
+  "developmentPriorities": ["specific actionable focus area written to the pitcher", "...", "..."]
+}`;
 
   try {
     const analysis = await callClaudeProxy(prompt);
@@ -889,9 +879,6 @@ function renderSeasonInsightHTML(a, pitchSummary, total) {
         </div>
       </div>
 
-      <div class="section-hd" style="margin-top:1.5rem">Pitch selection by count</div>
-      <div class="count-strategy-wrap">${countRows}</div>
-
       <div class="section-hd" style="margin-top:1.5rem">Development priorities</div>
       <div class="dev-priorities">
         ${(a.developmentPriorities||[]).map((p,i) =>
@@ -934,7 +921,7 @@ async function loadOutingInsight() {
       return `${pn(pt)}: ${s.count} pitches (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'} mph | Whiff: ${s.whiffPct||0}% | CSW: ${s.cswPct||0}% | xwOBA: ${s.avgXwoba||'N/A'} | IVB: ${s.avgIVB||'?'}" HB: ${s.avgHB||'?'}" VAA: ${s.avgVAA||'?'}° (MLB whiff avg: ${mlb?.whiff_pct||'?'}%)`;
     }).join('\n');
 
-  const prompt = `You are an elite pitching analyst at 8ctane Baseball. Analyze this single outing and provide detailed feedback.
+  const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher after their outing. Your tone is direct, honest, and encouraging — like a coach who watched every pitch and wants to help them grow. Use "you" and "your" throughout. Be specific about what happened, what worked, and what to adjust. Speak plainly — avoid stat jargon.
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.level||''})
 OUTING: ${formatDate(outing.date)} vs. ${outing.opponent||'Unknown'} | ${total} pitches | ${outing.ks||0}K ${outing.walks||0}BB
@@ -943,15 +930,15 @@ Zone%: ${outing.zone_pct||'N/A'}% | O-Swing%: ${outing.o_swing_pct||'N/A'}% | Z-
 PITCH-BY-PITCH:
 ${pitchLines}
 
-Provide your analysis as JSON only (no markdown):
+Respond with JSON only (no markdown):
 {
-  "headline": "2-3 word outing summary",
-  "summary": "3-4 sentence outing narrative",
-  "whatWorked": [{"title": "...", "detail": "..."}],
-  "whatDidnt": [{"title": "...", "detail": "..."}],
-  "keyMoments": ["...", "..."],
-  "adjustments": [{"count": "...", "current": "...", "suggested": "...", "pitch": "...", "location": "one of: up-in,up-away,middle-in,middle-away,low-in,low-away,low-middle,up-middle,middle", "reason": "..."}],
-  "nextOutingFocus": ["...", "...", "..."]
+  "headline": "2-3 word outing summary — direct and honest",
+  "summary": "3-4 sentences written directly to the pitcher — what happened tonight, the good and the bad",
+  "whatWorked": [{"title": "...", "detail": "specific encouragement about what worked and why to keep doing it"}],
+  "whatDidnt": [{"title": "...", "detail": "honest but constructive — what went wrong and how to fix it"}],
+  "keyMoments": ["specific moment from the outing written to the pitcher", "..."],
+  "adjustments": [{"count": "...", "current": "...", "suggested": "...", "pitch": "...", "reason": "direct coaching advice"}],
+  "nextOutingFocus": ["specific actionable focus written to the pitcher", "...", "..."]
 }`;
 
   try {
