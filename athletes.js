@@ -777,13 +777,31 @@ PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.te
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
 ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}%
 
-ARSENAL:
-${pitchSummary.map(p => `${p.pitch} (${p.code}): ${p.usage}% usage | ${p.avgVelo||'?'} mph | Whiff: ${p.whiffPct}% (MLB avg: ${p.mlbWhiff||'?'}%) | CSW: ${p.cswPct}% | xwOBA: ${p.avgXwoba||'?'} (MLB avg: ${p.mlbXwoba||'?'}) | IVB: ${p.avgIVB||'?'}" HB: ${p.avgHB||'?'}" VAA: ${p.avgVAA||'?'}°`).join('\n')}
+ARSENAL (sorted by Stuff quality — weight psStuff+, whiff%, and contact suppression heavily when making recommendations):
+${pitchSummary.map(p => {
+  const stuffScore = (() => {
+    const mlb = MLB_BASELINE_REF[p.code];
+    if (!mlb) return null;
+    const veloIdx  = p.avgVelo  ? (p.avgVelo/mlb.avg_velo)*100 : 100;
+    const whiffIdx = mlb.whiff_pct ? (p.whiffPct/mlb.whiff_pct)*100 : 100;
+    const xwIdx    = p.avgXwoba && mlb.avg_xwoba ? (mlb.avg_xwoba/p.avgXwoba)*100 : 100;
+    return Math.round(veloIdx*0.3 + whiffIdx*0.4 + xwIdx*0.3);
+  })();
+  return `${p.pitch} (${p.code}): psStuff+≈${stuffScore||'N/A'} | ${p.usage}% usage | ${p.avgVelo||'?'} mph | Whiff: ${p.whiffPct}% (MLB avg: ${p.mlbWhiff||'?'}%) | CSW: ${p.cswPct}% | xwOBA: ${p.avgXwoba||'?'} (MLB avg: ${p.mlbXwoba||'?'}) | IVB: ${p.avgIVB||'?'}" HB: ${p.avgHB||'?'}" VAA: ${p.avgVAA||'?'}°`;
+}).join('\n')}
+
+CRITICAL INFERENCE RULES — follow these strictly:
+1. Pitches with psStuff+ > 105 should be PRIORITIZED regardless of current usage. If a pitch has elite stuff but low usage, recommend increasing it.
+2. Pitches with psStuff+ < 95 and high usage should be flagged — high usage of below-average stuff is a problem.
+3. Whiff% vs MLB average is the single most important results metric. A pitch with 40%+ whiff is elite regardless of other metrics.
+4. xwOBA on contact tells you contact quality — a pitch with low xwOBA is suppressing hard contact even if whiff% is modest.
+5. DO NOT recommend removing a pitch solely because it has lower usage — base it on stuff quality and results.
+6. Count strategy must reflect stuff quality: put elite-stuff pitches in high-leverage counts (0-2, 3-2), not just the most-used pitch.
 
 Provide your analysis in this EXACT JSON structure (respond with JSON only, no markdown):
 {
   "headline": "2-3 word headline capturing the season",
-  "summary": "3-4 sentence overall season summary",
+  "summary": "3-4 sentence overall season summary that references specific stuff grades",
   "strengths": [{"title": "...", "detail": "..."}],
   "concerns": [{"title": "...", "detail": "..."}],
   "arsenalAssessment": {
@@ -793,21 +811,20 @@ Provide your analysis in this EXACT JSON structure (respond with JSON only, no m
     "removePitch": {"pitch": "...", "reason": "..."}
   },
   "splitAdvice": {
-    "vsRHH": "2-3 sentences on sequencing vs RHH",
-    "vsLHH": "2-3 sentences on sequencing vs LHH"
+    "vsRHH": "2-3 sentences referencing specific pitch matchups vs RHH",
+    "vsLHH": "2-3 sentences referencing specific pitch matchups vs LHH"
   },
   "countStrategy": [
     {
       "count": "0-0",
-      "recommendation": "...",
-      "pitch": "pitch name",
-      "location": "one of: up-in, up-away, middle-in, middle-away, low-in, low-away, low-middle, up-middle, middle"
+      "recommendation": "specific pitch + location reasoning based on stuff quality",
+      "pitch": "pitch name"
     }
   ],
   "developmentPriorities": ["...", "...", "..."]
 }
 
-countStrategy should cover: 0-0, 0-2, 1-0, 2-0, 3-2 counts. location must be one of the exact strings listed.`;
+countStrategy must cover: 0-0, 0-2, 1-0, 2-0, 3-2. Base pitch selection on psStuff+ and whiff%, not usage frequency.`;
 
   try {
     const analysis = await callClaudeProxy(prompt);
@@ -842,7 +859,6 @@ function renderSeasonInsightHTML(a, pitchSummary, total) {
   const countRows = (a.countStrategy||[]).map(c => `
     <div class="count-strategy-row">
       <div class="cs-count">${c.count}</div>
-      <div class="cs-zone-wrap">${strikeZoneDiagram(c.location, c.pitch)}</div>
       <div class="cs-detail">
         <div class="cs-pitch">${c.pitch}</div>
         <div class="cs-rec">${c.recommendation}</div>
@@ -959,7 +975,6 @@ function renderOutingInsightHTML(a, outing, pm, total) {
   const adjustRows = (a.adjustments||[]).map(adj => `
     <div class="count-strategy-row">
       <div class="cs-count">${adj.count}</div>
-      <div class="cs-zone-wrap">${strikeZoneDiagram(adj.location, adj.pitch)}</div>
       <div class="cs-detail">
         <div class="cs-pitch">${adj.pitch}</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Was: ${adj.current}</div>
