@@ -711,6 +711,93 @@ async function confirmDeleteOuting(outingId, date) {
   }
 }
 
+/* ==================== PITCH METRICS EDITOR ==================== */
+const PITCH_METRIC_FIELDS = [
+  { key:'psStuffPlus',  label:'psStuff+',  type:'number', placeholder:'e.g. 117' },
+  { key:'spinRate',     label:'Spin Rate', type:'number', placeholder:'e.g. 2332' },
+  { key:'armSide',     label:'Arm Side',  type:'number', placeholder:'e.g. 7.01' },
+  { key:'vertical',    label:'Vertical',  type:'number', placeholder:'e.g. 17.17' },
+  { key:'xwOBA',       label:'xwOBA',     type:'number', placeholder:'e.g. .398' },
+  { key:'xSLG',        label:'xSLG',      type:'number', placeholder:'e.g. .582' },
+  { key:'xBA',         label:'xBA',       type:'number', placeholder:'e.g. .346' },
+  { key:'whiffPct',    label:'Whiff%',    type:'number', placeholder:'e.g. 9.1' },
+  { key:'hardHitPct',  label:'HardHit%',  type:'number', placeholder:'e.g. 66.67' },
+];
+
+const EDITABLE_PITCH_TYPES = [
+  { code:'FF', label:'4-Seam' },
+  { code:'SI', label:'Sinker' },
+  { code:'FC', label:'Cutter' },
+  { code:'ST', label:'Sweeper' },
+  { code:'SL', label:'Slider' },
+  { code:'CU', label:'Curveball' },
+  { code:'CH', label:'Changeup' },
+  { code:'FS', label:'Splitter' },
+];
+
+function showEditPitchMetrics() {
+  const existing = currentAthlete.pitch_metrics || {};
+
+  const pitchRows = EDITABLE_PITCH_TYPES.map(({ code, label }) => {
+    const m = existing[code] || {};
+    const fields = PITCH_METRIC_FIELDS.map(f =>
+      `<div class="pm-field">
+        <label class="pm-field-label">${f.label}</label>
+        <input class="pm-field-input" type="${f.type}" placeholder="${f.placeholder}"
+          id="pm-${code}-${f.key}" value="${m[f.key] !== undefined ? m[f.key] : ''}">
+      </div>`
+    ).join('');
+    return `<div class="pm-pitch-block">
+      <div class="pm-pitch-name">
+        <span class="pitch-dot" style="background:${pc(code)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px"></span>
+        ${label}
+      </div>
+      <div class="pm-fields-grid">${fields}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('modal-title').textContent = 'Edit Pitch Metrics';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="font-size:12px;color:var(--muted);margin-bottom:1.25rem;line-height:1.6">
+      Enter psStuff+ and pitch metrics from your analytics system. Leave fields blank if not available.
+      These values are used in Season Insight analysis.
+    </p>
+    <div class="pm-editor">${pitchRows}</div>
+    <div style="display:flex;gap:.75rem;margin-top:1.5rem;justify-content:flex-end">
+      <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="savePitchMetrics()">Save Metrics</button>
+    </div>`;
+  document.getElementById('modal-overlay').style.display = 'flex';
+}
+
+async function savePitchMetrics() {
+  const metrics = {};
+  EDITABLE_PITCH_TYPES.forEach(({ code }) => {
+    const pitchData = {};
+    let hasData = false;
+    PITCH_METRIC_FIELDS.forEach(f => {
+      const el = document.getElementById(`pm-${code}-${f.key}`);
+      if (el && el.value.trim() !== '') {
+        pitchData[f.key] = parseFloat(el.value.trim());
+        hasData = true;
+      }
+    });
+    if (hasData) metrics[code] = pitchData;
+  });
+
+  try {
+    await api('updateAthlete', {
+      athleteId: currentAthlete.id,
+      pitch_metrics_json: JSON.stringify(metrics)
+    });
+    currentAthlete.pitch_metrics = metrics;
+    closeModal();
+    toast('Pitch metrics saved ✓', 'success');
+  } catch(e) {
+    toast('Error saving: ' + e.message, 'error');
+  }
+}
+
 /* ==================== SEASON INSIGHT ==================== */
 async function renderSeasonInsight() {
   const container = document.getElementById('season-insight-content');
@@ -771,50 +858,57 @@ async function renderSeasonInsight() {
   const zContactPct = avg(athleteOutings.map(o=>pf(o.z_contact_pct)).filter(Boolean));
   const gbPct       = avg(athleteOutings.map(o=>pf(o.gb_pct)).filter(Boolean));
 
-  const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Your tone is direct, encouraging, and specific — like a coach who knows this pitcher well and wants to help them improve. Use "you" and "your" throughout. Be honest about weaknesses but frame everything constructively. Avoid analytical jargon — say "your curveball is your best swing-and-miss pitch" not "CU xwOBA suppression indicates elite contact quality."
+  const pm_stored = currentAthlete.pitch_metrics || {};
+  const hasRealStuff = Object.keys(pm_stored).length > 0;
+
+  const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Your tone is direct, encouraging, and specific - like a coach who knows this pitcher well. Use "you" and "your" throughout. Frame weaknesses constructively. Speak plainly.
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.team||'unknown team'}, ${currentAthlete.level||''})
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
 ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}%
 
-ARSENAL (weight psStuff+, whiff%, and contact suppression heavily):
+ARSENAL${hasRealStuff ? ' - psStuff+ scores are REAL 8ctane values. Weight these as primary signal for quality.' : ' - estimated psStuff+, treat as approximate.'}:
 ${pitchSummary.map(p => {
-  const stuffScore = (() => {
+  const real = pm_stored[p.code];
+  const stuffScore = real && real.psStuffPlus ? real.psStuffPlus : (() => {
     const mlb = MLB_BASELINE_REF[p.code];
     if (!mlb) return null;
-    const veloIdx  = p.avgVelo  ? (p.avgVelo/mlb.avg_velo)*100 : 100;
+    const veloIdx  = p.avgVelo ? (p.avgVelo/mlb.avg_velo)*100 : 100;
     const whiffIdx = mlb.whiff_pct ? (p.whiffPct/mlb.whiff_pct)*100 : 100;
     const xwIdx    = p.avgXwoba && mlb.avg_xwoba ? (mlb.avg_xwoba/p.avgXwoba)*100 : 100;
     return Math.round(veloIdx*0.3 + whiffIdx*0.4 + xwIdx*0.3);
   })();
-  return `${p.pitch} (${p.code}): psStuff+≈${stuffScore||'N/A'} | ${p.usage}% usage | ${p.avgVelo||'?'} mph | Whiff: ${p.whiffPct}% (MLB avg: ${p.mlbWhiff||'?'}%) | CSW: ${p.cswPct}% | xwOBA: ${p.avgXwoba||'?'} (MLB avg: ${p.mlbXwoba||'?'}) | IVB: ${p.avgIVB||'?'}" HB: ${p.avgHB||'?'}" VAA: ${p.avgVAA||'?'}°`;
+  const tag = real ? '[REAL]' : '[EST]';
+  const realLine = real ? ` Spin:${real.spinRate||'?'} ArmSide:${real.armSide||'?'} Vert:${real.vertical||'?'} xwOBA:${real.xwOBA||'?'} xSLG:${real.xSLG||'?'} xBA:${real.xBA||'?'} Whiff%:${real.whiffPct||'?'} HardHit%:${real.hardHitPct||'?'}` : '';
+  return p.pitch + ' (' + p.code + ') ' + tag + ': psStuff+=' + (stuffScore||'N/A') + ' | ' + p.usage + '% usage | ' + (p.avgVelo||'?') + ' mph | Season Whiff:' + p.whiffPct + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | xwOBA:' + (p.avgXwoba||'?') + realLine;
 }).join('\n')}
 
 CRITICAL RULES:
-1. Pitches with psStuff+ > 105 should be PRIORITIZED regardless of current usage.
-2. Pitches with psStuff+ < 95 and high usage should be addressed honestly but constructively.
-3. Whiff% vs MLB average is the most important results metric.
-4. DO NOT recommend removing a pitch based on usage alone — base it on stuff quality.
-5. Write everything as if speaking directly to the pitcher.
+1. ${hasRealStuff ? 'REAL psStuff+ scores are your primary signal. Trust them over estimates.' : 'Estimated scores only.'}
+2. psStuff+ > 105 = must prioritize this pitch regardless of usage. If underused, say so directly.
+3. psStuff+ < 95 with heavy usage = problem. Address it constructively.
+4. Never base pitch removal recommendations on usage alone.
+5. Speak directly to the pitcher throughout.
 
 Respond with JSON only (no markdown):
 {
-  "headline": "2-3 word headline — encouraging, captures the season",
-  "summary": "3-4 sentences written directly to the pitcher about their season — what they did well, what to build on",
-  "strengths": [{"title": "...", "detail": "written to the pitcher, specific and encouraging"}],
-  "concerns": [{"title": "...", "detail": "written to the pitcher, honest but constructive — frame as opportunity"}],
+  "headline": "2-3 word headline capturing the season",
+  "summary": "3-4 sentences to the pitcher about their season",
+  "strengths": [{"title": "...", "detail": "specific and encouraging, to the pitcher"}],
+  "concerns": [{"title": "...", "detail": "honest but constructive, framed as opportunity"}],
   "arsenalAssessment": {
     "keepPitches": [{"pitch": "...", "reason": "why this pitch is working for you"}],
     "developPitches": [{"pitch": "...", "reason": "what you can unlock with this pitch"}],
     "addPitch": {"pitch": "...", "reason": "why adding this would help you"},
-    "removePitch": {"pitch": "...", "reason": "honest explanation of why this isn't serving you"}
+    "removePitch": {"pitch": "...", "reason": "why this isn't serving you right now"}
   },
   "splitAdvice": {
     "vsRHH": "2-3 sentences of direct advice for attacking right-handed hitters",
     "vsLHH": "2-3 sentences of direct advice for attacking left-handed hitters"
   },
-  "developmentPriorities": ["specific actionable focus area written to the pitcher", "...", "..."]
+  "developmentPriorities": ["specific actionable focus written to the pitcher", "...", "..."]
 }`;
+
 
   try {
     const analysis = await callClaudeProxy(prompt);
@@ -1264,6 +1358,53 @@ function renderReport() {
 }
 
 /* ==================== YEAR-OVER-YEAR ==================== */
+function renderPsStuffCards() {
+  const pm = currentAthlete.pitch_metrics || {};
+  const section = document.getElementById('metrics-psstuff-section');
+  const container = document.getElementById('metrics-psstuff-cards');
+  if (!section || !container) return;
+
+  const entries = Object.entries(pm).filter(([,m]) => m && m.psStuffPlus);
+  if (!entries.length) { section.style.display = 'none'; return; }
+
+  section.style.display = '';
+
+  // Header
+  const cols = ['psStuff+','Spin','Arm Side','Vertical','xwOBA','xSLG','xBA','Whiff%','HardHit%'];
+  const keyMap = ['psStuffPlus','spinRate','armSide','vertical','xwOBA','xSLG','xBA','whiffPct','hardHitPct'];
+
+  const header = `<div class="mov-header-row">
+    <div class="mov-header-label">Pitch</div>
+    <div class="mov-header-stats">${cols.map(c=>`<div class="mov-header-stat">${c}</div>`).join('')}</div>
+  </div>`;
+
+  const rows = entries.sort((a,b) => {
+    const pa = EDITABLE_PITCH_TYPES.findIndex(p=>p.code===a[0]);
+    const pb = EDITABLE_PITCH_TYPES.findIndex(p=>p.code===b[0]);
+    return (pa===-1?99:pa) - (pb===-1?99:pb);
+  }).map(([pt, m]) => {
+    const vals = keyMap.map((k,i) => {
+      const v = m[k];
+      if (v === undefined || v === null || v === '') return '—';
+      // Color psStuff+
+      if (k === 'psStuffPlus') {
+        const cls = v >= 110 ? 'v-good' : v >= 95 ? 'v-num' : 'v-bad';
+        return `<span class="${cls}">${v}</span>`;
+      }
+      return `<span class="v-num">${v}</span>`;
+    });
+    return `<div class="mov-pitch-row">
+      <div class="mov-pitch-label">
+        <span class="pitch-dot" style="background:${pc(pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex-shrink:0"></span>
+        <span class="mov-pitch-name">${pn(pt)}</span>
+      </div>
+      <div class="mov-stat-group">${vals.map(v=>`<div class="mov-stat"><div class="mov-stat-val">${v}</div></div>`).join('')}</div>
+    </div>`;
+  }).join('');
+
+  container.innerHTML = header + rows;
+}
+
 function renderYoY() {
   if (!athleteOutings.length) {
     document.getElementById('yoy-empty').style.display = '';
@@ -1271,6 +1412,8 @@ function renderYoY() {
   }
   document.getElementById('yoy-empty').style.display = 'none';
 
+  // Render psStuff+ cards if data exists
+  renderPsStuffCards();
   // Aggregate all outings into a single season pitch map
   const combined = {};
   athleteOutings.forEach(o => {
