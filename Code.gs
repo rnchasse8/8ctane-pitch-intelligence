@@ -112,12 +112,11 @@ const OUTING_HEADERS = [
   'id','athleteId','date','opponent','inning_start','notes',
   'total_pitches','strikes','balls','whiffs','called_strikes',
   'walks','strikeouts',
-  // Per-pitch-type JSON blob (compact storage)
   'pitch_stats_json',
-  // Raw CSV stored as compressed summary for trend charts
   'ff_pct','st_pct','fs_pct','fc_pct','cu_pct','sl_pct','si_pct','ch_pct',
   'ff_velo','ff_whiff','st_whiff','fs_whiff','cu_whiff',
   'avg_ev','hard_hit_pct',
+  'zone_pct','o_swing_pct','z_swing_pct','z_contact_pct','swing_pct','strike_pct','gb_pct','fb_pct','ld_pct',
   'createdAt'
 ];
 
@@ -162,6 +161,15 @@ function addOuting(body) {
     ps('FF','avgVelo'), ps('FF','whiffPct'), ps('ST','whiffPct'), ps('FS','whiffPct'), ps('CU','whiffPct'),
     s.avgEV || '',
     s.hardHitPct || '',
+    s.zonePct     || '',
+    s.oSwingPct   || '',
+    s.zSwingPct   || '',
+    s.zContactPct || '',
+    s.swingPct    || '',
+    s.strikePct   || '',
+    s.gbPct       || '',
+    s.fbPct       || '',
+    s.ldPct       || '',
     new Date().toISOString()
   ];
   sheet.appendRow(row);

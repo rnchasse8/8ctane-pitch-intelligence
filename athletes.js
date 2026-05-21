@@ -540,7 +540,6 @@ function loadOutingCSV(file) {
 }
 
 function processOutingRows(rows) {
-  // Normalize pitch types
   const NORMALIZE = { FA:'FF', FO:'FS', CS:'CU', SV:'SL' };
   rows.forEach(r => {
     let pt = (r.pitch_type||'').trim().toUpperCase();
@@ -551,6 +550,14 @@ function processOutingRows(rows) {
 
   const total = rows.length;
   const pitchMap = {};
+
+  // Zone/swing counters (outing-level)
+  let inZone=0, outZone=0, swingInZone=0, swingOutZone=0,
+      contactInZone=0, contactOutZone=0, totalSwings=0,
+      totalStrikes=0, gbCount=0, fbCount=0, ldCount=0, puCount=0, bipCount=0;
+
+  const STRIKE_ZONES = new Set(['1','2','3','4','5','6','7','8','9']);
+
   rows.forEach(r => {
     const pt = r._pt;
     if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rawRows:[] };
@@ -560,7 +567,21 @@ function processOutingRows(rows) {
     if (r.release_speed) s.velos.push(pf(r.release_speed));
     if (r.pfx_x) s.pfx_xs.push(pf(r.pfx_x));
     if (r.pfx_z) s.pfx_zs.push(pf(r.pfx_z));
+
     const desc = r.description||'';
+    const zone = (r.zone||'').toString().trim();
+    const inStrikeZone = STRIKE_ZONES.has(zone);
+    if (inStrikeZone) inZone++; else if (zone) outZone++;
+
+    const isSwing = desc.includes('swinging_strike') || desc.includes('foul') || desc === 'hit_into_play' || desc === 'foul_tip';
+    const isContact = desc.includes('foul') || desc === 'hit_into_play' || desc === 'foul_tip';
+
+    if (isSwing) {
+      totalSwings++;
+      if (inStrikeZone) { swingInZone++; if(isContact) contactInZone++; }
+      else if (zone) { swingOutZone++; if(isContact) contactOutZone++; }
+    }
+
     if (desc.includes('swinging_strike')) s.whiffs++;
     else if (desc.includes('called_strike')) s.cstrikes++;
     else if (desc==='ball'||desc==='blocked_ball') s.balls++;
@@ -570,18 +591,30 @@ function processOutingRows(rows) {
       if (r.launch_speed) s.launch_speeds.push(pf(r.launch_speed));
       if (r.estimated_woba_using_speedangle) s.xwobas.push(pf(r.estimated_woba_using_speedangle));
     }
+
+    // Strikes = swinging strikes + called strikes + fouls + HIP
+    if (desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play') totalStrikes++;
+
+    // BIP types
+    const bbt = (r.bb_type||'').toLowerCase();
+    if (bbt) {
+      bipCount++;
+      if (bbt==='ground_ball') gbCount++;
+      else if (bbt==='fly_ball') fbCount++;
+      else if (bbt==='line_drive') ldCount++;
+      else if (bbt==='popup') puCount++;
+    }
   });
 
-  // Flatten for storage
+  // Flatten pitch map
   const flatMap = {};
   Object.entries(pitchMap).forEach(([pt, s]) => {
-    // Compute approach angles per pitch
-    const angles = s.rawRows ? s.rawRows.map(r => {
+    const angles = s.rawRows.map(r => {
       const vx0=pf(r.vx0),vy0=pf(r.vy0),vz0=pf(r.vz0),ax=pf(r.ax),ay=pf(r.ay),az=pf(r.az),ext=pf(r.release_extension)||6;
       if (!vy0) return null;
       const t = (60.5-ext)/Math.abs(vy0);
       return { vaa: +(Math.atan((vz0+az*t)/Math.abs(vy0+ay*t))*(180/Math.PI)).toFixed(1), haa: +(Math.atan((vx0+ax*t)/Math.abs(vy0+ay*t))*(180/Math.PI)).toFixed(1) };
-    }).filter(Boolean) : [];
+    }).filter(Boolean);
     flatMap[pt] = {
       count:    s.count,
       whiffs:   s.whiffs,
@@ -589,12 +622,12 @@ function processOutingRows(rows) {
       hip:      s.hip,
       avgVelo:  s.velos.length  ? +avg(s.velos).toFixed(1)  : null,
       peakVelo: s.velos.length  ? +Math.max(...s.velos).toFixed(1) : null,
-      whiffPct: s.count         ? +(s.whiffs/s.count*100).toFixed(1) : 0,
-      cswPct:   s.count         ? +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0,
+      whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : 0,
+      cswPct:   s.count ? +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0,
       avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
       avgEV:    s.launch_speeds.length ? +avg(s.launch_speeds).toFixed(1) : null,
-      avgIVB:   s.pfx_zs.length ? +(avg(s.pfx_zs) * 12).toFixed(1) : null,
-      avgHB:    s.pfx_xs.length ? +(-avg(s.pfx_xs) * 12).toFixed(1) : null,
+      avgIVB:   s.pfx_zs.length ? +(avg(s.pfx_zs)*12).toFixed(1) : null,
+      avgHB:    s.pfx_xs.length ? +(-avg(s.pfx_xs)*12).toFixed(1) : null,
       avgVAA:   angles.length   ? +avg(angles.map(a=>a.vaa)).toFixed(1) : null,
       avgHAA:   angles.length   ? +avg(angles.map(a=>a.haa)).toFixed(1) : null,
     };
@@ -604,17 +637,27 @@ function processOutingRows(rows) {
   const totalCS     = Object.values(pitchMap).reduce((a,s)=>a+s.cstrikes,0);
   const allEVs      = Object.values(pitchMap).flatMap(s=>s.launch_speeds);
   const hardHits    = allEVs.filter(ev=>ev>=95).length;
+  const zonedPitches = inZone + outZone;
 
   return {
     pitchMap: flatMap,
     stats: {
       total,
-      whiffs: totalWhiffs,
+      whiffs:        totalWhiffs,
       calledStrikes: totalCS,
-      walks: rows.filter(r=>r.events==='walk').length,
-      ks: rows.filter(r=>r.events==='strikeout').length,
-      avgEV: allEVs.length ? +avg(allEVs).toFixed(1) : null,
-      hardHitPct: allEVs.length ? +(hardHits/allEVs.length*100).toFixed(1) : null,
+      walks:         rows.filter(r=>r.events==='walk').length,
+      ks:            rows.filter(r=>r.events==='strikeout').length,
+      avgEV:         allEVs.length ? +avg(allEVs).toFixed(1) : null,
+      hardHitPct:    allEVs.length ? +(hardHits/allEVs.length*100).toFixed(1) : null,
+      zonePct:       zonedPitches  ? +(inZone/zonedPitches*100).toFixed(1) : null,
+      oSwingPct:     outZone       ? +(swingOutZone/outZone*100).toFixed(1) : null,
+      zSwingPct:     inZone        ? +(swingInZone/inZone*100).toFixed(1) : null,
+      zContactPct:   swingInZone   ? +(contactInZone/swingInZone*100).toFixed(1) : null,
+      swingPct:      total         ? +(totalSwings/total*100).toFixed(1) : null,
+      strikePct:     total         ? +(totalStrikes/total*100).toFixed(1) : null,
+      gbPct:         bipCount      ? +(gbCount/bipCount*100).toFixed(1) : null,
+      fbPct:         bipCount      ? +(fbCount/bipCount*100).toFixed(1) : null,
+      ldPct:         bipCount      ? +(ldCount/bipCount*100).toFixed(1) : null,
     }
   };
 }
@@ -671,7 +714,7 @@ function renderReport() {
   const isIndependent = level === 'other' || level === 'atlantic' || level === 'indy';
   const hasBaselines = Object.keys(MLB_BASELINE_REF).length > 0 && !isIndependent;
 
-  // Aggregate season stats
+  // Aggregate season stats from pitch map
   const combined = {};
   athleteOutings.forEach(o => {
     let pm = {};
@@ -709,24 +752,68 @@ function renderReport() {
   const hardHitPct = allEVs.length ? allHardHits/allEVs.length*100 : 0;
   const ffMap      = combined['FF'] || combined['FA'];
   const avgVelo    = ffMap?.velos.length ? avg(ffMap.velos) : null;
+  const swStrPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
 
-  // MLB baseline distributions (approximate percentile curves based on 2025-26 data)
-  // Each metric: { p10, p25, p50, p75, p90, higherIsBetter }
+  // Aggregate zone/swing metrics from stored outing stats
+  const zoneVals=[], oSwingVals=[], zSwingVals=[], zContactVals=[],
+        swingVals=[], strikeVals=[], gbVals=[], fbVals=[], ldVals=[];
+
+  athleteOutings.forEach(o => {
+    if (pf(o.zone_pct))      zoneVals.push(pf(o.zone_pct));
+    if (pf(o.o_swing_pct))   oSwingVals.push(pf(o.o_swing_pct));
+    if (pf(o.z_swing_pct))   zSwingVals.push(pf(o.z_swing_pct));
+    if (pf(o.z_contact_pct)) zContactVals.push(pf(o.z_contact_pct));
+    if (pf(o.swing_pct))     swingVals.push(pf(o.swing_pct));
+    if (pf(o.strike_pct))    strikeVals.push(pf(o.strike_pct));
+    if (pf(o.gb_pct))        gbVals.push(pf(o.gb_pct));
+    if (pf(o.fb_pct))        fbVals.push(pf(o.fb_pct));
+    if (pf(o.ld_pct))        ldVals.push(pf(o.ld_pct));
+  });
+
+  const zonePct     = zoneVals.length     ? avg(zoneVals)     : null;
+  const oSwingPct   = oSwingVals.length   ? avg(oSwingVals)   : null;
+  const zSwingPct   = zSwingVals.length   ? avg(zSwingVals)   : null;
+  const zContactPct = zContactVals.length ? avg(zContactVals) : null;
+  const swingPct    = swingVals.length    ? avg(swingVals)    : null;
+  const strikePct   = strikeVals.length   ? avg(strikeVals)   : null;
+  const gbPct       = gbVals.length       ? avg(gbVals)       : null;
+  const fbPct       = fbVals.length       ? avg(fbVals)       : null;
+  const ldPct       = ldVals.length       ? avg(ldVals)       : null;
+
+  // Peak velo
+  const ffOutingPeaks = [];
+  athleteOutings.forEach(o => {
+    let pm={};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    const ff = pm['FF'] || pm['FA'];
+    if (ff?.peakVelo) ffOutingPeaks.push(pf(ff.peakVelo));
+  });
+  const peakVelo = ffOutingPeaks.length ? Math.max(...ffOutingPeaks) : null;
+
+  // MLB baseline distributions — percentile curves (p10,p25,p50,p75,p90)
   const DIST = {
-    whiffPct:   { p10:12, p25:17, p50:22, p75:27, p90:33, hib:true  },
-    cswPct:     { p10:14, p25:19, p50:24, p75:29, p90:35, hib:true  },
-    kPct:       { p10:14, p25:18, p50:22, p75:27, p90:32, hib:true  },
-    bbPct:      { p10:4,  p25:6,  p50:8,  p75:11, p90:14, hib:false },
-    avgXwoba:   { p10:.26,p25:.29,p50:.32,p75:.35,p90:.39, hib:false },
-    avgEV:      { p10:85, p25:87, p50:89, p75:91, p90:93, hib:false },
-    hardHitPct: { p10:28, p25:33, p50:38, p75:43, p90:49, hib:false },
-    avgVelo:    { p10:90, p25:92, p50:94, p75:96, p90:98, hib:true  },
+    whiffPct:   { p10:12,  p25:17,  p50:22,  p75:27,  p90:33,  hib:true  },
+    cswPct:     { p10:14,  p25:19,  p50:24,  p75:29,  p90:35,  hib:true  },
+    kPct:       { p10:14,  p25:18,  p50:22,  p75:27,  p90:32,  hib:true  },
+    bbPct:      { p10:4,   p25:6,   p50:8,   p75:11,  p90:14,  hib:false },
+    avgXwoba:   { p10:.26, p25:.29, p50:.32, p75:.35, p90:.39, hib:false },
+    avgEV:      { p10:85,  p25:87,  p50:89,  p75:91,  p90:93,  hib:false },
+    hardHitPct: { p10:28,  p25:33,  p50:38,  p75:43,  p90:49,  hib:false },
+    avgVelo:    { p10:90,  p25:92,  p50:94,  p75:96,  p90:98,  hib:true  },
+    zonePct:    { p10:40,  p25:44,  p50:48,  p75:52,  p90:56,  hib:true  },
+    oSwingPct:  { p10:22,  p25:26,  p50:30,  p75:35,  p90:40,  hib:true  },
+    zSwingPct:  { p10:58,  p25:63,  p50:68,  p75:73,  p90:78,  hib:true  },
+    zContactPct:{ p10:74,  p25:78,  p50:82,  p75:86,  p90:90,  hib:false },
+    swingPct:   { p10:38,  p25:42,  p50:46,  p75:50,  p90:55,  hib:true  },
+    strikePct:  { p10:58,  p25:61,  p50:64,  p75:67,  p90:70,  hib:true  },
+    gbPct:      { p10:30,  p25:38,  p50:45,  p75:52,  p90:58,  hib:true  },
+    fbPct:      { p10:20,  p25:25,  p50:30,  p75:36,  p90:42,  hib:false },
+    ldPct:      { p10:14,  p25:17,  p50:20,  p75:23,  p90:27,  hib:false },
   };
 
   function getPercentile(val, dist) {
     if (val === null || val === undefined || isNaN(val)) return null;
     const { p10, p25, p50, p75, p90, hib } = dist;
-    // Interpolate percentile
     let pct;
     if (val <= p10) pct = hib ? 5 : 95;
     else if (val <= p25) pct = hib ? 15 + (val-p10)/(p25-p10)*15 : 80 - (val-p10)/(p25-p10)*15;
@@ -748,57 +835,32 @@ function renderReport() {
 
   function pctBar(label, val, displayVal, dist, unit='') {
     if (!hasBaselines) {
-      // No percentiles — just show the raw value as a simple bar
       return `<div class="pct-row">
         <div class="pct-label">${label}</div>
-        <div class="pct-bar-track">
-          <div class="pct-bar-fill-plain" style="width:50%;background:var(--cyan)"></div>
-        </div>
-        <div class="pct-value">${displayVal !== null ? displayVal+unit : '—'}</div>
+        <div class="pct-bar-track"><div class="pct-bar-fill-plain" style="width:50%;background:var(--cyan)"></div></div>
+        <div class="pct-value">${displayVal !== null && displayVal !== undefined ? displayVal+unit : '—'}</div>
       </div>`;
     }
     const p = getPercentile(val, dist);
     const color = pctColor(p);
-    const barW = p !== null ? p : 0;
     return `<div class="pct-row">
       <div class="pct-label">${label}</div>
       <div class="pct-bar-track">
-        <div class="pct-bar-fill" style="width:${barW}%;background:${color}">
+        <div class="pct-bar-fill" style="width:${p||0}%;background:${color}">
           ${p !== null ? `<span class="pct-bubble" style="background:${color}">${p}</span>` : ''}
         </div>
       </div>
-      <div class="pct-value">${displayVal !== null ? displayVal+unit : '—'}</div>
+      <div class="pct-value">${displayVal !== null && displayVal !== undefined ? displayVal+unit : '—'}</div>
     </div>`;
   }
 
-  // Build HTML
-  const sorted = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
+  const r = (v,d=1) => v !== null && v !== undefined ? (+v).toFixed(d) : null;
 
   const levelBadge = isIndependent
     ? `<div class="report-note">Percentile rankings not shown — independent league data compared to MLB baselines would not be meaningful.</div>`
     : '';
 
-  // Compute additional metrics
-  const totalHIPBalls = Object.values(combined).reduce((a,s)=>a+s.hip,0);
-
-  // O-Swing%, Z-Contact%, SwStr%, Strike%, Zone% — approximate from what we have
-  // SwStr% = whiffs / total pitches
-  const swStrPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
-  // Strike% = (whiffs + called strikes + fouls + HIP) / total — approximate as CSW proxy
-  // GB% not directly stored but we can skip if null
-  const oSwingPct  = null; // not in our data
-  const zContactPct = null; // not in our data
-  const strikeZonePct = null; // not in our data
-
-  // Get avg peak velo from FF
-  const ffOutingPeaks = [];
-  athleteOutings.forEach(o => {
-    let pm={};
-    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
-    const ff = pm['FF'] || pm['FA'];
-    if (ff?.peakVelo) ffOutingPeaks.push(pf(ff.peakVelo));
-  });
-  const peakVelo = ffOutingPeaks.length ? Math.max(...ffOutingPeaks) : null;
+  const sorted = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
 
   container.innerHTML = `
     <div class="report-card">
@@ -807,12 +869,12 @@ function renderReport() {
         <div class="report-meta">${currentAthlete.throws}HP · ${currentAthlete.team||''} · ${currentAthlete.level||''} · 2026 Season</div>
         <div class="report-summary-strip">
           ${[
-            { v: athleteOutings.length,              l: 'G' },
-            { v: totalPitches,                       l: 'Pitches' },
-            { v: totalK,                             l: 'K' },
-            { v: totalBB,                            l: 'BB' },
-            { v: avgVelo   ? avgVelo.toFixed(1)  : '—', l: 'FB avg' },
-            { v: peakVelo  ? peakVelo.toFixed(1) : '—', l: 'FB peak' },
+            { v: athleteOutings.length,               l: 'G' },
+            { v: totalPitches,                        l: 'Pitches' },
+            { v: totalK,                              l: 'K' },
+            { v: totalBB,                             l: 'BB' },
+            { v: avgVelo  ? avgVelo.toFixed(1)  : '—',l: 'FB avg' },
+            { v: peakVelo ? peakVelo.toFixed(1) : '—',l: 'FB peak' },
           ].map(k=>`<div class="report-sum-stat"><div class="report-sum-val">${k.v}</div><div class="report-sum-lbl">${k.l}</div></div>`).join('')}
         </div>
       </div>
@@ -820,26 +882,34 @@ function renderReport() {
       ${levelBadge}
 
       <div class="report-section-hd">Season Percentiles${!hasBaselines?' (raw values)':' vs. MLB'}</div>
-
-      <div class="pct-axis-labels">
-        <span>Poor</span><span>Average</span><span>Great</span>
-      </div>
+      <div class="pct-axis-labels"><span>Poor</span><span>Average</span><span>Great</span></div>
 
       <div class="pct-group-hd">Results</div>
-      ${avgXwoba !== null ? pctBar('xwOBA',      avgXwoba,    avgXwoba.toFixed(3),    DIST.avgXwoba)        : ''}
-      ${pctBar('Whiff%',       whiffPct,    whiffPct.toFixed(1),    DIST.whiffPct,   '%')}
-      ${pctBar('CSW%',         cswPct,      cswPct.toFixed(1),      DIST.cswPct,     '%')}
-      ${pctBar('K%',           kPct,        kPct.toFixed(1),        DIST.kPct,       '%')}
-      ${pctBar('BB%',          bbPct,       bbPct.toFixed(1),       DIST.bbPct,      '%')}
-      ${pctBar('SwStr%',       swStrPct,    swStrPct.toFixed(1),    DIST.whiffPct,   '%')}
+      ${avgXwoba !== null        ? pctBar('xwOBA',      avgXwoba,    r(avgXwoba,3),  DIST.avgXwoba)       : ''}
+      ${pctBar('Whiff%',          whiffPct,    r(whiffPct),    DIST.whiffPct,   '%')}
+      ${pctBar('CSW%',            cswPct,      r(cswPct),      DIST.cswPct,     '%')}
+      ${pctBar('K%',              kPct,        r(kPct),        DIST.kPct,       '%')}
+      ${pctBar('BB%',             bbPct,       r(bbPct),       DIST.bbPct,      '%')}
+      ${pctBar('SwStr%',          swStrPct,    r(swStrPct),    DIST.whiffPct,   '%')}
+
+      <div class="pct-group-hd">Plate discipline</div>
+      ${zonePct     !== null     ? pctBar('Zone%',       zonePct,     r(zonePct),     DIST.zonePct,    '%') : ''}
+      ${oSwingPct   !== null     ? pctBar('O-Swing%',    oSwingPct,   r(oSwingPct),   DIST.oSwingPct,  '%') : ''}
+      ${zSwingPct   !== null     ? pctBar('Z-Swing%',    zSwingPct,   r(zSwingPct),   DIST.zSwingPct,  '%') : ''}
+      ${zContactPct !== null     ? pctBar('Z-Contact%',  zContactPct, r(zContactPct), DIST.zContactPct,'%') : ''}
+      ${swingPct    !== null     ? pctBar('Swing%',      swingPct,    r(swingPct),    DIST.swingPct,   '%') : ''}
+      ${strikePct   !== null     ? pctBar('Strike%',     strikePct,   r(strikePct),   DIST.strikePct,  '%') : ''}
 
       <div class="pct-group-hd">Contact quality</div>
-      ${avgEV      !== null ? pctBar('Avg EV',      avgEV,       avgEV.toFixed(1),       DIST.avgEV,       ' mph') : ''}
-      ${pctBar('Hard Hit%',    hardHitPct,  hardHitPct.toFixed(1),  DIST.hardHitPct, '%')}
+      ${avgEV       !== null     ? pctBar('Avg EV',      avgEV,       r(avgEV),       DIST.avgEV,      ' mph') : ''}
+      ${pctBar('Hard Hit%',       hardHitPct,  r(hardHitPct),  DIST.hardHitPct, '%')}
+      ${gbPct       !== null     ? pctBar('GB%',         gbPct,       r(gbPct),       DIST.gbPct,      '%') : ''}
+      ${fbPct       !== null     ? pctBar('FB%',         fbPct,       r(fbPct),       DIST.fbPct,      '%') : ''}
+      ${ldPct       !== null     ? pctBar('LD%',         ldPct,       r(ldPct),       DIST.ldPct,      '%') : ''}
 
       <div class="pct-group-hd">Stuff</div>
-      ${avgVelo    !== null ? pctBar('FB Avg Velo',  avgVelo,     avgVelo.toFixed(1),     DIST.avgVelo,     ' mph') : ''}
-      ${peakVelo   !== null ? pctBar('FB Peak Velo', peakVelo,    peakVelo.toFixed(1),    DIST.avgVelo,     ' mph') : ''}
+      ${avgVelo     !== null     ? pctBar('FB Avg Velo', avgVelo,     r(avgVelo),     DIST.avgVelo,    ' mph') : ''}
+      ${peakVelo    !== null     ? pctBar('FB Peak Velo',peakVelo,    r(peakVelo),    DIST.avgVelo,    ' mph') : ''}
 
     </div>`;
 }
