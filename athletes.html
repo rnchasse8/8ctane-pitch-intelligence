@@ -78,6 +78,8 @@
       <button class="tab" data-ptab="trends">Trends</button>
       <button class="tab" data-ptab="yoy">Pitch Metrics</button>
       <button class="tab" data-ptab="report">Report</button>
+      <button class="tab" data-ptab="season-insight">Season Insight</button>
+      <button class="tab" data-ptab="outing-insight">Outing Insight</button>
       <button class="tab" data-ptab="outings">Outings</button>
       <button class="tab" data-ptab="compare">Compare</button>
     </nav>
@@ -194,6 +196,22 @@
     <!-- REPORT -->
     <div class="ptab-panel" id="ptab-report">
       <div id="report-content"></div>
+    </div>
+
+    <!-- SEASON INSIGHT -->
+    <div class="ptab-panel" id="ptab-season-insight">
+      <div id="season-insight-content"></div>
+    </div>
+
+    <!-- OUTING INSIGHT -->
+    <div class="ptab-panel" id="ptab-outing-insight">
+      <div class="section">
+        <div class="section-hd">Select outing to analyze</div>
+        <select id="outing-insight-sel" class="sel-input" style="margin-bottom:1.5rem" onchange="loadOutingInsight()">
+          <option value="">Select an outing...</option>
+        </select>
+      </div>
+      <div id="outing-insight-content"></div>
     </div>
 
     <!-- OUTINGS LIST -->

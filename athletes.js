@@ -48,6 +48,8 @@ window.addEventListener('DOMContentLoaded', () => {
       if (name === 'trends') renderTrends();
       if (name === 'yoy')    renderYoY();
       if (name === 'report') renderReport();
+      if (name === 'season-insight') renderSeasonInsight();
+      if (name === 'outing-insight') initOutingInsight();
       if (name === 'compare') populateCompareSelectors();
     });
   });
@@ -707,6 +709,359 @@ async function confirmDeleteOuting(outingId, date) {
   } catch(e) {
     toast('Error: ' + e.message, 'error');
   }
+}
+
+/* ==================== SEASON INSIGHT ==================== */
+async function renderSeasonInsight() {
+  const container = document.getElementById('season-insight-content');
+  if (!athleteOutings.length) {
+    container.innerHTML = '<div class="empty-state">No outing data yet.</div>';
+    return;
+  }
+
+  container.innerHTML = `<div class="ai-loading"><div class="loading-spinner"></div><p>Analyzing season data...</p></div>`;
+
+  // Aggregate full season data
+  const combined = {};
+  athleteOutings.forEach(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    Object.entries(pm).forEach(([pt, s]) => {
+      if (!s.count) return;
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, velos:[], ivbs:[], hbs:[], vaas:[] };
+      const c = combined[pt];
+      c.count += s.count||0; c.whiffs += s.whiffs||0; c.cstrikes += s.cstrikes||0; c.hip += s.hip||0;
+      if (s.avgVelo)  c.velos.push(pf(s.avgVelo));
+      if (s.avgXwoba) c.xwobas.push(pf(s.avgXwoba));
+      if (s.avgEV)    c.evs.push(pf(s.avgEV));
+      if (s.avgIVB)   c.ivbs.push(pf(s.avgIVB));
+      if (s.avgHB)    c.hbs.push(pf(s.avgHB));
+      if (s.avgVAA)   c.vaas.push(pf(s.avgVAA));
+    });
+  });
+
+  const total = Object.values(combined).reduce((a,s)=>a+s.count,0);
+  const totalK  = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0),0);
+  const totalBB = athleteOutings.reduce((a,o)=>a+(+o.walks||0),0);
+  const sorted  = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
+
+  // Build pitch summary for AI
+  const pitchSummary = sorted.map(([pt,s]) => {
+    const mlb = MLB_BASELINE_REF[pt];
+    return {
+      pitch: pn(pt),
+      code: pt,
+      usage: total ? +(s.count/total*100).toFixed(1) : 0,
+      avgVelo: s.velos.length ? +avg(s.velos).toFixed(1) : null,
+      whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : 0,
+      cswPct: s.count ? +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0,
+      avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
+      avgEV: s.evs.length ? +avg(s.evs).toFixed(1) : null,
+      avgIVB: s.ivbs.length ? +avg(s.ivbs).toFixed(1) : null,
+      avgHB: s.hbs.length ? +avg(s.hbs).toFixed(1) : null,
+      avgVAA: s.vaas.length ? +avg(s.vaas).toFixed(1) : null,
+      mlbWhiff: mlb?.whiff_pct || null,
+      mlbXwoba: mlb?.avg_xwoba || null,
+    };
+  });
+
+  // Zone/swing season averages
+  const zonePct     = avg(athleteOutings.map(o=>pf(o.zone_pct)).filter(Boolean));
+  const oSwingPct   = avg(athleteOutings.map(o=>pf(o.o_swing_pct)).filter(Boolean));
+  const zContactPct = avg(athleteOutings.map(o=>pf(o.z_contact_pct)).filter(Boolean));
+  const gbPct       = avg(athleteOutings.map(o=>pf(o.gb_pct)).filter(Boolean));
+
+  const prompt = `You are an elite baseball pitching analyst at 8ctane Baseball. Analyze this pitcher's 2026 season data and provide a comprehensive scouting report.
+
+PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.team||'unknown team'}, ${currentAthlete.level||''})
+SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
+ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}%
+
+ARSENAL:
+${pitchSummary.map(p => `${p.pitch} (${p.code}): ${p.usage}% usage | ${p.avgVelo||'?'} mph | Whiff: ${p.whiffPct}% (MLB avg: ${p.mlbWhiff||'?'}%) | CSW: ${p.cswPct}% | xwOBA: ${p.avgXwoba||'?'} (MLB avg: ${p.mlbXwoba||'?'}) | IVB: ${p.avgIVB||'?'}" HB: ${p.avgHB||'?'}" VAA: ${p.avgVAA||'?'}°`).join('\n')}
+
+Provide your analysis in this EXACT JSON structure (respond with JSON only, no markdown):
+{
+  "headline": "2-3 word headline capturing the season",
+  "summary": "3-4 sentence overall season summary",
+  "strengths": [{"title": "...", "detail": "..."}],
+  "concerns": [{"title": "...", "detail": "..."}],
+  "arsenalAssessment": {
+    "keepPitches": [{"pitch": "...", "reason": "..."}],
+    "developPitches": [{"pitch": "...", "reason": "..."}],
+    "addPitch": {"pitch": "...", "reason": "..."},
+    "removePitch": {"pitch": "...", "reason": "..."}
+  },
+  "splitAdvice": {
+    "vsRHH": "2-3 sentences on sequencing vs RHH",
+    "vsLHH": "2-3 sentences on sequencing vs LHH"
+  },
+  "countStrategy": [
+    {
+      "count": "0-0",
+      "recommendation": "...",
+      "pitch": "pitch name",
+      "location": "one of: up-in, up-away, middle-in, middle-away, low-in, low-away, low-middle, up-middle, middle"
+    }
+  ],
+  "developmentPriorities": ["...", "...", "..."]
+}
+
+countStrategy should cover: 0-0, 0-2, 1-0, 2-0, 3-2 counts. location must be one of the exact strings listed.`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
+    const analysis = JSON.parse(text);
+    renderSeasonInsightHTML(analysis, pitchSummary, total);
+  } catch(e) {
+    container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}</div>`;
+  }
+}
+
+function renderSeasonInsightHTML(a, pitchSummary, total) {
+  const container = document.getElementById('season-insight-content');
+
+  const strengthCards = (a.strengths||[]).map(s =>
+    `<div class="insight-card good"><div class="insight-title">${s.title}</div><div class="insight-body">${s.detail}</div></div>`
+  ).join('');
+
+  const concernCards = (a.concerns||[]).map(c =>
+    `<div class="insight-card danger"><div class="insight-title">${c.title}</div><div class="insight-body">${c.detail}</div></div>`
+  ).join('');
+
+  const keepPitches = (a.arsenalAssessment?.keepPitches||[]).map(p =>
+    `<div class="arsenal-rec keep">✓ <strong>${p.pitch}</strong> — ${p.reason}</div>`
+  ).join('');
+  const devPitches = (a.arsenalAssessment?.developPitches||[]).map(p =>
+    `<div class="arsenal-rec develop">↑ <strong>${p.pitch}</strong> — ${p.reason}</div>`
+  ).join('');
+  const addPitch = a.arsenalAssessment?.addPitch
+    ? `<div class="arsenal-rec add">+ Add: <strong>${a.arsenalAssessment.addPitch.pitch}</strong> — ${a.arsenalAssessment.addPitch.reason}</div>` : '';
+  const removePitch = a.arsenalAssessment?.removePitch
+    ? `<div class="arsenal-rec remove">− Consider removing: <strong>${a.arsenalAssessment.removePitch.pitch}</strong> — ${a.arsenalAssessment.removePitch.reason}</div>` : '';
+
+  const countRows = (a.countStrategy||[]).map(c => `
+    <div class="count-strategy-row">
+      <div class="cs-count">${c.count}</div>
+      <div class="cs-zone-wrap">${strikeZoneDiagram(c.location, c.pitch)}</div>
+      <div class="cs-detail">
+        <div class="cs-pitch">${c.pitch}</div>
+        <div class="cs-rec">${c.recommendation}</div>
+      </div>
+    </div>`).join('');
+
+  container.innerHTML = `
+    <div class="insight-page">
+
+      <div class="insight-headline">${a.headline||''}</div>
+      <div class="insight-summary">${a.summary||''}</div>
+
+      <div class="section-hd" style="margin-top:1.5rem">Strengths & concerns</div>
+      <div class="insight-grid">${strengthCards}${concernCards}</div>
+
+      <div class="section-hd" style="margin-top:1.5rem">Arsenal assessment</div>
+      <div class="arsenal-recs">${keepPitches}${devPitches}${addPitch}${removePitch}</div>
+
+      <div class="section-hd" style="margin-top:1.5rem">Splits sequencing</div>
+      <div class="splits-advice-grid">
+        <div class="splits-advice-card">
+          <div class="splits-advice-hd" style="color:#378ADD">vs. Right-handed hitters</div>
+          <div class="splits-advice-body">${a.splitAdvice?.vsRHH||''}</div>
+        </div>
+        <div class="splits-advice-card">
+          <div class="splits-advice-hd" style="color:#D85A30">vs. Left-handed hitters</div>
+          <div class="splits-advice-body">${a.splitAdvice?.vsLHH||''}</div>
+        </div>
+      </div>
+
+      <div class="section-hd" style="margin-top:1.5rem">Pitch selection by count</div>
+      <div class="count-strategy-wrap">${countRows}</div>
+
+      <div class="section-hd" style="margin-top:1.5rem">Development priorities</div>
+      <div class="dev-priorities">
+        ${(a.developmentPriorities||[]).map((p,i) =>
+          `<div class="dev-priority-row"><span class="dev-num">${i+1}</span><span>${p}</span></div>`
+        ).join('')}
+      </div>
+
+    </div>`;
+}
+
+/* ==================== OUTING INSIGHT ==================== */
+function initOutingInsight() {
+  const sel = document.getElementById('outing-insight-sel');
+  const sorted = [...athleteOutings].sort((a,b) => b.date.localeCompare(a.date));
+  sel.innerHTML = '<option value="">Select an outing...</option>' +
+    sorted.map(o => `<option value="${o.id}">${formatDate(o.date)} vs. ${o.opponent||'—'} (${o.total_pitches||0} pitches)</option>`).join('');
+  document.getElementById('outing-insight-content').innerHTML = '';
+}
+
+async function loadOutingInsight() {
+  const sel = document.getElementById('outing-insight-sel');
+  const outingId = sel.value;
+  if (!outingId) return;
+
+  const outing = athleteOutings.find(o => o.id === outingId);
+  if (!outing) return;
+
+  const container = document.getElementById('outing-insight-content');
+  container.innerHTML = `<div class="ai-loading"><div class="loading-spinner"></div><p>Analyzing outing...</p></div>`;
+
+  let pm = {};
+  try { pm = typeof outing.pitch_stats==='object' ? outing.pitch_stats : JSON.parse(outing.pitch_stats_json||'{}'); } catch(e){}
+
+  const total = outing.total_pitches || 0;
+  const pitchLines = Object.entries(pm)
+    .filter(([,s])=>s.count>0)
+    .sort((a,b)=>b[1].count-a[1].count)
+    .map(([pt,s]) => {
+      const mlb = MLB_BASELINE_REF[pt];
+      return `${pn(pt)}: ${s.count} pitches (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'} mph | Whiff: ${s.whiffPct||0}% | CSW: ${s.cswPct||0}% | xwOBA: ${s.avgXwoba||'N/A'} | IVB: ${s.avgIVB||'?'}" HB: ${s.avgHB||'?'}" VAA: ${s.avgVAA||'?'}° (MLB whiff avg: ${mlb?.whiff_pct||'?'}%)`;
+    }).join('\n');
+
+  const prompt = `You are an elite pitching analyst at 8ctane Baseball. Analyze this single outing and provide detailed feedback.
+
+PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.level||''})
+OUTING: ${formatDate(outing.date)} vs. ${outing.opponent||'Unknown'} | ${total} pitches | ${outing.ks||0}K ${outing.walks||0}BB
+Zone%: ${outing.zone_pct||'N/A'}% | O-Swing%: ${outing.o_swing_pct||'N/A'}% | Z-Contact%: ${outing.z_contact_pct||'N/A'}% | GB%: ${outing.gb_pct||'N/A'}% | SwStr%: ${total?(+outing.whiffs/total*100).toFixed(1):'N/A'}%
+
+PITCH-BY-PITCH:
+${pitchLines}
+
+Provide your analysis as JSON only (no markdown):
+{
+  "headline": "2-3 word outing summary",
+  "summary": "3-4 sentence outing narrative",
+  "whatWorked": [{"title": "...", "detail": "..."}],
+  "whatDidnt": [{"title": "...", "detail": "..."}],
+  "keyMoments": ["...", "..."],
+  "adjustments": [{"count": "...", "current": "...", "suggested": "...", "pitch": "...", "location": "one of: up-in,up-away,middle-in,middle-away,low-in,low-away,low-middle,up-middle,middle", "reason": "..."}],
+  "nextOutingFocus": ["...", "...", "..."]
+}`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
+    const analysis = JSON.parse(text);
+    renderOutingInsightHTML(analysis, outing, pm, total);
+  } catch(e) {
+    container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}</div>`;
+  }
+}
+
+function renderOutingInsightHTML(a, outing, pm, total) {
+  const container = document.getElementById('outing-insight-content');
+
+  const workedCards = (a.whatWorked||[]).map(s =>
+    `<div class="insight-card good"><div class="insight-title">${s.title}</div><div class="insight-body">${s.detail}</div></div>`
+  ).join('');
+  const didntCards = (a.whatDidnt||[]).map(s =>
+    `<div class="insight-card danger"><div class="insight-title">${s.title}</div><div class="insight-body">${s.detail}</div></div>`
+  ).join('');
+
+  const adjustRows = (a.adjustments||[]).map(adj => `
+    <div class="count-strategy-row">
+      <div class="cs-count">${adj.count}</div>
+      <div class="cs-zone-wrap">${strikeZoneDiagram(adj.location, adj.pitch)}</div>
+      <div class="cs-detail">
+        <div class="cs-pitch">${adj.pitch}</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Was: ${adj.current}</div>
+        <div class="cs-rec">${adj.reason}</div>
+      </div>
+    </div>`).join('');
+
+  const pitchRows = Object.entries(pm).filter(([,s])=>s.count>0).sort((a,b)=>b[1].count-a[1].count)
+    .map(([pt,s]) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:.5rem 0;border-bottom:1px solid var(--border)">
+        <span class="pitch-chip" style="min-width:90px"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span>
+        <span class="v-num" style="min-width:35px">${s.count}</span>
+        <span style="color:var(--muted);font-size:11px;min-width:45px">${total?(s.count/total*100).toFixed(0):0}%</span>
+        <span class="v-num" style="min-width:55px">${s.avgVelo||'—'} mph</span>
+        <span class="${s.whiffPct>=30?'v-good':s.whiffPct>=15?'v-warn':'v-bad'}">${s.whiffPct||0}% W</span>
+        <span class="v-num" style="font-size:11px">${s.cswPct||0}% CSW</span>
+      </div>`).join('');
+
+  container.innerHTML = `
+    <div class="insight-page">
+
+      <div class="outing-insight-header">
+        <div class="insight-headline">${a.headline||''}</div>
+        <div class="outing-insight-meta">${formatDate(outing.date)} · vs. ${outing.opponent||'—'} · ${total} pitches · ${outing.ks||0}K ${outing.walks||0}BB</div>
+      </div>
+      <div class="insight-summary">${a.summary||''}</div>
+
+      <div class="section-hd" style="margin-top:1.5rem">Pitch breakdown</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:.75rem 1.25rem">
+        <div style="display:flex;gap:10px;padding:.4rem 0;margin-bottom:4px">
+          <span style="min-width:90px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Pitch</span>
+          <span style="min-width:35px;font-size:10px;color:var(--muted);text-transform:uppercase">N</span>
+          <span style="min-width:45px;font-size:10px;color:var(--muted);text-transform:uppercase">Use%</span>
+          <span style="min-width:55px;font-size:10px;color:var(--muted);text-transform:uppercase">Velo</span>
+          <span style="font-size:10px;color:var(--muted);text-transform:uppercase">Results</span>
+        </div>
+        ${pitchRows}
+      </div>
+
+      <div class="section-hd" style="margin-top:1.5rem">What worked / what didn't</div>
+      <div class="insight-grid">${workedCards}${didntCards}</div>
+
+      ${a.keyMoments?.length ? `
+      <div class="section-hd" style="margin-top:1.5rem">Key moments</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:.875rem 1.25rem">
+        ${a.keyMoments.map(m=>`<div style="padding:.4rem 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted)">· ${m}</div>`).join('')}
+      </div>` : ''}
+
+      ${adjustRows ? `
+      <div class="section-hd" style="margin-top:1.5rem">Count-by-count adjustments</div>
+      <div class="count-strategy-wrap">${adjustRows}</div>` : ''}
+
+      ${a.nextOutingFocus?.length ? `
+      <div class="section-hd" style="margin-top:1.5rem">Focus for next outing</div>
+      <div class="dev-priorities">
+        ${a.nextOutingFocus.map((p,i)=>`<div class="dev-priority-row"><span class="dev-num">${i+1}</span><span>${p}</span></div>`).join('')}
+      </div>` : ''}
+
+    </div>`;
+}
+
+/* ==================== STRIKE ZONE DIAGRAM ==================== */
+function strikeZoneDiagram(location, pitchName) {
+  // 3x3 grid: positions = up-in, up-middle, up-away / middle-in, middle, middle-away / low-in, low-middle, low-away
+  const grid = [
+    ['up-in','up-middle','up-away'],
+    ['middle-in','middle','middle-away'],
+    ['low-in','low-middle','low-away'],
+  ];
+  const ptColor = Object.entries(PITCH_NAMES).find(([,v])=>v===pitchName)?.[0];
+  const color = ptColor ? pc(ptColor) : 'var(--cyan)';
+
+  const cells = grid.map(row =>
+    row.map(zone => {
+      const isActive = zone === location;
+      return `<div class="sz-cell ${isActive?'active':''}" style="${isActive?`background:${color};border-color:${color}`:''}"></div>`;
+    }).join('')
+  ).join('');
+
+  return `<div class="strike-zone">${cells}</div>`;
 }
 
 /* ==================== REPORT / PERCENTILE DASHBOARD ==================== */

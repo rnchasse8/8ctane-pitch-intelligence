@@ -218,6 +218,139 @@
 }
 .sel-input:focus { border-color: var(--cyan); }
 
+/* ---- INSIGHT PAGES ---- */
+.insight-page {
+  max-width: 780px;
+  padding-bottom: 2rem;
+}
+.insight-headline {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 26px; font-weight: 800;
+  letter-spacing: .02em; margin-bottom: .5rem;
+}
+.insight-summary {
+  font-size: 14px; color: var(--muted);
+  line-height: 1.75; margin-bottom: .5rem;
+  max-width: 680px;
+}
+.outing-insight-header { margin-bottom: .5rem; }
+.outing-insight-meta {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; color: var(--cyan);
+  margin-bottom: .5rem;
+}
+
+/* Arsenal recs */
+.arsenal-recs { display: flex; flex-direction: column; gap: .5rem; }
+.arsenal-rec {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: .75rem 1rem;
+  font-size: 13px; color: var(--muted);
+  line-height: 1.6;
+}
+.arsenal-rec.keep    { border-left: 3px solid var(--good); }
+.arsenal-rec.develop { border-left: 3px solid var(--cyan); }
+.arsenal-rec.add     { border-left: 3px solid #e91e8c; }
+.arsenal-rec.remove  { border-left: 3px solid var(--warn); }
+.arsenal-rec strong  { color: var(--text); }
+
+/* Splits advice */
+.splits-advice-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+}
+.splits-advice-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+}
+.splits-advice-hd {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-bottom: .5rem;
+}
+.splits-advice-body {
+  font-size: 13px; color: var(--muted); line-height: 1.65;
+}
+
+/* Count strategy */
+.count-strategy-wrap { display: flex; flex-direction: column; gap: .75rem; }
+.count-strategy-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  display: flex; align-items: flex-start; gap: 1.25rem;
+}
+.cs-count {
+  font-family: 'DM Mono', monospace;
+  font-size: 18px; font-weight: 500;
+  color: var(--cyan); min-width: 44px;
+  padding-top: 4px;
+}
+.cs-zone-wrap { flex-shrink: 0; }
+.cs-detail { flex: 1; }
+.cs-pitch {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 16px; font-weight: 700;
+  margin-bottom: 4px;
+}
+.cs-rec { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+/* Development priorities */
+.dev-priorities {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dev-priority-row {
+  display: flex; align-items: flex-start; gap: 1rem;
+  padding: .75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px; color: var(--muted);
+  line-height: 1.6;
+}
+.dev-priority-row:last-child { border-bottom: none; }
+.dev-num {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; font-weight: 500;
+  color: var(--cyan); min-width: 16px;
+  padding-top: 2px; flex-shrink: 0;
+}
+
+/* Strike zone diagram */
+.strike-zone {
+  display: grid;
+  grid-template-columns: repeat(3, 28px);
+  grid-template-rows: repeat(3, 28px);
+  gap: 2px;
+  background: var(--border);
+  border: 2px solid var(--border2);
+  border-radius: 4px;
+  padding: 3px;
+}
+.sz-cell {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 2px;
+  transition: background .15s;
+}
+.sz-cell.active {
+  border-radius: 3px;
+}
+
+/* AI loading */
+.ai-loading {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* ---- REPORT / PERCENTILE DASHBOARD ---- */
 .report-card {
   background: var(--surface);
