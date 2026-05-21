@@ -810,18 +810,7 @@ Provide your analysis in this EXACT JSON structure (respond with JSON only, no m
 countStrategy should cover: 0-0, 0-2, 1-0, 2-0, 3-2 counts. location must be one of the exact strings listed.`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    const data = await res.json();
-    const text = data.content?.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
-    const analysis = JSON.parse(text);
+    const analysis = await callClaudeProxy(prompt);
     renderSeasonInsightHTML(analysis, pitchSummary, total);
   } catch(e) {
     container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}</div>`;
@@ -950,18 +939,7 @@ Provide your analysis as JSON only (no markdown):
 }`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    const data = await res.json();
-    const text = data.content?.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
-    const analysis = JSON.parse(text);
+    const analysis = await callClaudeProxy(prompt);
     renderOutingInsightHTML(analysis, outing, pm, total);
   } catch(e) {
     container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}</div>`;
@@ -1064,7 +1042,13 @@ function strikeZoneDiagram(location, pitchName) {
   return `<div class="strike-zone">${cells}</div>`;
 }
 
-/* ==================== REPORT / PERCENTILE DASHBOARD ==================== */
+async function callClaudeProxy(prompt) {
+  const res = await api('analyze', {
+    messages: [{ role: 'user', content: prompt }]
+  });
+  if (res.error) throw new Error(res.error);
+  return JSON.parse(res.text);
+}
 function renderReport() {
   const container = document.getElementById('report-content');
   if (!athleteOutings.length) {
