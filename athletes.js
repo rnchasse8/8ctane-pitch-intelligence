@@ -858,7 +858,11 @@ async function renderSeasonInsight() {
   const zContactPct = avg(athleteOutings.map(o=>pf(o.z_contact_pct)).filter(Boolean));
   const gbPct       = avg(athleteOutings.map(o=>pf(o.gb_pct)).filter(Boolean));
 
-  const pm_stored = currentAthlete.pitch_metrics || {};
+  let pm_stored = currentAthlete.pitch_metrics || {};
+  if (!Object.keys(pm_stored).length) {
+    const key = (currentAthlete.name || '').toLowerCase();
+    pm_stored = PSSTUFF_DATA[key]?.metrics || {};
+  }
   const hasRealStuff = Object.keys(pm_stored).length > 0;
 
   const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Your tone is direct, encouraging, and specific - like a coach who knows this pitcher well. Use "you" and "your" throughout. Frame weaknesses constructively. Speak plainly.
@@ -1358,20 +1362,54 @@ function renderReport() {
 }
 
 /* ==================== YEAR-OVER-YEAR ==================== */
+// Hardcoded psStuff+ data per athlete (from 8ctane analytics)
+// Update these periodically — every 2-3 weeks or after a significant stretch of starts
+const PSSTUFF_DATA = {
+  'ryan weiss': {
+    lastUpdated: 'May 21, 2026',
+    metrics: {
+      SI: { psStuffPlus:92,  spinRate:2189, armSide:14.46,  vertical:10.47,  xwOBA:.334, xSLG:.427, xBA:.305, whiffPct:10.80, hardHitPct:29.41  },
+      FF: { psStuffPlus:117, spinRate:2332, armSide:7.01,   vertical:17.17,  xwOBA:.398, xSLG:.582, xBA:.346, whiffPct:9.10,  hardHitPct:66.67  },
+      ST: { psStuffPlus:104, spinRate:2473, armSide:-13.54, vertical:2.10,   xwOBA:.387, xSLG:.324, xBA:.278, whiffPct:23.50, hardHitPct:0.00   },
+      CH: { psStuffPlus:105, spinRate:1151, armSide:11.60,  vertical:1.87,   xwOBA:.213, xSLG:.058, xBA:.051, whiffPct:44.40, hardHitPct:100.00 },
+      CU: { psStuffPlus:81,  spinRate:2244, armSide:-7.91,  vertical:-11.70, xwOBA:.235, xSLG:.077, xBA:.076, whiffPct:60.00, hardHitPct:0.00   },
+    }
+  }
+};
+
 function renderPsStuffCards() {
-  const pm = currentAthlete.pitch_metrics || {};
   const section = document.getElementById('metrics-psstuff-section');
   const container = document.getElementById('metrics-psstuff-cards');
   if (!section || !container) return;
+
+  // Use stored data from Sheets, or fall back to hardcoded data
+  let pm = currentAthlete.pitch_metrics || {};
+  let lastUpdated = null;
+  let source = 'stored';
+
+  if (!Object.keys(pm).length) {
+    const key = (currentAthlete.name || '').toLowerCase();
+    const hardcoded = PSSTUFF_DATA[key];
+    if (hardcoded) {
+      pm = hardcoded.metrics;
+      lastUpdated = hardcoded.lastUpdated;
+      source = 'hardcoded';
+    }
+  }
 
   const entries = Object.entries(pm).filter(([,m]) => m && m.psStuffPlus);
   if (!entries.length) { section.style.display = 'none'; return; }
 
   section.style.display = '';
 
-  // Header
   const cols = ['psStuff+','Spin','Arm Side','Vertical','xwOBA','xSLG','xBA','Whiff%','HardHit%'];
   const keyMap = ['psStuffPlus','spinRate','armSide','vertical','xwOBA','xSLG','xBA','whiffPct','hardHitPct'];
+
+  const updatedNote = lastUpdated
+    ? `<div style="font-size:11px;color:var(--muted);margin-bottom:.75rem;font-family:'DM Mono',monospace">
+        Last updated: ${lastUpdated} &nbsp;·&nbsp; <span style="color:var(--warn)">Update every 2-3 weeks or after a significant stretch of starts</span>
+       </div>`
+    : '';
 
   const header = `<div class="mov-header-row">
     <div class="mov-header-label">Pitch</div>
@@ -1383,10 +1421,9 @@ function renderPsStuffCards() {
     const pb = EDITABLE_PITCH_TYPES.findIndex(p=>p.code===b[0]);
     return (pa===-1?99:pa) - (pb===-1?99:pb);
   }).map(([pt, m]) => {
-    const vals = keyMap.map((k,i) => {
+    const vals = keyMap.map(k => {
       const v = m[k];
-      if (v === undefined || v === null || v === '') return '—';
-      // Color psStuff+
+      if (v === undefined || v === null || v === '') return '<span class="v-num">—</span>';
       if (k === 'psStuffPlus') {
         const cls = v >= 110 ? 'v-good' : v >= 95 ? 'v-num' : 'v-bad';
         return `<span class="${cls}">${v}</span>`;
@@ -1402,7 +1439,7 @@ function renderPsStuffCards() {
     </div>`;
   }).join('');
 
-  container.innerHTML = header + rows;
+  container.innerHTML = updatedNote + header + rows;
 }
 
 function renderYoY() {
