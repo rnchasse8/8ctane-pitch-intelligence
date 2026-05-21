@@ -18,6 +18,13 @@ const pc = pt => PITCH_COLORS[pt] || '#555566';
 const pn = pt => PITCH_NAMES[pt] || pt;
 const pf = v => parseFloat(v) || 0;
 function avg(arr) { return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0; }
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  const clean = dateStr.toString().split('T')[0].trim();
+  const d = new Date(clean + 'T12:00:00');
+  if (isNaN(d)) return clean;
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
 
 let SCRIPT_URL = localStorage.getItem('8ctane_script_url') || '';
 let currentAthlete = null;
@@ -360,7 +367,8 @@ function renderTrends() {
 
   // Clean labels: "Apr 11 vs LOU"
   const labels = sorted.map(o => {
-    const d = new Date(o.date + 'T12:00:00');
+    const clean = (o.date||'').toString().split('T')[0].trim();
+    const d = new Date(clean + 'T12:00:00');
     const dateStr = d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
     return o.opponent ? `${dateStr} vs ${o.opponent}` : dateStr;
   });
@@ -461,7 +469,7 @@ function renderOutingsList() {
     const topPitches = Object.entries(pm).sort((a,b)=>b[1].count-a[1].count).slice(0,5);
     const whiffRate = o.total_pitches ? (o.whiffs/o.total_pitches*100).toFixed(1) : '—';
     return `<div class="outing-row">
-      <div class="outing-date">${o.date}</div>
+      <div class="outing-date">${formatDate(o.date)}</div>
       <div class="outing-opp">${o.opponent || '—'}</div>
       <div class="outing-stats">
         <div class="outing-stat"><div class="outing-stat-val">${o.total_pitches||0}</div><div class="outing-stat-lbl">Pitches</div></div>
@@ -477,7 +485,7 @@ function renderOutingsList() {
         }).join('')}
       </div>
       ${o.notes ? `<div style="font-size:11px;color:var(--muted);font-style:italic;min-width:100%">${o.notes}</div>` : ''}
-      <button class="outing-delete-btn" onclick="event.stopPropagation();confirmDeleteOuting('${o.id}','${o.date}')" title="Delete outing">✕</button>
+      <button class="outing-delete-btn" onclick="event.stopPropagation();confirmDeleteOuting('${o.id}','${formatDate(o.date)}')" title="Delete outing">✕</button>
     </div>`;
   }).join('');
 }
@@ -1086,7 +1094,7 @@ function renderYoY() {
 /* ==================== COMPARE ==================== */
 function populateCompareSelectors() {
   const sorted = [...athleteOutings].sort((a,b)=>b.date.localeCompare(a.date));
-  const options = sorted.map(o => `<option value="${o.id}">${o.date} vs. ${o.opponent||'Unknown'}</option>`).join('');
+  const options = sorted.map(o => `<option value="${o.id}">${formatDate(o.date)} vs. ${o.opponent||'Unknown'}</option>`).join('');
   ['compare-sel-1','compare-sel-2'].forEach((id,i) => {
     const sel = document.getElementById(id);
     sel.innerHTML = '<option value="">Select outing...</option>' + options;
@@ -1122,7 +1130,7 @@ function renderComparison() {
     <div class="chart-grid-2" style="margin-bottom:1rem">
       ${[{o:o1,t:t1,pm:pm1},{o:o2,t:t2,pm:pm2}].map(({o,t,pm},i)=>`
         <div class="chart-card">
-          <div class="chart-card-title">${o.date} — vs. ${o.opponent||'—'}</div>
+          <div class="chart-card-title">${formatDate(o.date)} — vs. ${o.opponent||'—'}</div>
           <div style="display:flex;gap:1.5rem;margin-bottom:.75rem;flex-wrap:wrap">
             ${[
               {v:o.total_pitches||0,l:'Pitches'},
