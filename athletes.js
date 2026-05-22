@@ -1375,6 +1375,16 @@ const PSSTUFF_DATA = {
       CH: { psStuffPlus:105, spinRate:1151, armSide:11.60,  vertical:1.87,   xwOBA:.213, xSLG:.058, xBA:.051, whiffPct:44.40, hardHitPct:100.00 },
       CU: { psStuffPlus:81,  spinRate:2244, armSide:-7.91,  vertical:-11.70, xwOBA:.235, xSLG:.077, xBA:.076, whiffPct:60.00, hardHitPct:0.00   },
     }
+  },
+  'sam highfill': {
+    lastUpdated: 'May 21, 2026',
+    metrics: {
+      FF: { spinRate:2256, armSide:10.8, vertical:15.9, whiffPct:9.5,  hardHitPct:null },
+      FA: { spinRate:2256, armSide:10.8, vertical:15.9, whiffPct:9.5,  hardHitPct:null },
+      SL: { spinRate:2346, armSide:5.8,  vertical:-2.2, whiffPct:31.8, hardHitPct:null },
+      SW: { spinRate:2087, armSide:-11.7,vertical:-9.5, whiffPct:33.3, hardHitPct:null },
+      CH: { spinRate:1564, armSide:11.9, vertical:10.7, whiffPct:30.8, hardHitPct:null },
+    }
   }
 };
 
