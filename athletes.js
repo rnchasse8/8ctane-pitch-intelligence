@@ -858,12 +858,14 @@ async function renderSeasonInsight() {
   const zContactPct = avg(athleteOutings.map(o=>pf(o.z_contact_pct)).filter(Boolean));
   const gbPct       = avg(athleteOutings.map(o=>pf(o.gb_pct)).filter(Boolean));
 
-  let pm_stored = currentAthlete.pitch_metrics || {};
-  if (!Object.keys(pm_stored).length) {
-    const key = (currentAthlete.name || '').toLowerCase();
-    pm_stored = PSSTUFF_DATA[key]?.metrics || {};
-  }
-  const hasRealStuff = Object.keys(pm_stored).length > 0;
+  const pm_stored = (() => {
+    let pm = currentAthlete.pitch_metrics || {};
+    if (!Object.keys(pm).length) {
+      const key = (currentAthlete.name || '').toLowerCase();
+      pm = PSSTUFF_DATA[key]?.metrics || {};
+    }
+    return pm;
+  })();
 
   const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Your tone is direct, encouraging, and specific - like a coach who knows this pitcher well. Use "you" and "your" throughout. Frame weaknesses constructively. Speak plainly.
 
@@ -871,28 +873,26 @@ PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.te
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
 ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}%
 
-ARSENAL${hasRealStuff ? ' - psStuff+ scores are REAL 8ctane values. Weight these as primary signal for quality.' : ' - estimated psStuff+, treat as approximate.'}:
+ARSENAL:
 ${pitchSummary.map(p => {
   const real = pm_stored[p.code] || pm_stored[p.code === 'FA' ? 'FF' : p.code === 'FF' ? 'FA' : p.code];
-  const stuffScore = real && real.psStuffPlus ? real.psStuffPlus : (() => {
-    const mlb = MLB_BASELINE_REF[p.code];
-    if (!mlb) return null;
-    const veloIdx  = p.avgVelo ? (p.avgVelo/mlb.avg_velo)*100 : 100;
-    const whiffIdx = mlb.whiff_pct ? (p.whiffPct/mlb.whiff_pct)*100 : 100;
-    const xwIdx    = p.avgXwoba && mlb.avg_xwoba ? (mlb.avg_xwoba/p.avgXwoba)*100 : 100;
-    return Math.round(veloIdx*0.3 + whiffIdx*0.4 + xwIdx*0.3);
-  })();
-  const tag = real ? '[REAL]' : '[EST]';
-  const realLine = real ? ` Spin:${real.spinRate||'?'} ArmSide:${real.armSide||'?'} Vert:${real.vertical||'?'} xwOBA:${real.xwOBA||'?'} xSLG:${real.xSLG||'?'} xBA:${real.xBA||'?'} Whiff%:${real.whiffPct||'?'} HardHit%:${real.hardHitPct||'?'}` : '';
-  return p.pitch + ' (' + p.code + ') ' + tag + ': psStuff+=' + (stuffScore||'N/A') + ' | ' + p.usage + '% usage | ' + (p.avgVelo||'?') + ' mph | Season Whiff:' + p.whiffPct + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | xwOBA:' + (p.avgXwoba||'?') + realLine;
+  const stuffLine = '';  // psStuff+ only shown when explicitly provided
+  const shapeLine = real ? ' | Spin:' + (real.spinRate||'?') + ' ArmSide:' + (real.armSide||'?') + '"' +
+    (real.vertical !== undefined ? ' Vert:' + (real.vertical||'?') + '"' : '') +
+    (real.xwOBA !== undefined ? ' xwOBA:' + (real.xwOBA||'?') + ' xSLG:' + (real.xSLG||'?') + ' xBA:' + (real.xBA||'?') : '') +
+    (real.whiffPct !== undefined ? ' Whiff%:' + (real.whiffPct||'?') : '') +
+    (real.hardHitPct !== undefined ? ' HardHit%:' + (real.hardHitPct||'?') : '') : '';
+  return p.pitch + ' (' + p.code + '): ' + p.usage + '% usage | ' + (p.avgVelo||'?') + ' mph | Season Whiff:' + p.whiffPct + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | xwOBA:' + (p.avgXwoba||'?') + stuffLine + shapeLine;
 }).join('\n')}
 
 CRITICAL RULES:
-1. ${hasRealStuff ? 'REAL psStuff+ scores are your primary signal. Trust them over estimates.' : 'Estimated scores only.'}
-2. psStuff+ > 105 = must prioritize this pitch regardless of usage. If underused, say so directly.
-3. psStuff+ < 95 with heavy usage = problem. Address it constructively.
+1. Base recommendations on whiff%, xwOBA, movement shape, and velocity.
+2. Prioritize pitches with elite whiff rates regardless of usage.
+3. High usage of a pitch getting hit hard is a concern - address it constructively.
 4. Never base pitch removal recommendations on usage alone.
 5. Speak directly to the pitcher throughout.
+
+
 
 Respond with JSON only (no markdown):
 {
