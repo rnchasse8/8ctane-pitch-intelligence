@@ -873,7 +873,7 @@ ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'
 
 ARSENAL${hasRealStuff ? ' - psStuff+ scores are REAL 8ctane values. Weight these as primary signal for quality.' : ' - estimated psStuff+, treat as approximate.'}:
 ${pitchSummary.map(p => {
-  const real = pm_stored[p.code];
+  const real = pm_stored[p.code] || pm_stored[p.code === 'FA' ? 'FF' : p.code === 'FF' ? 'FA' : p.code];
   const stuffScore = real && real.psStuffPlus ? real.psStuffPlus : (() => {
     const mlb = MLB_BASELINE_REF[p.code];
     if (!mlb) return null;
@@ -1370,6 +1370,7 @@ const PSSTUFF_DATA = {
     metrics: {
       SI: { psStuffPlus:92,  spinRate:2189, armSide:14.46,  vertical:10.47,  xwOBA:.334, xSLG:.427, xBA:.305, whiffPct:10.80, hardHitPct:29.41  },
       FF: { psStuffPlus:117, spinRate:2332, armSide:7.01,   vertical:17.17,  xwOBA:.398, xSLG:.582, xBA:.346, whiffPct:9.10,  hardHitPct:66.67  },
+      FA: { psStuffPlus:117, spinRate:2332, armSide:7.01,   vertical:17.17,  xwOBA:.398, xSLG:.582, xBA:.346, whiffPct:9.10,  hardHitPct:66.67  },
       ST: { psStuffPlus:104, spinRate:2473, armSide:-13.54, vertical:2.10,   xwOBA:.387, xSLG:.324, xBA:.278, whiffPct:23.50, hardHitPct:0.00   },
       CH: { psStuffPlus:105, spinRate:1151, armSide:11.60,  vertical:1.87,   xwOBA:.213, xSLG:.058, xBA:.051, whiffPct:44.40, hardHitPct:100.00 },
       CU: { psStuffPlus:81,  spinRate:2244, armSide:-7.91,  vertical:-11.70, xwOBA:.235, xSLG:.077, xBA:.076, whiffPct:60.00, hardHitPct:0.00   },
