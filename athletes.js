@@ -886,11 +886,12 @@ ${pitchSummary.map(p => {
 }).join('\n')}
 
 CRITICAL RULES:
-1. Base recommendations on whiff%, xwOBA, movement shape, and velocity.
-2. Prioritize pitches with elite whiff rates regardless of usage.
-3. High usage of a pitch getting hit hard is a concern - address it constructively.
-4. Never base pitch removal recommendations on usage alone.
-5. Speak directly to the pitcher throughout.
+1. Base recommendations on whiff%, xwOBA, movement shape, and velocity ONLY.
+2. NEVER mention psStuff+ or any stuff grade in your response unless the data above explicitly contains a psStuff+ value labeled [8ctane]. Do not calculate, estimate, or infer psStuff+ yourself under any circumstances.
+3. Prioritize pitches with elite whiff rates regardless of usage.
+4. High usage of a pitch getting hit hard is a concern - address it constructively.
+5. Never base pitch removal recommendations on usage alone.
+6. Speak directly to the pitcher throughout. Use plain language - no stat abbreviations in the narrative text.
 
 
 
@@ -1019,7 +1020,7 @@ async function loadOutingInsight() {
       return `${pn(pt)}: ${s.count} pitches (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'} mph | Whiff: ${s.whiffPct||0}% | CSW: ${s.cswPct||0}% | xwOBA: ${s.avgXwoba||'N/A'} | IVB: ${s.avgIVB||'?'}" HB: ${s.avgHB||'?'}" VAA: ${s.avgVAA||'?'}° (MLB whiff avg: ${mlb?.whiff_pct||'?'}%)`;
     }).join('\n');
 
-  const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher after their outing. Your tone is direct, honest, and encouraging — like a coach who watched every pitch and wants to help them grow. Use "you" and "your" throughout. Be specific about what happened, what worked, and what to adjust. Speak plainly — avoid stat jargon.
+  const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher after their outing. Your tone is direct, honest, and encouraging — like a coach who watched every pitch and wants to help them grow. Use "you" and "your" throughout. Be specific about what happened, what worked, and what to adjust. Speak plainly — avoid stat jargon. NEVER mention psStuff+ or any stuff grade unless it was explicitly provided in the data — do not calculate or infer it yourself.
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.level||''})
 OUTING: ${formatDate(outing.date)} vs. ${outing.opponent||'Unknown'} | ${total} pitches | ${outing.ks||0}K ${outing.walks||0}BB
