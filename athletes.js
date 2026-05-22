@@ -1379,11 +1379,11 @@ const PSSTUFF_DATA = {
   'sam highfill': {
     lastUpdated: 'May 21, 2026',
     metrics: {
-      FF: { spinRate:2256, armSide:10.8, vertical:15.9, whiffPct:9.5,  hardHitPct:null },
-      FA: { spinRate:2256, armSide:10.8, vertical:15.9, whiffPct:9.5,  hardHitPct:null },
-      SL: { spinRate:2346, armSide:5.8,  vertical:-2.2, whiffPct:31.8, hardHitPct:null },
-      SW: { spinRate:2087, armSide:-11.7,vertical:-9.5, whiffPct:33.3, hardHitPct:null },
-      CH: { spinRate:1564, armSide:11.9, vertical:10.7, whiffPct:30.8, hardHitPct:null },
+      FF: { spinRate:2256, armSide:10.8, vertical:15.9, whiffPct:9.5  },
+      FA: { spinRate:2256, armSide:10.8, vertical:15.9, whiffPct:9.5  },
+      SL: { spinRate:2346, armSide:5.8,  vertical:-2.2, whiffPct:31.8 },
+      SW: { spinRate:2087, armSide:-11.7,vertical:-9.5, whiffPct:33.3 },
+      CH: { spinRate:1564, armSide:11.9, vertical:10.7, whiffPct:30.8 },
     }
   }
 };
@@ -1413,8 +1413,19 @@ function renderPsStuffCards() {
 
   section.style.display = '';
 
-  const cols = ['psStuff+','Spin','Arm Side','Vertical','xwOBA','xSLG','xBA','Whiff%','HardHit%'];
-  const keyMap = ['psStuffPlus','spinRate','armSide','vertical','xwOBA','xSLG','xBA','whiffPct','hardHitPct'];
+  // Only show columns where at least one pitch has data
+  const allCols = [
+    { label:'psStuff+',  key:'psStuffPlus' },
+    { label:'Spin',      key:'spinRate'    },
+    { label:'Arm Side',  key:'armSide'     },
+    { label:'Vertical',  key:'vertical'    },
+    { label:'xwOBA',     key:'xwOBA'       },
+    { label:'xSLG',      key:'xSLG'        },
+    { label:'xBA',       key:'xBA'         },
+    { label:'Whiff%',    key:'whiffPct'    },
+    { label:'HardHit%',  key:'hardHitPct'  },
+  ];
+  const activeCols = allCols.filter(c => entries.some(([,m]) => m[c.key] !== undefined && m[c.key] !== null && m[c.key] !== ''));
 
   const updatedNote = lastUpdated
     ? `<div style="font-size:11px;color:var(--muted);margin-bottom:.75rem;font-family:'DM Mono',monospace">
@@ -1424,7 +1435,7 @@ function renderPsStuffCards() {
 
   const header = `<div class="mov-header-row">
     <div class="mov-header-label">Pitch</div>
-    <div class="mov-header-stats">${cols.map(c=>`<div class="mov-header-stat">${c}</div>`).join('')}</div>
+    <div class="mov-header-stats">${activeCols.map(c=>`<div class="mov-header-stat">${c.label}</div>`).join('')}</div>
   </div>`;
 
   const rows = entries.sort((a,b) => {
@@ -1432,10 +1443,10 @@ function renderPsStuffCards() {
     const pb = EDITABLE_PITCH_TYPES.findIndex(p=>p.code===b[0]);
     return (pa===-1?99:pa) - (pb===-1?99:pb);
   }).map(([pt, m]) => {
-    const vals = keyMap.map(k => {
-      const v = m[k];
+    const vals = activeCols.map(c => {
+      const v = m[c.key];
       if (v === undefined || v === null || v === '') return '<span class="v-num">—</span>';
-      if (k === 'psStuffPlus') {
+      if (c.key === 'psStuffPlus') {
         const cls = v >= 110 ? 'v-good' : v >= 95 ? 'v-num' : 'v-bad';
         return `<span class="${cls}">${v}</span>`;
       }
