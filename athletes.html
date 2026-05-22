@@ -54,6 +54,8 @@
   <div class="page-header">
     <button class="btn-ghost" onclick="showRoster()">← All Athletes</button>
     <div style="display:flex;gap:.5rem">
+      <button class="btn-ghost" id="btn-share" onclick="sharePlayerLink()">Share Dashboard</button>
+      <button class="btn-ghost" id="btn-edit-metrics" onclick="showEditPitchMetrics()">Edit Pitch Metrics</button>
       <button class="btn-ghost" id="btn-add-outing" onclick="showAddOuting()">+ Add Outing</button>
       <button class="btn-ghost" id="btn-view-analyzer" onclick="openInAnalyzer()">Open in Analyzer</button>
     </div>
@@ -142,6 +144,10 @@
     <div class="ptab-panel" id="ptab-yoy">
 
       <div class="section">
+        <div id="metrics-psstuff-section" style="display:none;margin-bottom:1.5rem">
+          <div class="section-hd">8ctane psStuff+ metrics</div>
+          <div id="metrics-psstuff-cards"></div>
+        </div>
         <div class="section-hd">Season pitch shapes — 2026</div>
         <div id="metrics-shape-cards" class="mov-cards-wrap"></div>
       </div>

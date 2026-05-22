@@ -711,6 +711,16 @@ async function confirmDeleteOuting(outingId, date) {
   }
 }
 
+function sharePlayerLink() {
+  const base = window.location.origin + window.location.pathname.replace('athletes.html','');
+  const url = `${base}player.html?id=${currentAthlete.id}`;
+  navigator.clipboard.writeText(url).then(() => {
+    toast(`Link copied for ${currentAthlete.name} ✓`, 'success');
+  }).catch(() => {
+    prompt('Copy this link to share:', url);
+  });
+}
+
 /* ==================== PITCH METRICS EDITOR ==================== */
 const PITCH_METRIC_FIELDS = [
   { key:'psStuffPlus',  label:'psStuff+',  type:'number', placeholder:'e.g. 117' },
