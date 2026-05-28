@@ -877,51 +877,72 @@ async function renderSeasonInsight() {
     return pm;
   })();
 
-  const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Your tone is direct, encouraging, and specific - like a coach who knows this pitcher well. Use "you" and "your" throughout. Frame weaknesses constructively. Speak plainly.
+  const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Your tone is direct, encouraging, and specific - like a coach who knows this pitcher well. Use "you" and "your" throughout. Frame weaknesses constructively. Speak plainly - no stat abbreviations in narrative text. NEVER mention psStuff+ or any stuff grade unless explicitly provided in the data.
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.team||'unknown team'}, ${currentAthlete.level||''})
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
 ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}%
 
-ARSENAL:
+ARSENAL (IVB and HB in inches):
 ${pitchSummary.map(p => {
   const real = pm_stored[p.code] || pm_stored[p.code === 'FA' ? 'FF' : p.code === 'FF' ? 'FA' : p.code];
-  const stuffLine = '';  // psStuff+ only shown when explicitly provided
-  const shapeLine = real ? ' | Spin:' + (real.spinRate||'?') + ' ArmSide:' + (real.armSide||'?') + '"' +
-    (real.vertical !== undefined ? ' Vert:' + (real.vertical||'?') + '"' : '') +
-    (real.xwOBA !== undefined ? ' xwOBA:' + (real.xwOBA||'?') + ' xSLG:' + (real.xSLG||'?') + ' xBA:' + (real.xBA||'?') : '') +
+  const shapeLine = real ? ' | Spin:' + (real.spinRate||'?') + ' ArmSide:' + (real.armSide||'?') + '" Vert:' + (real.vertical||'?') + '"' +
+    (real.xwOBA !== undefined ? ' xwOBA:' + (real.xwOBA||'?') : '') +
     (real.whiffPct !== undefined ? ' Whiff%:' + (real.whiffPct||'?') : '') +
     (real.hardHitPct !== undefined ? ' HardHit%:' + (real.hardHitPct||'?') : '') : '';
-  return p.pitch + ' (' + p.code + '): ' + p.usage + '% usage | ' + (p.avgVelo||'?') + ' mph | Season Whiff:' + p.whiffPct + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | xwOBA:' + (p.avgXwoba||'?') + stuffLine + shapeLine;
+  return p.pitch + ' (' + p.code + '): ' + p.usage + '% usage | ' + (p.avgVelo||'?') + ' mph | IVB:' + (p.avgIVB||'?') + '" HB:' + (p.avgHB||'?') + '" | Whiff:' + p.whiffPct + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | xwOBA:' + (p.avgXwoba||'?') + shapeLine;
 }).join('\n')}
 
-CRITICAL RULES:
-1. Base recommendations on whiff%, xwOBA, movement shape, and velocity ONLY.
-2. NEVER mention psStuff+ or any stuff grade in your response unless the data above explicitly contains a psStuff+ value labeled [8ctane]. Do not calculate, estimate, or infer psStuff+ yourself under any circumstances.
-3. Prioritize pitches with elite whiff rates regardless of usage.
-4. High usage of a pitch getting hit hard is a concern - address it constructively.
-5. Never base pitch removal recommendations on usage alone.
-6. Speak directly to the pitcher throughout. Use plain language - no stat abbreviations in the narrative text.
+8CTANE COACHING PHILOSOPHY — follow these exactly:
 
+PRIORITY ORDER:
+1. STUFF QUALITY — velo, movement shape, whiff rate. This is the primary signal for everything.
+2. STRIKE THROWING — Zone% and command. If Zone% is below 48% or Strike% is low, this leads the concerns section.
+3. COUNT-BASED LOCATION — where to throw each pitch in specific counts based on stuff profile.
+4. RESULTS — xwOBA and contact quality as supporting context only.
 
+ARSENAL SHAPE RULES:
+- A "big shape" fastball = IVB greater than 18 inches.
+- A "big shape" breaking ball = CU/SL/ST with HB greater than 10 inches glove-side OR drop greater than 10 inches.
+- If the pitcher has BOTH a big shape fastball AND a big shape breaking ball but NO bridging pitch (tight-shape cutter, slider, or firm changeup with less than 6" movement in any direction), flag this as a clear gap and recommend adding a bridging pitch.
+- When recommending a pitch addition, name a specific current MLB pitcher with a similar arsenal who successfully uses that bridging pitch. Make the comparison concrete and relevant.
+- ONLY recommend adding a pitch if there is a clear shape gap OR a highly relevant MLB comp. Do not force a recommendation.
+- NEVER suggest a knuckleball, eephus, screwball, or any other rarely-thrown pitch. Stick to: cutter, sinker, slider, sweeper, changeup, splitter, curveball.
+
+WHIFF RULES:
+- Any pitch with whiff rate 30%+ is an elite weapon — highlight it prominently and recommend throwing it more in high-leverage counts.
+- Any pitch with whiff rate below 12% getting heavy usage (20%+) should be addressed constructively.
+- Never remove a pitch based on usage alone — only on poor results AND poor stuff.
+
+TONE:
+- Always lead with what the pitcher is doing well.
+- Be specific — name the actual pitch and what makes it work.
+- Frame every concern as something fixable, not a flaw.
+- Speak directly to the pitcher throughout.
 
 Respond with JSON only (no markdown):
 {
   "headline": "2-3 word headline capturing the season",
-  "summary": "3-4 sentences to the pitcher about their season",
-  "strengths": [{"title": "...", "detail": "specific and encouraging, to the pitcher"}],
-  "concerns": [{"title": "...", "detail": "honest but constructive, framed as opportunity"}],
+  "summary": "3-4 sentences to the pitcher — lead with strengths, address the main story",
+  "strengths": [{"title": "...", "detail": "specific and encouraging, name the pitch and what makes it work"}],
+  "concerns": [{"title": "...", "detail": "honest but constructive — what needs fixing and why it's fixable"}],
   "arsenalAssessment": {
-    "keepPitches": [{"pitch": "...", "reason": "why this pitch is working for you"}],
-    "developPitches": [{"pitch": "...", "reason": "what you can unlock with this pitch"}],
-    "addPitch": {"pitch": "...", "reason": "why adding this would help you"},
-    "removePitch": {"pitch": "...", "reason": "why this isn't serving you right now"}
+    "keepPitches": [{"pitch": "...", "reason": "why this pitch is a weapon for you"}],
+    "developPitches": [{"pitch": "...", "reason": "what you can unlock with more work on this pitch"}],
+    "addPitch": {"pitch": "...", "reason": "specific gap in your arsenal + name an MLB pitcher with similar profile who uses this pitch successfully — only include if there is a clear shape gap or strong MLB comp"},
+    "removePitch": {"pitch": "...", "reason": "honest explanation — only recommend if poor stuff AND poor results, not just low usage"}
   },
   "splitAdvice": {
-    "vsRHH": "2-3 sentences of direct advice for attacking right-handed hitters",
-    "vsLHH": "2-3 sentences of direct advice for attacking left-handed hitters"
+    "vsRHH": "2-3 sentences — specific pitch sequencing advice based on movement profiles",
+    "vsLHH": "2-3 sentences — specific pitch sequencing advice based on movement profiles"
   },
-  "developmentPriorities": ["specific actionable focus written to the pitcher", "...", "..."]
+  "countStrategy": [
+    {"count": "0-0", "pitch": "...", "location": "...", "reason": "why this pitch in this count based on stuff"},
+    {"count": "0-2", "pitch": "...", "location": "...", "reason": "..."},
+    {"count": "2-0", "pitch": "...", "location": "...", "reason": "..."},
+    {"count": "3-2", "pitch": "...", "location": "...", "reason": "..."}
+  ],
+  "developmentPriorities": ["most important thing to work on right now", "second priority", "third priority"]
 }`;
 
 
@@ -988,6 +1009,19 @@ function renderSeasonInsightHTML(a, pitchSummary, total) {
         </div>
       </div>
 
+      ${(a.countStrategy||[]).length ? `
+      <div class="section-hd" style="margin-top:1.5rem">Count strategy</div>
+      <div class="count-strategy-wrap">
+        ${(a.countStrategy||[]).map(c => `
+        <div class="count-strategy-row">
+          <div class="cs-count">${c.count}</div>
+          <div class="cs-detail">
+            <div class="cs-pitch">${c.pitch} <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace">${c.location||''}</span></div>
+            <div class="cs-rec">${c.reason}</div>
+          </div>
+        </div>`).join('')}
+      </div>` : ''}
+
       <div class="section-hd" style="margin-top:1.5rem">Development priorities</div>
       <div class="dev-priorities">
         ${(a.developmentPriorities||[]).map((p,i) =>
@@ -1033,7 +1067,7 @@ async function loadOutingInsight() {
   const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher after their outing. Your tone is direct, honest, and encouraging — like a coach who watched every pitch and wants to help them grow. Use "you" and "your" throughout. Be specific about what happened, what worked, and what to adjust. Speak plainly — avoid stat jargon. NEVER mention psStuff+ or any stuff grade unless it was explicitly provided in the data — do not calculate or infer it yourself.
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.level||''})
-OUTING: ${formatDate(outing.date)} vs. ${outing.opponent||'Unknown'} | ${total} pitches | ${outing.ks||0}K ${outing.walks||0}BB
+OUTING: ${formatDate(outing.date)} vs. ${outing.opponent||'Unknown'} | ${total} pitches | ${outing.strikeouts||outing.ks||0}K ${outing.walks||0}BB
 Zone%: ${outing.zone_pct||'N/A'}% | O-Swing%: ${outing.o_swing_pct||'N/A'}% | Z-Contact%: ${outing.z_contact_pct||'N/A'}% | GB%: ${outing.gb_pct||'N/A'}% | SwStr%: ${total?(+outing.whiffs/total*100).toFixed(1):'N/A'}%
 
 PITCH-BY-PITCH:
@@ -1094,7 +1128,7 @@ function renderOutingInsightHTML(a, outing, pm, total) {
 
       <div class="outing-insight-header">
         <div class="insight-headline">${a.headline||''}</div>
-        <div class="outing-insight-meta">${formatDate(outing.date)} · vs. ${outing.opponent||'—'} · ${total} pitches · ${outing.ks||0}K ${outing.walks||0}BB</div>
+        <div class="outing-insight-meta">${formatDate(outing.date)} · vs. ${outing.opponent||'—'} · ${total} pitches · ${outing.strikeouts||outing.ks||0}K ${outing.walks||0}BB</div>
       </div>
       <div class="insight-summary">${a.summary||''}</div>
 
