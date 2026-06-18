@@ -564,7 +564,8 @@ function processOutingRows(rows) {
   // Zone/swing counters (outing-level)
   let inZone=0, outZone=0, swingInZone=0, swingOutZone=0,
       contactInZone=0, contactOutZone=0, totalSwings=0,
-      totalStrikes=0, gbCount=0, fbCount=0, ldCount=0, puCount=0, bipCount=0;
+      totalStrikes=0, gbCount=0, fbCount=0, ldCount=0, puCount=0, bipCount=0,
+      fp_total=0, fp_strikes=0, oneone_total=0, oneone_strikes=0;
 
   const STRIKE_ZONES = new Set(['1','2','3','4','5','6','7','8','9']);
 
@@ -604,6 +605,13 @@ function processOutingRows(rows) {
 
     // Strikes = swinging strikes + called strikes + fouls + HIP
     if (desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play') totalStrikes++;
+
+    // Count-based strike tracking
+    const balls_n   = parseInt(r.balls||0);
+    const strikes_n = parseInt(r.strikes||0);
+    const isStrike  = desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
+    if (balls_n===0 && strikes_n===0) { fp_total++; if(isStrike) fp_strikes++; }
+    if (balls_n===1 && strikes_n===1) { oneone_total++; if(isStrike) oneone_strikes++; }
 
     // BIP types
     const bbt = (r.bb_type||'').toLowerCase();
@@ -668,6 +676,8 @@ function processOutingRows(rows) {
       gbPct:         bipCount      ? +(gbCount/bipCount*100).toFixed(1) : null,
       fbPct:         bipCount      ? +(fbCount/bipCount*100).toFixed(1) : null,
       ldPct:         bipCount      ? +(ldCount/bipCount*100).toFixed(1) : null,
+      fpStrikePct:   fp_total      ? +(fp_strikes/fp_total*100).toFixed(1) : null,
+      oonStrikePct:  oneone_total  ? +(oneone_strikes/oneone_total*100).toFixed(1) : null,
     }
   };
 }
@@ -868,6 +878,9 @@ async function renderSeasonInsight() {
   const zContactPct = avg(athleteOutings.map(o=>pf(o.z_contact_pct)).filter(Boolean));
   const gbPct       = avg(athleteOutings.map(o=>pf(o.gb_pct)).filter(Boolean));
 
+  const fpStrikePct  = avg(athleteOutings.map(o=>pf(o.fp_strike_pct)).filter(Boolean)) || null;
+  const oonStrikePct = avg(athleteOutings.map(o=>pf(o.oon_strike_pct)).filter(Boolean)) || null;
+
   const pm_stored = (() => {
     let pm = currentAthlete.pitch_metrics || {};
     if (!Object.keys(pm).length) {
@@ -881,7 +894,7 @@ async function renderSeasonInsight() {
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.team||'unknown team'}, ${currentAthlete.level||''})
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
-ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}%
+ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}% | F-Strike%: ${fpStrikePct?.toFixed(1)||'N/A'}% | 1-1 Strike%: ${oonStrikePct?.toFixed(1)||'N/A'}%
 
 ARSENAL (IVB and HB in inches):
 ${pitchSummary.map(p => {
@@ -897,7 +910,7 @@ ${pitchSummary.map(p => {
 
 PRIORITY ORDER:
 1. STUFF QUALITY — velo, movement shape, whiff rate. This is the primary signal for everything.
-2. STRIKE THROWING — Zone% and command. If Zone% is below 48% or Strike% is low, this leads the concerns section.
+2. STRIKE THROWING — Zone%, F-Strike%, and 1-1 Strike% are critical. F-Strike% below 58% or 1-1 Strike% below 55% should lead the concerns section. These are high-leverage counts that define at-bat outcomes.
 3. COUNT-BASED LOCATION — where to throw each pitch in specific counts based on stuff profile.
 4. RESULTS — xwOBA and contact quality as supporting context only.
 
@@ -1248,7 +1261,7 @@ function renderReport() {
 
   // Aggregate zone/swing metrics from stored outing stats
   const zoneVals=[], oSwingVals=[], zSwingVals=[], zContactVals=[],
-        swingVals=[], strikeVals=[], gbVals=[], fbVals=[], ldVals=[];
+        swingVals=[], strikeVals=[], gbVals=[], fbVals=[], ldVals=[], fpVals=[], oonVals=[];
 
   athleteOutings.forEach(o => {
     if (pf(o.zone_pct))      zoneVals.push(pf(o.zone_pct));
@@ -1260,6 +1273,8 @@ function renderReport() {
     if (pf(o.gb_pct))        gbVals.push(pf(o.gb_pct));
     if (pf(o.fb_pct))        fbVals.push(pf(o.fb_pct));
     if (pf(o.ld_pct))        ldVals.push(pf(o.ld_pct));
+    if (pf(o.fp_strike_pct))  fpVals.push(pf(o.fp_strike_pct));
+    if (pf(o.oon_strike_pct)) oonVals.push(pf(o.oon_strike_pct));
   });
 
   const zonePct     = zoneVals.length     ? avg(zoneVals)     : null;
@@ -1271,6 +1286,8 @@ function renderReport() {
   const gbPct       = gbVals.length       ? avg(gbVals)       : null;
   const fbPct       = fbVals.length       ? avg(fbVals)       : null;
   const ldPct       = ldVals.length       ? avg(ldVals)       : null;
+  const fpStrikePct  = fpVals.length  ? avg(fpVals)  : null;
+  const oonStrikePct = oonVals.length ? avg(oonVals) : null;
 
   // Peak velo
   const ffOutingPeaks = [];
@@ -1301,6 +1318,8 @@ function renderReport() {
     gbPct:      { p10:30,  p25:38,  p50:45,  p75:52,  p90:58,  hib:true  },
     fbPct:      { p10:20,  p25:25,  p50:30,  p75:36,  p90:42,  hib:false },
     ldPct:      { p10:14,  p25:17,  p50:20,  p75:23,  p90:27,  hib:false },
+    fpStrikePct: { p10:52, p25:57,  p50:62,  p75:67,  p90:72,  hib:true  },
+    oonStrikePct:{ p10:50, p25:55,  p50:60,  p75:65,  p90:70,  hib:true  },
   };
 
   function getPercentile(val, dist) {
@@ -1385,12 +1404,14 @@ function renderReport() {
       ${pctBar('SwStr%',          swStrPct,    r(swStrPct),    DIST.whiffPct,   '%')}
 
       <div class="pct-group-hd">Plate discipline</div>
-      ${zonePct     !== null     ? pctBar('Zone%',       zonePct,     r(zonePct),     DIST.zonePct,    '%') : ''}
-      ${oSwingPct   !== null     ? pctBar('O-Swing%',    oSwingPct,   r(oSwingPct),   DIST.oSwingPct,  '%') : ''}
-      ${zSwingPct   !== null     ? pctBar('Z-Swing%',    zSwingPct,   r(zSwingPct),   DIST.zSwingPct,  '%') : ''}
-      ${zContactPct !== null     ? pctBar('Z-Contact%',  zContactPct, r(zContactPct), DIST.zContactPct,'%') : ''}
-      ${swingPct    !== null     ? pctBar('Swing%',      swingPct,    r(swingPct),    DIST.swingPct,   '%') : ''}
-      ${strikePct   !== null     ? pctBar('Strike%',     strikePct,   r(strikePct),   DIST.strikePct,  '%') : ''}
+      ${zonePct     !== null     ? pctBar('Zone%',         zonePct,      r(zonePct),      DIST.zonePct,     '%') : ''}
+      ${oSwingPct   !== null     ? pctBar('O-Swing%',      oSwingPct,    r(oSwingPct),    DIST.oSwingPct,   '%') : ''}
+      ${zSwingPct   !== null     ? pctBar('Z-Swing%',      zSwingPct,    r(zSwingPct),    DIST.zSwingPct,   '%') : ''}
+      ${zContactPct !== null     ? pctBar('Z-Contact%',    zContactPct,  r(zContactPct),  DIST.zContactPct, '%') : ''}
+      ${swingPct    !== null     ? pctBar('Swing%',        swingPct,     r(swingPct),     DIST.swingPct,    '%') : ''}
+      ${strikePct   !== null     ? pctBar('Strike%',       strikePct,    r(strikePct),    DIST.strikePct,   '%') : ''}
+      ${fpStrikePct !== null     ? pctBar('F-Strike%',     fpStrikePct,  r(fpStrikePct),  DIST.fpStrikePct, '%') : ''}
+      ${oonStrikePct!== null     ? pctBar('1-1 Strike%',   oonStrikePct, r(oonStrikePct), DIST.oonStrikePct,'%') : ''}
 
       <div class="pct-group-hd">Contact quality</div>
       ${avgEV       !== null     ? pctBar('Avg EV',      avgEV,       r(avgEV),       DIST.avgEV,      ' mph') : ''}
