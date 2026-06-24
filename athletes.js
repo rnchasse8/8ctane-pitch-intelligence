@@ -263,10 +263,387 @@ async function openProfile(athleteId) {
 function showRoster() {
   document.getElementById('view-roster').style.display = '';
   document.getElementById('view-profile').style.display = 'none';
+  document.getElementById('view-bulk-import').style.display = 'none';
   currentAthlete = null;
   athleteOutings = [];
   Object.keys(profileCharts).forEach(id => { if(profileCharts[id]) { profileCharts[id].destroy(); delete profileCharts[id]; } });
   loadRoster();
+}
+
+function showBulkImport() {
+  document.getElementById('view-roster').style.display = 'none';
+  document.getElementById('view-profile').style.display = 'none';
+  document.getElementById('view-bulk-import').style.display = '';
+  // Populate athlete dropdown
+  const sel = document.getElementById('bulk-athlete-select');
+  sel.innerHTML = '<option value="">Select athlete...</option>' +
+    cachedAthletes.map(a => `<option value="${a.id}">${a.name} — ${a.team||''} ${a.level||''}</option>`).join('');
+  sel.onchange = () => {
+    const btn = document.getElementById('bulk-import-btn');
+    const hasFile = bulkOutings.length > 0;
+    const hasAthlete = sel.value;
+    btn.disabled = !(hasFile && hasAthlete);
+    btn.style.opacity = (hasFile && hasAthlete) ? '1' : '.4';
+  };
+  // Setup drag and drop
+  const dz = document.getElementById('drop-zone');
+  dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag-over'); };
+  dz.ondragleave = () => dz.classList.remove('drag-over');
+  dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag-over'); if(e.dataTransfer.files[0]) handleBulkFile(e.dataTransfer.files[0]); };
+}
+
+// =============================================
+// BULK IMPORT
+// =============================================
+let bulkOutings = [];
+
+function resetBulkImport() {
+  bulkOutings = [];
+  document.getElementById('bulk-preview').style.display = 'none';
+  document.getElementById('bulk-result').style.display = 'none';
+  document.getElementById('drop-zone').style.display = '';
+  document.getElementById('csv-file-input').value = '';
+}
+
+function handleBulkFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => parseBulkCSV(e.target.result, file.name);
+  reader.readAsText(file);
+}
+
+function parseBulkCSV(text, filename) {
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase());
+
+  // Detect format: Statcast vs Trackman
+  const isStatcast  = headers.includes('pitch_type') && headers.includes('release_speed');
+  const isTrackman  = headers.includes('taggedpitchtype') || headers.includes('relspeed');
+
+  if (!isStatcast && !isTrackman) {
+    alert('Could not detect CSV format. Please use a Statcast or Trackman export.');
+    return;
+  }
+
+  const rows = lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = parseCsvLine(line);
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = (vals[i]||'').trim().replace(/^"|"$/g,''));
+    return obj;
+  });
+
+  if (!rows.length) { alert('No data found in CSV.'); return; }
+
+  const parsed = isStatcast ? parseStatcastBulk(rows) : parseTrackmanBulk(rows);
+  if (!parsed.outings.length) { alert('No outings detected in this file.'); return; }
+
+  bulkOutings = parsed.outings;
+
+  // Show preview
+  document.getElementById('drop-zone').style.display = 'none';
+  document.getElementById('bulk-preview').style.display = '';
+  document.getElementById('bulk-preview-title').textContent = parsed.pitcher + ' — ' + parsed.outings.length + ' outings detected';
+  document.getElementById('bulk-preview-sub').textContent =
+    parsed.outings.reduce((a,o)=>a+o.total_pitches,0) + ' total pitches · ' +
+    parsed.outings[0].date + ' to ' + parsed.outings[parsed.outings.length-1].date + ' · ' + filename;
+
+  // Render outing rows
+  document.getElementById('bulk-outing-rows').innerHTML = parsed.outings.map((o,i) => {
+    const ptags = Object.entries(o.pitchMap).filter(([,s])=>s.count>0)
+      .sort((a,b)=>b[1].count-a[1].count).slice(0,5)
+      .map(([pt,s])=>`${pn(pt)} ${o.total_pitches?(s.count/o.total_pitches*100).toFixed(0):0}%`).join(' · ');
+    const whiffPct = o.total_pitches ? (o.whiffs/o.total_pitches*100).toFixed(1) : '—';
+    return `<div class="bulk-outing-row" id="bulk-row-${i}">
+      <div class="bulk-outing-left">
+        <div class="bulk-outing-date">${formatDate(o.date)}</div>
+        <div>
+          <div class="bulk-outing-opp">vs. ${o.opponent||'Unknown'}</div>
+          <div class="bulk-outing-meta">${o.total_pitches} pitches · ${whiffPct}% whiff · ${o.ks}K ${o.walks}BB · ${ptags}</div>
+        </div>
+      </div>
+      <div class="bulk-outing-status" id="bulk-status-${i}" style="color:var(--muted2)">Pending</div>
+    </div>`;
+  }).join('');
+
+  // Try auto-select athlete by name
+  const sel = document.getElementById('bulk-athlete-select');
+  const nameMatch = cachedAthletes.find(a =>
+    parsed.pitcher.toLowerCase().includes(a.name.split(' ').pop().toLowerCase()) ||
+    a.name.toLowerCase().includes(parsed.pitcher.split(',')[0].toLowerCase().trim())
+  );
+  if (nameMatch) { sel.value = nameMatch.id; sel.dispatchEvent(new Event('change')); }
+}
+
+function parseCsvLine(line) {
+  const result = []; let cur = ''; let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQuote = !inQuote; }
+    else if (c === ',' && !inQuote) { result.push(cur); cur = ''; }
+    else cur += c;
+  }
+  result.push(cur);
+  return result;
+}
+
+function parseStatcastBulk(rows) {
+  const NORMALIZE = {FA:'FF',FO:'FS',CS:'CU',SV:'SL'};
+  const VALID_PT  = new Set(['FF','SI','FC','SL','ST','CU','KC','FS','CH','OTHER']);
+  const STRIKE_ZONES = new Set(['1','2','3','4','5','6','7','8','9']);
+
+  const pitcher = rows[0]?.player_name || 'Unknown';
+  const games = {};
+  rows.forEach(r => {
+    const key = (r.game_date||'') + '|' + (r.game_pk||'');
+    if (!games[key]) games[key] = [];
+    games[key].push(r);
+  });
+
+  const outings = Object.entries(games).sort((a,b)=>a[0].localeCompare(b[0])).map(([key, pitches]) => {
+    const home = pitches[0]?.home_team||''; const away = pitches[0]?.away_team||'';
+    const opp = pitches[0]?.inning_topbot==='Top' ? away : home;
+    const date = pitches[0]?.game_date||'';
+
+    const pm = {};
+    let inZone=0,outZone=0,swingInZone=0,swingOutZone=0,contactInZone=0;
+    let totalSwings=0,totalStrikes=0,gbCount=0,fbCount=0,ldCount=0,bipCount=0;
+    let fp_total=0,fp_strikes=0,oneone_total=0,oneone_strikes=0;
+
+    pitches.forEach(r => {
+      let pt = (r.pitch_type||'').trim().toUpperCase();
+      pt = NORMALIZE[pt] || pt;
+      if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
+      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,lhh:{count:0,whiffs:0,cstrikes:0,hip:0},rhh:{count:0,whiffs:0,cstrikes:0,hip:0}};
+      const s = pm[pt];
+      s.count++;
+      const stand = (r.stand||'').toUpperCase();
+      const side = stand==='L' ? s.lhh : stand==='R' ? s.rhh : null;
+      if (side) side.count++;
+
+      const v = parseFloat(r.release_speed); if (!isNaN(v)) s.velos.push(v);
+      const hb = parseFloat(r.pfx_x); if (!isNaN(hb)) s.pfx_xs.push(-hb*12);
+      const ivb = parseFloat(r.pfx_z); if (!isNaN(ivb)) s.pfx_zs.push(ivb*12);
+
+      const desc = r.description||'';
+      const zone = (r.zone||'').trim();
+      const inSZ = STRIKE_ZONES.has(zone);
+      if (inSZ) inZone++; else if (zone) outZone++;
+      const isSwing = desc.includes('swinging_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
+      const isContact = desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
+      const isStrikeResult = desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
+      if (isSwing) { totalSwings++; if(inSZ){swingInZone++;if(isContact)contactInZone++;} else if(zone)swingOutZone++; }
+      if (desc.includes('swinging_strike')) { s.whiffs++; if(side) side.whiffs++; }
+      else if (desc.includes('called_strike')) { s.cstrikes++; if(side) side.cstrikes++; }
+      else if (desc==='hit_into_play') {
+        s.hip++; if(side) side.hip++;
+        const ev = parseFloat(r.launch_speed); if(!isNaN(ev)){s.launch_speeds.push(ev);if(ev>=95)s.hard_hits++;}
+        const xw = parseFloat(r.estimated_woba_using_speedangle); if(!isNaN(xw))s.xwobas.push(xw);
+      }
+      if (isStrikeResult) totalStrikes++;
+      const bbt = (r.bb_type||'').toLowerCase();
+      if (bbt){bipCount++;if(bbt==='ground_ball')gbCount++;else if(bbt==='fly_ball')fbCount++;else if(bbt==='line_drive')ldCount++;}
+      const balls_n=parseInt(r.balls||0),strikes_n=parseInt(r.strikes||0);
+      if (balls_n===0&&strikes_n===0){fp_total++;if(isStrikeResult)fp_strikes++;}
+      if (balls_n===1&&strikes_n===1){oneone_total++;if(isStrikeResult)oneone_strikes++;}
+    });
+
+    const total = pitches.length;
+    const allEVs = Object.values(pm).flatMap(s=>s.launch_speeds);
+    const hardHits = Object.values(pm).reduce((a,s)=>a+s.hard_hits,0);
+    const zonedP = inZone+outZone;
+    const ks = pitches.filter(r=>r.events==='strikeout').length;
+    const walks = pitches.filter(r=>r.events==='walk').length;
+    const avgg = arr => arr.length ? arr.reduce((a,b)=>a+b)/arr.length : null;
+
+    const flatMap = {};
+    Object.entries(pm).forEach(([pt,s]) => {
+      if (!s.count) return;
+      flatMap[pt] = {
+        count:s.count, whiffs:s.whiffs, cstrikes:s.cstrikes, hip:s.hip,
+        avgVelo:  s.velos.length  ? +avgg(s.velos).toFixed(1)  : null,
+        peakVelo: s.velos.length  ? +Math.max(...s.velos).toFixed(1) : null,
+        whiffPct: +(s.whiffs/s.count*100).toFixed(1),
+        cswPct:   +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1),
+        avgXwoba: s.xwobas.length ? +avgg(s.xwobas).toFixed(3) : null,
+        avgEV:    s.launch_speeds.length ? +avgg(s.launch_speeds).toFixed(1) : null,
+        avgIVB:   s.pfx_zs.length ? +avgg(s.pfx_zs).toFixed(1) : null,
+        avgHB:    s.pfx_xs.length ? +avgg(s.pfx_xs).toFixed(1) : null,
+        lhh: { count:s.lhh.count, whiffs:s.lhh.whiffs, cstrikes:s.lhh.cstrikes,
+               whiffPct:s.lhh.count?+(s.lhh.whiffs/s.lhh.count*100).toFixed(1):0,
+               cswPct:s.lhh.count?+((s.lhh.whiffs+s.lhh.cstrikes)/s.lhh.count*100).toFixed(1):0 },
+        rhh: { count:s.rhh.count, whiffs:s.rhh.whiffs, cstrikes:s.rhh.cstrikes,
+               whiffPct:s.rhh.count?+(s.rhh.whiffs/s.rhh.count*100).toFixed(1):0,
+               cswPct:s.rhh.count?+((s.rhh.whiffs+s.rhh.cstrikes)/s.rhh.count*100).toFixed(1):0 },
+      };
+    });
+
+    return {
+      date, opponent:opp, total_pitches:total,
+      whiffs:Object.values(pm).reduce((a,s)=>a+s.whiffs,0),
+      calledStrikes:Object.values(pm).reduce((a,s)=>a+s.cstrikes,0),
+      walks, ks,
+      avgEV:allEVs.length?+avgg(allEVs).toFixed(1):null,
+      hardHitPct:allEVs.length?+(hardHits/allEVs.length*100).toFixed(1):null,
+      zonePct:    zonedP      ?+(inZone/zonedP*100).toFixed(1):null,
+      oSwingPct:  outZone     ?+(swingOutZone/outZone*100).toFixed(1):null,
+      zSwingPct:  inZone      ?+(swingInZone/inZone*100).toFixed(1):null,
+      zContactPct:swingInZone ?+(contactInZone/swingInZone*100).toFixed(1):null,
+      swingPct:   total       ?+(totalSwings/total*100).toFixed(1):null,
+      strikePct:  total       ?+(totalStrikes/total*100).toFixed(1):null,
+      gbPct:      bipCount    ?+(gbCount/bipCount*100).toFixed(1):null,
+      fbPct:      bipCount    ?+(fbCount/bipCount*100).toFixed(1):null,
+      ldPct:      bipCount    ?+(ldCount/bipCount*100).toFixed(1):null,
+      fpStrikePct: fp_total   ?+(fp_strikes/fp_total*100).toFixed(1):null,
+      oonStrikePct:oneone_total?+(oneone_strikes/oneone_total*100).toFixed(1):null,
+      pitchMap: flatMap,
+    };
+  });
+  return { pitcher, outings };
+}
+
+function parseTrackmanBulk(rows) {
+  const PT_MAP = {
+    'Fastball':'FF','Four-Seam':'FF','FourSeamFastBall':'FF',
+    'Sinker':'SI','TwoSeamFastBall':'SI','Cutter':'FC',
+    'Slider':'SL','Sweeper':'ST','Curveball':'CU','CurveBall':'CU',
+    'Splitter':'FS','Split-Finger':'FS','Changeup':'CH','ChangeUp':'CH',
+  };
+  const pitcher = rows[0]?.pitcher || rows[0]?.Pitcher || 'Unknown';
+  const games = {};
+  rows.forEach(r => {
+    const date = r.date || r.Date || '';
+    if (!games[date]) games[date] = [];
+    games[date].push(r);
+  });
+
+  const outings = Object.entries(games).sort((a,b)=>a[0].localeCompare(b[0])).map(([date, pitches]) => {
+    const opp = pitches[0]?.batterteam || pitches[0]?.BatterTeam || '';
+    const pm = {};
+    pitches.forEach(r => {
+      const tagged = r.taggedpitchtype || r.TaggedPitchType || '';
+      const auto   = r.autopitchtype   || r.AutoPitchType   || '';
+      const pt = PT_MAP[tagged] || PT_MAP[auto] || 'OTHER';
+      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,launch_speeds:[],ivbs:[],hbs:[],lhh:{count:0,whiffs:0,cstrikes:0},rhh:{count:0,whiffs:0,cstrikes:0}};
+      const s = pm[pt]; s.count++;
+      const stand = (r.batterside||r.BatterSide||'').toUpperCase();
+      const side = stand==='L'?s.lhh:stand==='R'?s.rhh:null;
+      if(side) side.count++;
+      const v = parseFloat(r.relspeed||r.RelSpeed); if(!isNaN(v))s.velos.push(v);
+      const ivb=parseFloat(r.inducedvertbreak||r.InducedVertBreak); if(!isNaN(ivb))s.ivbs.push(ivb);
+      const hb=parseFloat(r.horzbreak||r.HorzBreak); if(!isNaN(hb))s.hbs.push(hb);
+      const call = r.pitchcall||r.PitchCall||'';
+      if(call.includes('SwingingStrike')||call==='StrikeSwinging'){s.whiffs++;if(side)side.whiffs++;}
+      else if(call.includes('CalledStrike')||call==='StrikeCalled'){s.cstrikes++;if(side)side.cstrikes++;}
+      else if(call==='InPlay'){s.hip++;const ev=parseFloat(r.exitspeed||r.ExitSpeed);if(!isNaN(ev))s.launch_speeds.push(ev);}
+      const korbb=r.korbb||r.KorBB||'';
+      if(korbb==='Strikeout'){}; // handled above
+    });
+    const total=pitches.length;
+    const ks=pitches.filter(r=>(r.korbb||r.KorBB||'')===('Strikeout')).length;
+    const walks=pitches.filter(r=>(r.korbb||r.KorBB||'')==='Walk').length;
+    const avgg=arr=>arr.length?arr.reduce((a,b)=>a+b)/arr.length:null;
+    const flatMap={};
+    Object.entries(pm).forEach(([pt,s])=>{
+      if(!s.count)return;
+      flatMap[pt]={
+        count:s.count,whiffs:s.whiffs,cstrikes:s.cstrikes,hip:s.hip,
+        avgVelo:s.velos.length?+avgg(s.velos).toFixed(1):null,
+        peakVelo:s.velos.length?+Math.max(...s.velos).toFixed(1):null,
+        whiffPct:+(s.whiffs/s.count*100).toFixed(1),
+        cswPct:+((s.whiffs+s.cstrikes)/s.count*100).toFixed(1),
+        avgIVB:s.ivbs.length?+avgg(s.ivbs).toFixed(1):null,
+        avgHB:s.hbs.length?+avgg(s.hbs).toFixed(1):null,
+        avgEV:s.launch_speeds.length?+avgg(s.launch_speeds).toFixed(1):null,
+        avgXwoba:null,
+        lhh:{count:s.lhh.count,whiffs:s.lhh.whiffs,cstrikes:s.lhh.cstrikes,whiffPct:s.lhh.count?+(s.lhh.whiffs/s.lhh.count*100).toFixed(1):0,cswPct:s.lhh.count?+((s.lhh.whiffs+s.lhh.cstrikes)/s.lhh.count*100).toFixed(1):0},
+        rhh:{count:s.rhh.count,whiffs:s.rhh.whiffs,cstrikes:s.rhh.cstrikes,whiffPct:s.rhh.count?+(s.rhh.whiffs/s.rhh.count*100).toFixed(1):0,cswPct:s.rhh.count?+((s.rhh.whiffs+s.rhh.cstrikes)/s.rhh.count*100).toFixed(1):0},
+      };
+    });
+    // Parse date from M/D/YY
+    let isoDate = date;
+    if (date.includes('/')) { const [m,d,y]=date.split('/'); isoDate=`20${y.slice(-2)}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; }
+    return {date:isoDate,opponent:opp,total_pitches:total,whiffs:Object.values(pm).reduce((a,s)=>a+s.whiffs,0),calledStrikes:Object.values(pm).reduce((a,s)=>a+s.cstrikes,0),walks,ks,avgEV:null,hardHitPct:null,zonePct:null,oSwingPct:null,zSwingPct:null,zContactPct:null,swingPct:null,strikePct:null,gbPct:null,fbPct:null,ldPct:null,fpStrikePct:null,oonStrikePct:null,pitchMap:flatMap};
+  });
+  return { pitcher, outings };
+}
+
+async function runBulkImport() {
+  const athleteId = document.getElementById('bulk-athlete-select').value;
+  if (!athleteId || !bulkOutings.length) return;
+
+  // Check for duplicates against existing outings
+  const existingRes = await api('getOutings', { athleteId });
+  const existingDates = new Set((existingRes.outings||[]).map(o => o.date?.toString().split('T')[0]));
+
+  document.getElementById('bulk-import-btn').disabled = true;
+  document.getElementById('bulk-import-btn').textContent = 'Importing...';
+  document.getElementById('bulk-progress-wrap').style.display = '';
+
+  let done=0, skipped=0, errors=0;
+
+  for (let i=0; i<bulkOutings.length; i++) {
+    const o = bulkOutings[i];
+    const row = document.getElementById(`bulk-row-${i}`);
+    const status = document.getElementById(`bulk-status-${i}`);
+
+    // Check duplicate
+    const dateKey = o.date?.toString().split('T')[0];
+    if (existingDates.has(dateKey)) {
+      row.className = 'bulk-outing-row skip';
+      status.style.color = 'var(--muted2)';
+      status.textContent = '— Skipped (exists)';
+      skipped++;
+      document.getElementById('bulk-progress-bar').style.width = ((i+1)/bulkOutings.length*100)+'%';
+      continue;
+    }
+
+    row.className = 'bulk-outing-row active';
+    status.style.color = 'var(--cyan)';
+    status.textContent = 'Saving...';
+
+    try {
+      const cleanMap = {};
+      Object.entries(o.pitchMap).forEach(([pt,s]) => { if(s.count>0) cleanMap[pt]=s; });
+      await api('addOuting', {
+        athleteId,
+        date: o.date,
+        opponent: o.opponent,
+        notes: '',
+        pitchMap: cleanMap,
+        stats: {
+          total: o.total_pitches, whiffs: o.whiffs, calledStrikes: o.calledStrikes,
+          walks: o.walks, ks: o.ks, avgEV: o.avgEV, hardHitPct: o.hardHitPct,
+          zonePct: o.zonePct, oSwingPct: o.oSwingPct, zSwingPct: o.zSwingPct,
+          zContactPct: o.zContactPct, swingPct: o.swingPct, strikePct: o.strikePct,
+          gbPct: o.gbPct, fbPct: o.fbPct, ldPct: o.ldPct,
+          fpStrikePct: o.fpStrikePct, oonStrikePct: o.oonStrikePct,
+        }
+      });
+      row.className = 'bulk-outing-row done';
+      status.style.color = 'var(--good)';
+      status.textContent = '✓ Saved';
+      done++;
+    } catch(e) {
+      row.className = 'bulk-outing-row error';
+      status.style.color = 'var(--danger)';
+      status.textContent = '✗ Error';
+      errors++;
+    }
+
+    document.getElementById('bulk-progress-bar').style.width = ((i+1)/bulkOutings.length*100)+'%';
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  const title = errors===0
+    ? `✓ ${done} outing${done!==1?'s':''} imported successfully`
+    : `${done} imported · ${errors} failed · ${skipped} skipped`;
+  const body = skipped > 0
+    ? `${skipped} outing${skipped!==1?'s':''} were skipped because they already exist for this athlete.`
+    : `All outings saved. Head to the athlete profile to view the updated season data.`;
+
+  document.getElementById('bulk-result-title').textContent = title;
+  document.getElementById('bulk-result-body').textContent = body;
+  document.getElementById('bulk-result').style.display = '';
 }
 
 function renderProfileHero() {
