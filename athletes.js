@@ -30,6 +30,7 @@ let SCRIPT_URL = localStorage.getItem('8ctane_script_url') || '';
 let currentAthlete = null;
 let athleteOutings = [];
 let profileCharts = {};
+let cachedAthletes = [];
 
 /* ==================== INIT ==================== */
 window.addEventListener('DOMContentLoaded', () => {
@@ -94,6 +95,7 @@ async function loadRoster() {
   grid.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div>Loading athletes...</div>';
   try {
     const { athletes } = await api('getAthletes');
+    cachedAthletes = athletes;
     renderRoster(athletes);
   } catch(e) {
     grid.innerHTML = `<div class="empty-state">Could not connect to Google Sheets.<br><small>${e.message}</small></div>`;
