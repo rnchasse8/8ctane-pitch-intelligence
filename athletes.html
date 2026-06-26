@@ -137,6 +137,7 @@
       <button class="tab active" data-ptab="overview">Season Overview</button>
       <button class="tab" data-ptab="trends">Trends</button>
       <button class="tab" data-ptab="splits">Splits</button>
+      <button class="tab" data-ptab="locations">Locations</button>
       <button class="tab" data-ptab="yoy">Pitch Metrics</button>
       <button class="tab" data-ptab="report">Report</button>
       <button class="tab" data-ptab="season-insight">Season Insight</button>
@@ -197,6 +198,24 @@
           <div class="chart-wrap" style="height:220px"><canvas id="trend-mix-chart" role="img" aria-label="Mix trend"></canvas></div>
         </div>
       </div>
+    </div>
+
+    <!-- LOCATIONS -->
+    <div class="ptab-panel" id="ptab-locations">
+      <div class="locations-controls">
+        <div class="loc-filter-row">
+          <span class="loc-filter-label">View:</span>
+          <button class="loc-filter-btn active" data-hand="all" onclick="setLocationHand('all',this)">All batters</button>
+          <button class="loc-filter-btn" data-hand="R" onclick="setLocationHand('R',this)">vs. RHB</button>
+          <button class="loc-filter-btn" data-hand="L" onclick="setLocationHand('L',this)">vs. LHB</button>
+        </div>
+        <div class="loc-filter-row">
+          <span class="loc-filter-label">Color by:</span>
+          <button class="loc-filter-btn active" data-color="pitch" onclick="setLocationColor('pitch',this)">Pitch type</button>
+          <button class="loc-filter-btn" data-color="outcome" onclick="setLocationColor('outcome',this)">Outcome</button>
+        </div>
+      </div>
+      <div id="locations-content" style="display:flex;flex-wrap:wrap;gap:1.5rem;margin-top:1rem"></div>
     </div>
 
     <!-- SPLITS -->

@@ -46,9 +46,10 @@ window.addEventListener('DOMContentLoaded', () => {
       const name = tab.dataset.ptab;
       document.querySelectorAll('#profile-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.ptab === name));
       document.querySelectorAll('.ptab-panel').forEach(p => p.classList.toggle('active', p.id === `ptab-${name}`));
-      if (name === 'trends') renderTrends();
-      if (name === 'splits') renderSplits();
-      if (name === 'yoy')    renderYoY();
+      if (name === 'trends')    renderTrends();
+      if (name === 'splits')    renderSplits();
+      if (name === 'locations') renderLocations();
+      if (name === 'yoy')       renderYoY();
       if (name === 'report') renderReport();
       if (name === 'season-insight') renderSeasonInsight();
       if (name === 'outing-insight') initOutingInsight();
@@ -417,8 +418,10 @@ function parseStatcastBulk(rows) {
       pt = NORMALIZE[pt] || pt;
       if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
       if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
-        lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0},
-        rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0}};
+        spins:[],spin_effs:[],
+        locations:[],
+        lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]},
+        rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]}};
       const s = pm[pt];
       s.count++;
       const stand = (r.stand||'').toUpperCase();
@@ -431,6 +434,18 @@ function parseStatcastBulk(rows) {
       const v = parseFloat(r.release_speed); if (!isNaN(v)) s.velos.push(v);
       const hb = parseFloat(r.pfx_x); if (!isNaN(hb)) s.pfx_xs.push(-hb*12);
       const ivb = parseFloat(r.pfx_z); if (!isNaN(ivb)) s.pfx_zs.push(ivb*12);
+
+      // Spin rate and efficiency
+      const spin = parseFloat(r.release_spin_rate); if (!isNaN(spin)) s.spins.push(spin);
+      const spinEff = parseFloat(r.spin_axis); // stored as axis, efficiency derived separately
+      // Plate location — store as [x, z, outcome] for scatter plot
+      const px = parseFloat(r.plate_x); const pz = parseFloat(r.plate_z);
+      if (!isNaN(px) && !isNaN(pz)) {
+        const outcome = desc.includes('swinging_strike') ? 'W' : desc.includes('called_strike') ? 'CS' : desc==='hit_into_play' ? 'HIP' : desc.includes('foul') ? 'F' : 'B';
+        const loc = [+px.toFixed(2), +pz.toFixed(2), outcome, stand];
+        s.locations.push(loc);
+        if (side) side.locations.push(loc);
+      }
 
       const desc = r.description||'';
       const zone = (r.zone||'').trim();
@@ -514,6 +529,8 @@ function parseStatcastBulk(rows) {
         avgEV:    s.launch_speeds.length ? +avgg(s.launch_speeds).toFixed(1) : null,
         avgIVB:   s.pfx_zs.length ? +avgg(s.pfx_zs).toFixed(1) : null,
         avgHB:    s.pfx_xs.length ? +avgg(s.pfx_xs).toFixed(1) : null,
+        avgSpin:  s.spins.length  ? +avgg(s.spins).toFixed(0)  : null,
+        locations: s.locations || [],
         lhh: makeSplitStats(s.lhh),
         rhh: makeSplitStats(s.rhh),
       };
@@ -1846,6 +1863,103 @@ function renderReport() {
     </div>`;
 }
 
+/* ==================== LOCATIONS ==================== */
+let locationHand = 'all';
+let locationColor = 'pitch';
+
+function setLocationHand(hand, btn) {
+  locationHand = hand;
+  document.querySelectorAll('[data-hand]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderLocations();
+}
+
+function setLocationColor(color, btn) {
+  locationColor = color;
+  document.querySelectorAll('[data-color]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderLocations();
+}
+
+function renderLocations() {
+  const container = document.getElementById('locations-content');
+  if (!athleteOutings.length) { container.innerHTML = '<div class="empty-state">No outing data yet.</div>'; return; }
+
+  // Aggregate locations per pitch type
+  const pitchLocs = {};
+  athleteOutings.forEach(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    Object.entries(pm).forEach(([pt, s]) => {
+      if (!s.locations || !s.locations.length) return;
+      if (!pitchLocs[pt]) pitchLocs[pt] = [];
+      s.locations.forEach(loc => {
+        const [x, z, outcome, stand] = loc;
+        if (locationHand === 'all' || stand === locationHand) {
+          pitchLocs[pt].push({ x, z, outcome, stand });
+        }
+      });
+    });
+  });
+
+  const sorted = Object.entries(pitchLocs)
+    .filter(([,locs]) => locs.length > 0)
+    .sort((a,b) => b[1].length - a[1].length);
+
+  if (!sorted.length) {
+    container.innerHTML = '<div class="empty-state">No pitch location data available. Re-import your outings using Bulk Import to capture locations.</div>';
+    return;
+  }
+
+  const OUTCOME_COLORS = { W:'#e91e8c', CS:'#00d4ff', HIP:'#BA7517', F:'#534AB7', B:'#444' };
+  const OUTCOME_LABELS = { W:'Whiff', CS:'Called Strike', HIP:'In Play', F:'Foul', B:'Ball' };
+
+  container.innerHTML = sorted.map(([pt, locs]) => {
+    // Strike zone: x from -1.5 to 1.5 ft, z from 1.0 to 4.5 ft
+    const W = 220, H = 260;
+    const PAD = 20;
+    const xMin=-1.7, xMax=1.7, zMin=0.8, zMax=4.8;
+    const toSvgX = x => PAD + (x - xMin) / (xMax - xMin) * (W - PAD*2);
+    const toSvgZ = z => H - PAD - (z - zMin) / (zMax - zMin) * (H - PAD*2);
+
+    // Strike zone box (approx 17 inches wide = ~0.71 ft each side, height varies)
+    const szX1 = toSvgX(-0.71), szX2 = toSvgX(0.71);
+    const szZ1 = toSvgZ(3.5),   szZ2 = toSvgZ(1.5);
+
+    const dots = locs.map(({ x, z, outcome }) => {
+      const cx = toSvgX(x), cy = toSvgZ(z);
+      if (cx < 0 || cy < 0 || cx > W || cy > H) return '';
+      const color = locationColor === 'pitch' ? pc(pt) : (OUTCOME_COLORS[outcome] || '#444');
+      const r = locationColor === 'outcome' ? 5 : 4;
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" fill-opacity="0.65" stroke="${color}" stroke-width="0.5"/>`;
+    }).join('');
+
+    const legend = locationColor === 'outcome'
+      ? Object.entries(OUTCOME_COLORS).map(([k,c]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:10px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block"></span>${OUTCOME_LABELS[k]}</span>`).join('')
+      : '';
+
+    return `<div class="loc-zone-card">
+      <div class="loc-zone-title">
+        <span class="pitch-dot" style="background:${pc(pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px"></span>
+        ${pn(pt)} <span style="font-size:11px;color:var(--muted);font-weight:400">${locs.length} pitches</span>
+      </div>
+      <svg width="${W}" height="${H}" style="display:block">
+        <!-- outer border -->
+        <rect x="${PAD}" y="${PAD}" width="${W-PAD*2}" height="${H-PAD*2}" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+        <!-- strike zone -->
+        <rect x="${szX1}" y="${szZ1}" width="${szX2-szX1}" height="${szZ2-szZ1}" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" rx="1"/>
+        <!-- inner 9-zone grid -->
+        ${[1,2].map(i => `<line x1="${szX1+(szX2-szX1)/3*i}" y1="${szZ1}" x2="${szX1+(szX2-szX1)/3*i}" y2="${szZ2}" stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/>`).join('')}
+        ${[1,2].map(i => `<line x1="${szX1}" y1="${szZ1+(szZ2-szZ1)/3*i}" x2="${szX2}" y2="${szZ1+(szZ2-szZ1)/3*i}" stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/>`).join('')}
+        <!-- home plate indicator -->
+        <rect x="${toSvgX(-0.35)}" y="${H-PAD-6}" width="${toSvgX(0.35)-toSvgX(-0.35)}" height="6" fill="rgba(255,255,255,0.15)" rx="1"/>
+        ${dots}
+      </svg>
+      ${legend ? `<div style="margin-top:4px;line-height:1.8">${legend}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
 /* ==================== SPLITS ==================== */
 function renderSplits() {
   const container = document.getElementById('splits-content');
@@ -2105,6 +2219,7 @@ function renderYoY() {
     <div class="mov-header-stats">
       <div class="mov-header-stat">Avg velo</div>
       <div class="mov-header-stat">Peak velo</div>
+      <div class="mov-header-stat">Spin</div>
       <div class="mov-header-stat">IVB</div>
       <div class="mov-header-stat">HB</div>
       <div class="mov-header-stat">VAA</div>
@@ -2115,6 +2230,13 @@ function renderYoY() {
   const shapeRows = sorted.map(([pt, s]) => {
     const avgV  = s.velos.length    ? avg(s.velos).toFixed(1)    : '—';
     const pkV   = s.peakVelos.length? Math.max(...s.peakVelos).toFixed(1) : '—';
+    // Get spin from stored outings pitch_stats
+    const spinVals = athleteOutings.map(o => {
+      let pm = {};
+      try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+      return pm[pt]?.avgSpin ? pf(pm[pt].avgSpin) : null;
+    }).filter(Boolean);
+    const spin  = spinVals.length   ? Math.round(avg(spinVals))+'rpm' : '—';
     const ivb   = s.ivbs.length     ? avg(s.ivbs).toFixed(1)+'"' : '—';
     const hb    = s.hbs.length      ? avg(s.hbs).toFixed(1)+'"'  : '—';
     const vaa   = s.vaas.length     ? avg(s.vaas).toFixed(1)+'°' : '—';
@@ -2127,6 +2249,7 @@ function renderYoY() {
       <div class="mov-stat-group">
         <div class="mov-stat"><div class="mov-stat-val">${avgV}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${pkV}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${spin}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${ivb}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${hb}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${vaa}</div></div>
