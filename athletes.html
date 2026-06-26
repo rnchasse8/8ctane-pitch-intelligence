@@ -41,12 +41,70 @@
       <h1 class="page-title">Athletes</h1>
       <p class="page-sub" id="roster-count">Loading...</p>
     </div>
-    <button class="btn-primary" onclick="showAddAthlete()">+ Add Athlete</button>
+    <div style="display:flex;gap:.75rem">
+      <button class="btn-ghost" onclick="showBulkImport()">⬆ Bulk Import</button>
+      <button class="btn-primary" onclick="showAddAthlete()">+ Add Athlete</button>
+    </div>
   </div>
-
   <div id="athlete-grid" class="athlete-grid"></div>
   <div id="roster-empty" class="empty-state" style="display:none">
     No athletes yet. Add your first athlete to get started.
+  </div>
+</div>
+
+<!-- BULK IMPORT VIEW -->
+<div id="view-bulk-import" class="view" style="display:none">
+  <div class="page-header">
+    <button class="btn-ghost" onclick="showRoster()">← All Athletes</button>
+  </div>
+
+  <div class="bulk-import-page">
+    <div class="bulk-import-header">
+      <div class="bulk-import-title">Bulk Import</div>
+      <div class="bulk-import-sub">Upload a full season CSV (Statcast or Trackman). We'll detect the pitcher, split into outings, and let you assign to any athlete.</div>
+    </div>
+
+    <!-- DROP ZONE -->
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('csv-file-input').click()">
+      <div class="drop-zone-icon">⬆</div>
+      <div class="drop-zone-text">Drop CSV here or click to browse</div>
+      <div class="drop-zone-sub">Statcast or Trackman format · Any size</div>
+      <input type="file" id="csv-file-input" accept=".csv" style="display:none" onchange="handleBulkFile(this.files[0])">
+    </div>
+
+    <!-- PARSED PREVIEW -->
+    <div id="bulk-preview" style="display:none">
+      <div class="bulk-preview-header">
+        <div>
+          <div class="bulk-preview-title" id="bulk-preview-title"></div>
+          <div class="bulk-preview-sub" id="bulk-preview-sub"></div>
+        </div>
+        <button class="btn-ghost" onclick="resetBulkImport()">✕ Clear</button>
+      </div>
+
+      <div class="bulk-assign-row">
+        <label class="bulk-assign-label">Assign to athlete:</label>
+        <select id="bulk-athlete-select" class="sel-input" style="max-width:320px">
+          <option value="">Select athlete...</option>
+        </select>
+        <button class="btn-primary" id="bulk-import-btn" onclick="runBulkImport()" disabled style="opacity:.4">Import All Outings</button>
+      </div>
+
+      <div class="bulk-progress-wrap" id="bulk-progress-wrap" style="display:none">
+        <div class="bulk-progress-bar" id="bulk-progress-bar" style="width:0%"></div>
+      </div>
+
+      <div id="bulk-outing-rows"></div>
+    </div>
+
+    <div id="bulk-result" class="bulk-result" style="display:none">
+      <div class="bulk-result-title" id="bulk-result-title"></div>
+      <div class="bulk-result-body" id="bulk-result-body"></div>
+      <div style="margin-top:1rem;display:flex;gap:.75rem">
+        <button class="btn-primary" onclick="showRoster()">Back to Athletes</button>
+        <button class="btn-ghost" onclick="resetBulkImport()">Import Another</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -78,6 +136,7 @@
     <nav class="tabs" id="profile-tabs">
       <button class="tab active" data-ptab="overview">Season Overview</button>
       <button class="tab" data-ptab="trends">Trends</button>
+      <button class="tab" data-ptab="splits">Splits</button>
       <button class="tab" data-ptab="yoy">Pitch Metrics</button>
       <button class="tab" data-ptab="report">Report</button>
       <button class="tab" data-ptab="season-insight">Season Insight</button>
@@ -138,6 +197,11 @@
           <div class="chart-wrap" style="height:220px"><canvas id="trend-mix-chart" role="img" aria-label="Mix trend"></canvas></div>
         </div>
       </div>
+    </div>
+
+    <!-- SPLITS -->
+    <div class="ptab-panel" id="ptab-splits">
+      <div id="splits-content"></div>
     </div>
 
     <!-- PITCH METRICS -->

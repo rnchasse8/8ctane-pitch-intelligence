@@ -46,6 +46,7 @@ window.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('#profile-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.ptab === name));
       document.querySelectorAll('.ptab-panel').forEach(p => p.classList.toggle('active', p.id === `ptab-${name}`));
       if (name === 'trends') renderTrends();
+      if (name === 'splits') renderSplits();
       if (name === 'yoy')    renderYoY();
       if (name === 'report') renderReport();
       if (name === 'season-insight') renderSeasonInsight();
@@ -413,12 +414,17 @@ function parseStatcastBulk(rows) {
       let pt = (r.pitch_type||'').trim().toUpperCase();
       pt = NORMALIZE[pt] || pt;
       if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
-      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,lhh:{count:0,whiffs:0,cstrikes:0,hip:0},rhh:{count:0,whiffs:0,cstrikes:0,hip:0}};
+      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
+        lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0},
+        rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0}};
       const s = pm[pt];
       s.count++;
       const stand = (r.stand||'').toUpperCase();
       const side = stand==='L' ? s.lhh : stand==='R' ? s.rhh : null;
-      if (side) side.count++;
+      if (side) {
+        side.count++;
+        const sv = parseFloat(r.release_speed); if(!isNaN(sv)) side.velos.push(sv);
+      }
 
       const v = parseFloat(r.release_speed); if (!isNaN(v)) s.velos.push(v);
       const hb = parseFloat(r.pfx_x); if (!isNaN(hb)) s.pfx_xs.push(-hb*12);
@@ -432,13 +438,25 @@ function parseStatcastBulk(rows) {
       const isContact = desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
       const isStrikeResult = desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
       if (isSwing) { totalSwings++; if(inSZ){swingInZone++;if(isContact)contactInZone++;} else if(zone)swingOutZone++; }
-      if (desc.includes('swinging_strike')) { s.whiffs++; if(side) side.whiffs++; }
-      else if (desc.includes('called_strike')) { s.cstrikes++; if(side) side.cstrikes++; }
-      else if (desc==='hit_into_play') {
-        s.hip++; if(side) side.hip++;
-        const ev = parseFloat(r.launch_speed); if(!isNaN(ev)){s.launch_speeds.push(ev);if(ev>=95)s.hard_hits++;}
+      if (desc.includes('swinging_strike')) {
+        s.whiffs++;
+        if(side) side.whiffs++;
+      } else if (desc.includes('called_strike')) {
+        s.cstrikes++;
+        if(side) side.cstrikes++;
+      } else if (desc==='hit_into_play') {
+        s.hip++;
+        if(side) side.hip++;
+        const ev = parseFloat(r.launch_speed); if(!isNaN(ev)){s.launch_speeds.push(ev);if(ev>=95)s.hard_hits++;if(side){side.launch_speeds.push(ev);if(ev>=95)side.hard_hits++;}}
         const xw = parseFloat(r.estimated_woba_using_speedangle); if(!isNaN(xw))s.xwobas.push(xw);
+        const xba  = parseFloat(r.estimated_ba_using_speedangle);  if(!isNaN(xba)  && side) side.xbas.push(xba);
+        const xslg = parseFloat(r.estimated_slg_using_speedangle); if(!isNaN(xslg) && side) side.xslgs.push(xslg);
       }
+      // Track strikes and BIP types per side
+      const isStrikeDesc = desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
+      if(isStrikeDesc && side) side.totalStrikes++;
+      const bbt2 = (r.bb_type||'').toLowerCase();
+      if(bbt2 && side){side.bip++;if(bbt2==='ground_ball')side.gb++;else if(bbt2==='fly_ball')side.fb++;else if(bbt2==='line_drive')side.ld++;}
       if (isStrikeResult) totalStrikes++;
       const bbt = (r.bb_type||'').toLowerCase();
       if (bbt){bipCount++;if(bbt==='ground_ball')gbCount++;else if(bbt==='fly_ball')fbCount++;else if(bbt==='line_drive')ldCount++;}
@@ -455,9 +473,33 @@ function parseStatcastBulk(rows) {
     const walks = pitches.filter(r=>r.events==='walk').length;
     const avgg = arr => arr.length ? arr.reduce((a,b)=>a+b)/arr.length : null;
 
+    const makeSplitStats = (side) => {
+      const xba  = side.xbas.length  ? avgg(side.xbas)  : null;
+      const xslg = side.xslgs.length ? avgg(side.xslgs) : null;
+      return {
+        count:    side.count,
+        whiffs:   side.whiffs,
+        cstrikes: side.cstrikes,
+        hip:      side.hip,
+        whiffPct: side.count ? +(side.whiffs/side.count*100).toFixed(1) : 0,
+        cswPct:   side.count ? +((side.whiffs+side.cstrikes)/side.count*100).toFixed(1) : 0,
+        strikePct:side.count ? +(side.totalStrikes/side.count*100).toFixed(1) : 0,
+        avgVelo:  side.velos.length ? +avgg(side.velos).toFixed(1) : null,
+        avgXba:   xba  !== null ? +xba.toFixed(3)  : null,
+        avgXslg:  xslg !== null ? +xslg.toFixed(3) : null,
+        avgXops:  (xba!==null&&xslg!==null) ? +(xba+xslg).toFixed(3) : null,
+        avgEV:    side.launch_speeds.length ? +avgg(side.launch_speeds).toFixed(1) : null,
+        hardHitPct:side.launch_speeds.length ? +(side.hard_hits/side.launch_speeds.length*100).toFixed(1) : null,
+        gbPct:    side.bip ? +(side.gb/side.bip*100).toFixed(1) : null,
+        fbPct:    side.bip ? +(side.fb/side.bip*100).toFixed(1) : null,
+        ldPct:    side.bip ? +(side.ld/side.bip*100).toFixed(1) : null,
+      };
+    };
     const flatMap = {};
     Object.entries(pm).forEach(([pt,s]) => {
       if (!s.count) return;
+      const xbas_all  = [...(s.lhh.xbas||[]), ...(s.rhh.xbas||[])];
+      const xslgs_all = [...(s.lhh.xslgs||[]), ...(s.rhh.xslgs||[])];
       flatMap[pt] = {
         count:s.count, whiffs:s.whiffs, cstrikes:s.cstrikes, hip:s.hip,
         avgVelo:  s.velos.length  ? +avgg(s.velos).toFixed(1)  : null,
@@ -465,15 +507,13 @@ function parseStatcastBulk(rows) {
         whiffPct: +(s.whiffs/s.count*100).toFixed(1),
         cswPct:   +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1),
         avgXwoba: s.xwobas.length ? +avgg(s.xwobas).toFixed(3) : null,
+        avgXba:   xbas_all.length  ? +avgg(xbas_all).toFixed(3)  : null,
+        avgXslg:  xslgs_all.length ? +avgg(xslgs_all).toFixed(3) : null,
         avgEV:    s.launch_speeds.length ? +avgg(s.launch_speeds).toFixed(1) : null,
         avgIVB:   s.pfx_zs.length ? +avgg(s.pfx_zs).toFixed(1) : null,
         avgHB:    s.pfx_xs.length ? +avgg(s.pfx_xs).toFixed(1) : null,
-        lhh: { count:s.lhh.count, whiffs:s.lhh.whiffs, cstrikes:s.lhh.cstrikes,
-               whiffPct:s.lhh.count?+(s.lhh.whiffs/s.lhh.count*100).toFixed(1):0,
-               cswPct:s.lhh.count?+((s.lhh.whiffs+s.lhh.cstrikes)/s.lhh.count*100).toFixed(1):0 },
-        rhh: { count:s.rhh.count, whiffs:s.rhh.whiffs, cstrikes:s.rhh.cstrikes,
-               whiffPct:s.rhh.count?+(s.rhh.whiffs/s.rhh.count*100).toFixed(1):0,
-               cswPct:s.rhh.count?+((s.rhh.whiffs+s.rhh.cstrikes)/s.rhh.count*100).toFixed(1):0 },
+        lhh: makeSplitStats(s.lhh),
+        rhh: makeSplitStats(s.rhh),
       };
     });
 
@@ -1802,6 +1842,120 @@ function renderReport() {
       ${peakVelo    !== null     ? pctBar('FB Peak Velo',peakVelo,    r(peakVelo),    DIST.avgVelo,    ' mph') : ''}
 
     </div>`;
+}
+
+/* ==================== SPLITS ==================== */
+function renderSplits() {
+  const container = document.getElementById('splits-content');
+  if (!athleteOutings.length) {
+    container.innerHTML = '<div class="empty-state">No outing data yet.</div>';
+    return;
+  }
+
+  // Aggregate combined pitch map across all outings
+  const combined = {};
+  athleteOutings.forEach(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    Object.entries(pm).forEach(([pt, s]) => {
+      if (!s.count) return;
+      if (!combined[pt]) combined[pt] = {
+        count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0,
+        lhh:{ count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0 },
+        rhh:{ count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0 },
+      };
+      const c = combined[pt];
+      c.count += s.count||0; c.whiffs += s.whiffs||0; c.cstrikes += s.cstrikes||0; c.hip += s.hip||0;
+      if (s.avgVelo) c.velos.push(pf(s.avgVelo));
+      if (s.avgXba)  c.xbas.push(pf(s.avgXba));
+      if (s.avgXslg) c.xslgs.push(pf(s.avgXslg));
+      if (s.avgEV)   c.launch_speeds.push(pf(s.avgEV));
+
+      // Accumulate split data
+      ['lhh','rhh'].forEach(hand => {
+        const src = s[hand]; if (!src || !src.count) return;
+        const dst = c[hand];
+        dst.count    += src.count    ||0;
+        dst.whiffs   += src.whiffs   ||0;
+        dst.cstrikes += src.cstrikes ||0;
+        dst.hip      += src.hip      ||0;
+        dst.gb       += src.gb       ||0;
+        dst.fb       += src.fb       ||0;
+        dst.ld       += src.ld       ||0;
+        dst.bip      += src.bip      ||0;
+        dst.totalStrikes += src.totalStrikes||0;
+        if (src.avgVelo) dst.velos.push(pf(src.avgVelo));
+        if (src.avgXba)  dst.xbas.push(pf(src.avgXba));
+        if (src.avgXslg) dst.xslgs.push(pf(src.avgXslg));
+        if (src.avgEV)   dst.launch_speeds.push(pf(src.avgEV));
+      });
+    });
+  });
+
+  const totalPitches = Object.values(combined).reduce((a,s)=>a+s.count, 0);
+  const sorted = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
+  const noData = !sorted.some(([,s])=>s.lhh.count>0||s.rhh.count>0);
+
+  function buildTable(title, getStats, accentColor) {
+    const headers = ['Pitch','Total','Avg Velo','Strike%','Whiff%','xBA','xSLG','xOPS','GB%','FB%','LD%'];
+    const rows = sorted.map(([pt, s]) => {
+      const st = getStats(s);
+      if (!st || !st.count) return '';
+      const avgV = st.velos.length ? avg(st.velos).toFixed(1) : '—';
+      const strikePct = st.count ? (st.totalStrikes/st.count*100).toFixed(1)+'%' : '—';
+      const whiffPct  = st.count ? (st.whiffs/st.count*100).toFixed(1)+'%' : '—';
+      const xba  = st.xbas.length  ? avg(st.xbas).toFixed(3)  : '—';
+      const xslg = st.xslgs.length ? avg(st.xslgs).toFixed(3) : '—';
+      const xops = (st.xbas.length&&st.xslgs.length) ? (avg(st.xbas)+avg(st.xslgs)).toFixed(3) : '—';
+      const gb   = st.bip ? (st.gb/st.bip*100).toFixed(1)+'%' : '—';
+      const fb   = st.bip ? (st.fb/st.bip*100).toFixed(1)+'%' : '—';
+      const ld   = st.bip ? (st.ld/st.bip*100).toFixed(1)+'%' : '—';
+      const wCls = parseFloat(whiffPct)>=30?'v-good':parseFloat(whiffPct)>=15?'':'v-bad';
+      return `<tr>
+        <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
+        <td class="v-num">${st.count}</td>
+        <td class="v-num">${avgV}</td>
+        <td class="v-num">${strikePct}</td>
+        <td class="${wCls}">${whiffPct}</td>
+        <td class="v-num">${xba}</td>
+        <td class="v-num">${xslg}</td>
+        <td class="v-num">${xops}</td>
+        <td class="v-num">${gb}</td>
+        <td class="v-num">${fb}</td>
+        <td class="v-num">${ld}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="splits-table-wrap" style="margin-bottom:2rem">
+      <div class="splits-table-header" style="background:${accentColor}">
+        <span>${title}</span>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+          <tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:1rem">No data</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+
+  if (noData) {
+    container.innerHTML = `
+      ${buildTable('Overall — Pitch Performance', s=>s, '#1a3a5c')}
+      <div class="empty-state" style="margin-top:1rem">
+        L/R split data is only available for outings imported via the Bulk Import tool from Statcast CSVs. Re-import your outings to see splits.
+      </div>`;
+    return;
+  }
+
+  container.innerHTML =
+    buildTable('Overall — Pitch Performance', s => ({
+      count:s.count, whiffs:s.whiffs, cstrikes:s.cstrikes, hip:s.hip,
+      velos:s.velos, xbas:s.xbas, xslgs:s.xslgs, launch_speeds:s.launch_speeds,
+      totalStrikes:s.totalStrikes||0, gb:s.gb||0, fb:s.fb||0, ld:s.ld||0, bip:s.bip||0,
+    }), '#1a3a5c') +
+    buildTable('vs. RHB — Pitch Performance', s => s.rhh, '#3a1a1a') +
+    buildTable('vs. LHB — Pitch Performance', s => s.lhh, '#1a2a1a');
 }
 
 /* ==================== YEAR-OVER-YEAR ==================== */

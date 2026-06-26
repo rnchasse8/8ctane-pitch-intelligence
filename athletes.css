@@ -682,3 +682,13 @@
   font-size: 22px; font-weight: 700; margin-bottom: .5rem;
 }
 .bulk-result-body { font-size: 13px; color: var(--muted); }
+
+/* ---- SPLITS TABLES ---- */
+.splits-table-wrap { border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.splits-table-header {
+  padding: .625rem 1rem;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+  color: #fff;
+}
