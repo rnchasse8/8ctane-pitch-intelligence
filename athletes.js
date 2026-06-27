@@ -1612,16 +1612,6 @@ function renderOutingInsightHTML(a, outing, pm, total) {
     `<div class="insight-card danger"><div class="insight-title">${s.title}</div><div class="insight-body">${s.detail}</div></div>`
   ).join('');
 
-  const adjustRows = (a.adjustments||[]).map(adj => `
-    <div class="count-strategy-row">
-      <div class="cs-count">${adj.count}</div>
-      <div class="cs-detail">
-        <div class="cs-pitch">${adj.pitch}</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Was: ${adj.current}</div>
-        <div class="cs-rec">${adj.reason}</div>
-      </div>
-    </div>`).join('');
-
   const pitchRows = Object.entries(pm).filter(([,s])=>s.count>0).sort((a,b)=>b[1].count-a[1].count)
     .map(([pt,s]) => `
       <div style="display:flex;align-items:center;gap:10px;padding:.5rem 0;border-bottom:1px solid var(--border)">
@@ -1632,6 +1622,10 @@ function renderOutingInsightHTML(a, outing, pm, total) {
         <span class="${s.whiffPct>=30?'v-good':s.whiffPct>=15?'v-warn':'v-bad'}">${s.whiffPct||0}% W</span>
         <span class="v-num" style="font-size:11px">${s.cswPct||0}% CSW</span>
       </div>`).join('');
+
+  // Build outing-level location chart
+  const outingLocationChart = buildOutingLocationChart(pm, total);
+  const outingSprayChart    = buildOutingSprayChart(pm);
 
   container.innerHTML = `
     <div class="insight-page">
@@ -1654,6 +1648,13 @@ function renderOutingInsightHTML(a, outing, pm, total) {
         ${pitchRows}
       </div>
 
+      ${(outingLocationChart || outingSprayChart) ? `
+      <div class="section-hd" style="margin-top:1.5rem">Pitch locations</div>
+      <div style="display:flex;flex-wrap:wrap;gap:1.5rem;margin-top:.75rem">
+        ${outingLocationChart||''}
+        ${outingSprayChart||''}
+      </div>` : ''}
+
       <div class="section-hd" style="margin-top:1.5rem">What worked / what didn't</div>
       <div class="insight-grid">${workedCards}${didntCards}</div>
 
@@ -1663,10 +1664,6 @@ function renderOutingInsightHTML(a, outing, pm, total) {
         ${a.keyMoments.map(m=>`<div style="padding:.4rem 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted)">· ${m}</div>`).join('')}
       </div>` : ''}
 
-      ${adjustRows ? `
-      <div class="section-hd" style="margin-top:1.5rem">Count-by-count adjustments</div>
-      <div class="count-strategy-wrap">${adjustRows}</div>` : ''}
-
       ${a.nextOutingFocus?.length ? `
       <div class="section-hd" style="margin-top:1.5rem">Focus for next outing</div>
       <div class="dev-priorities">
@@ -1674,6 +1671,113 @@ function renderOutingInsightHTML(a, outing, pm, total) {
       </div>` : ''}
 
     </div>`;
+}
+
+function buildOutingLocationChart(pm, total) {
+  // Collect all locations from this outing's pitch map
+  const allLocs = [];
+  Object.entries(pm).forEach(([pt, s]) => {
+    if (!s.locations || !s.locations.length) return;
+    s.locations.forEach(loc => {
+      const [x, z, outcome, stand] = loc;
+      allLocs.push({ x, z, outcome, stand, pt });
+    });
+  });
+  if (!allLocs.length) return null;
+
+  const W = 260, H = 300, PAD = 22;
+  const xMin=-1.75, xMax=1.75, zMin=0.5, zMax=5.0;
+  const toSvgX = x => PAD + (x-xMin)/(xMax-xMin)*(W-PAD*2);
+  const toSvgZ = z => H - PAD - (z-zMin)/(zMax-zMin)*(H-PAD*2);
+  const szX1=toSvgX(-0.71), szX2=toSvgX(0.71);
+  const szZ1=toSvgZ(3.5),   szZ2=toSvgZ(1.5);
+
+  const OUTCOME_COLORS = { W:'#e91e8c', CS:'#00d4ff', HIP:'#BA7517', F:'#534AB7', B:'rgba(255,255,255,0.15)' };
+
+  // Sort: balls behind, whiffs on top
+  const priority = { B:0, F:1, HIP:2, CS:3, W:4 };
+  const sorted = [...allLocs].sort((a,b)=>(priority[a.outcome]||0)-(priority[b.outcome]||0));
+
+  const dots = sorted.map(({ x, z, outcome, pt }) => {
+    const cx = toSvgX(x), cy = toSvgZ(z);
+    if (cx < PAD-10 || cy < PAD-10 || cx > W+10 || cy > H+10) return '';
+    const color = pc(pt);
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${outcome==='W'?5:3.5}" fill="${color}" fill-opacity="0.75" stroke="${outcome==='W'?'#fff':color}" stroke-width="${outcome==='W'?0.8:0.3}"/>`;
+  }).join('');
+
+  // Pitch legend
+  const ptCounts = {};
+  allLocs.forEach(({pt}) => ptCounts[pt]=(ptCounts[pt]||0)+1);
+  const legend = Object.entries(ptCounts).sort((a,b)=>b[1]-a[1])
+    .map(([pt,n])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:10px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${pc(pt)};display:inline-block"></span>${pn(pt)}</span>`).join('');
+
+  return `<div class="loc-zone-card">
+    <div class="loc-zone-title">Locations <span style="font-size:11px;color:var(--muted);font-weight:400">${allLocs.length} pitches</span></div>
+    <svg width="${W}" height="${H}" style="display:block">
+      <rect x="${PAD}" y="${PAD}" width="${W-PAD*2}" height="${H-PAD*2}" fill="rgba(255,255,255,0.02)" rx="2"/>
+      <rect x="${szX1}" y="${szZ1}" width="${szX2-szX1}" height="${szZ2-szZ1}" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" rx="1"/>
+      ${[1,2].map(i=>`<line x1="${szX1+(szX2-szX1)/3*i}" y1="${szZ1}" x2="${szX1+(szX2-szX1)/3*i}" y2="${szZ2}" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>`).join('')}
+      ${[1,2].map(i=>`<line x1="${szX1}" y1="${szZ1+(szZ2-szZ1)/3*i}" x2="${szX2}" y2="${szZ1+(szZ2-szZ1)/3*i}" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>`).join('')}
+      <rect x="${toSvgX(-1.05)}" y="${toSvgZ(4.0)}" width="${toSvgX(1.05)-toSvgX(-1.05)}" height="${toSvgZ(1.0)-toSvgZ(4.0)}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1" stroke-dasharray="4,3" rx="2"/>
+      <polygon points="${toSvgX(0)},${H-PAD+4} ${toSvgX(-0.28)},${H-PAD-4} ${toSvgX(-0.28)},${H-PAD} ${toSvgX(0.28)},${H-PAD} ${toSvgX(0.28)},${H-PAD-4}" fill="rgba(255,255,255,0.25)"/>
+      <text x="${W/2}" y="${H-2}" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.2)">← Inside · Outside →</text>
+      ${dots}
+    </svg>
+    <div style="margin-top:6px;line-height:1.8">${legend}</div>
+    <div style="font-size:10px;color:var(--muted2);margin-top:2px">White outline = whiff</div>
+  </div>`;
+}
+
+function buildOutingSprayChart(pm) {
+  const sprayData = [];
+  Object.entries(pm).forEach(([pt, s]) => {
+    if (!s.spray || !s.spray.length) return;
+    s.spray.forEach(sp => {
+      const [x, y, bbt, ev] = sp;
+      sprayData.push({ x, y, bbt, ev, pt });
+    });
+  });
+  if (!sprayData.length) return null;
+
+  const W=280, H=265;
+  const BB_COLORS = { ground_ball:'#BA7517', line_drive:'#00d4ff', fly_ball:'#e91e8c', popup:'#888780' };
+  const BB_LABELS  = { ground_ball:'Ground Ball', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup' };
+  const HX_CENTER=125, HY_HOME=205, SCALE=1.0;
+  const cx=W/2, homY=H-18;
+  const lfX=25, lfY=50, rfX=W-25, rfY=50, cfX=cx, cfY=5;
+
+  const toX = hcx => W/2+(hcx-HX_CENTER)*SCALE;
+  const toY = hcy => H-20-(HY_HOME-hcy)*SCALE;
+
+  const dots = sprayData.map(({x,y,bbt,ev,pt})=>{
+    const svgX=toX(x), svgY=toY(y);
+    if(svgX<0||svgY<-10||svgX>W||svgY>H) return '';
+    const color = BB_COLORS[bbt]||'#888';
+    const hard = ev&&ev>=95;
+    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6:4.5}" fill="${color}" fill-opacity="0.8" stroke="${hard?'rgba(255,255,255,0.8)':'none'}" stroke-width="${hard?1:0}"/>`;
+  }).join('');
+
+  const legend = Object.entries(BB_COLORS).map(([k,c])=>
+    `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:10px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block"></span>${BB_LABELS[k]}</span>`
+  ).join('');
+
+  return `<div class="loc-zone-card">
+    <div class="loc-zone-title">Spray Chart <span style="font-size:11px;color:var(--muted);font-weight:400">${sprayData.length} batted balls</span></div>
+    <svg width="${W}" height="${H}" style="display:block">
+      <path d="M ${cx} ${homY} L ${lfX} ${lfY} Q ${cfX} ${cfY-5} ${rfX} ${rfY} Z" fill="rgba(255,255,255,0.02)" stroke="none"/>
+      <path d="M ${lfX} ${lfY} Q ${cfX} ${cfY-5} ${rfX} ${rfY}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+      <line x1="${cx}" y1="${homY}" x2="${lfX-8}" y2="${lfY-12}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+      <line x1="${cx}" y1="${homY}" x2="${rfX+8}" y2="${rfY-12}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+      <circle cx="${cx}" cy="${homY-60}" r="46" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-dasharray="3,3"/>
+      <rect x="${cx-5}" y="${homY-115-5}" width="10" height="10" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx},${homY-115})" rx="1"/>
+      <rect x="${cx-58-5}" y="${homY-58-5}" width="10" height="10" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx-58},${homY-58})" rx="1"/>
+      <rect x="${cx+58-5}" y="${homY-58-5}" width="10" height="10" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx+58},${homY-58})" rx="1"/>
+      <polygon points="${cx},${homY-3} ${cx-7},${homY-9} ${cx-7},${homY+2} ${cx+7},${homY+2} ${cx+7},${homY-9}" fill="rgba(255,255,255,0.3)"/>
+      ${dots}
+    </svg>
+    <div style="margin-top:6px;line-height:1.8">${legend}</div>
+    <div style="font-size:10px;color:var(--muted2);margin-top:2px">White outline = hard hit (95+ mph)</div>
+  </div>`;
 }
 
 /* ==================== STRIKE ZONE DIAGRAM ==================== */
