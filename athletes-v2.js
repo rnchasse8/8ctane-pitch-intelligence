@@ -413,6 +413,41 @@ function parseStatcastBulk(rows) {
     let totalSwings=0,totalStrikes=0,gbCount=0,fbCount=0,ldCount=0,bipCount=0;
     let fp_total=0,fp_strikes=0,oneone_total=0,oneone_strikes=0;
 
+    // Group pitches by at_bat_number for PA-level metrics
+    const paMap = {};
+    pitches.forEach(r => {
+      const pa = r.at_bat_number||r.at_bat_number||'';
+      if (!pa) return;
+      if (!paMap[pa]) paMap[pa] = [];
+      paMap[pa].push(r);
+    });
+
+    // Race to 2K: % of PAs where pitcher gets to 2 strikes within first 3 pitches
+    let race2k_total = 0, race2k_hit = 0;
+    // Putaway%: % of 2-strike plate appearances ending in strikeout
+    let putaway_total = 0, putaway_k = 0;
+
+    Object.values(paMap).forEach(paPitches => {
+      const sorted = [...paPitches].sort((a,b) => (+a.pitch_number||0)-(+b.pitch_number||0));
+      race2k_total++;
+      // Check if pitcher reached 2 strikes within first 3 pitches
+      let strikes = 0;
+      for (let i = 0; i < Math.min(3, sorted.length); i++) {
+        const desc = sorted[i].description||'';
+        if (desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='foul_tip') {
+          strikes++;
+          if (strikes >= 2) { race2k_hit++; break; }
+        }
+      }
+      // Putaway: did this PA ever reach 2 strikes?
+      const lastPitch = sorted[sorted.length-1];
+      const maxStrikes = Math.max(...sorted.map(p=>+(p.strikes||0)));
+      if (maxStrikes >= 2) {
+        putaway_total++;
+        if (lastPitch.events==='strikeout') putaway_k++;
+      }
+    });
+
     pitches.forEach(r => {
       let pt = (r.pitch_type||'').trim().toUpperCase();
       pt = NORMALIZE[pt] || pt;
@@ -570,8 +605,10 @@ function parseStatcastBulk(rows) {
       gbPct:      bipCount    ?+(gbCount/bipCount*100).toFixed(1):null,
       fbPct:      bipCount    ?+(fbCount/bipCount*100).toFixed(1):null,
       ldPct:      bipCount    ?+(ldCount/bipCount*100).toFixed(1):null,
-      fpStrikePct: fp_total   ?+(fp_strikes/fp_total*100).toFixed(1):null,
+      fpStrikePct: fp_total    ?+(fp_strikes/fp_total*100).toFixed(1):null,
       oonStrikePct:oneone_total?+(oneone_strikes/oneone_total*100).toFixed(1):null,
+      race2kPct:   race2k_total?+(race2k_hit/race2k_total*100).toFixed(1):null,
+      putawayPct:  putaway_total?+(putaway_k/putaway_total*100).toFixed(1):null,
       pitchMap: flatMap,
     };
   });
@@ -694,6 +731,7 @@ async function runBulkImport() {
           zContactPct: o.zContactPct, swingPct: o.swingPct, strikePct: o.strikePct,
           gbPct: o.gbPct, fbPct: o.fbPct, ldPct: o.ldPct,
           fpStrikePct: o.fpStrikePct, oonStrikePct: o.oonStrikePct,
+          race2kPct: o.race2kPct, putawayPct: o.putawayPct,
         }
       });
       row.className = 'bulk-outing-row done';
@@ -1370,6 +1408,8 @@ async function renderSeasonInsight() {
 
   const fpStrikePct  = avg(athleteOutings.map(o=>pf(o.fp_strike_pct)).filter(Boolean)) || null;
   const oonStrikePct = avg(athleteOutings.map(o=>pf(o.oon_strike_pct)).filter(Boolean)) || null;
+  const race2kPct    = avg(athleteOutings.map(o=>pf(o.race2k_pct)).filter(Boolean)) || null;
+  const putawayPct   = avg(athleteOutings.map(o=>pf(o.putaway_pct)).filter(Boolean)) || null;
 
   const pm_stored = (() => {
     let pm = currentAthlete.pitch_metrics || {};
@@ -1384,7 +1424,7 @@ async function renderSeasonInsight() {
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.team||'unknown team'}, ${currentAthlete.level||''})
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
-ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}% | F-Strike%: ${fpStrikePct?.toFixed(1)||'N/A'}% | 1-1 Strike%: ${oonStrikePct?.toFixed(1)||'N/A'}%
+ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}% | F-Strike%: ${fpStrikePct?.toFixed(1)||'N/A'}% | 1-1 Strike%: ${oonStrikePct?.toFixed(1)||'N/A'}% | Race to 2K: ${race2kPct?.toFixed(1)||'N/A'}% | Putaway%: ${putawayPct?.toFixed(1)||'N/A'}%
 
 NOTE: Pitches with 10 or fewer samples have been excluded as likely mistagged. Only analyze the pitches listed below.
 
@@ -1402,7 +1442,7 @@ ${pitchSummary.map(p => {
 
 PRIORITY ORDER:
 1. STUFF QUALITY — velo, movement shape, whiff rate. This is the primary signal for everything.
-2. STRIKE THROWING — Zone%, F-Strike%, and 1-1 Strike% are critical. F-Strike% below 58% or 1-1 Strike% below 55% should lead the concerns section.
+2. STRIKE THROWING — Zone%, F-Strike%, 1-1 Strike%, Race to 2K, and Putaway% are all critical. F-Strike% below 58% or 1-1 Strike% below 55% should lead concerns. Race to 2K below 45% means the pitcher is falling behind early. Putaway% below 28% means they struggle to finish when ahead.
 3. RESULTS — xwOBA, xBA, xSLG as supporting context.
 
 ARSENAL SHAPE RULES:
@@ -1862,7 +1902,8 @@ function renderReport() {
 
   // Aggregate zone/swing metrics from stored outing stats
   const zoneVals=[], oSwingVals=[], zSwingVals=[], zContactVals=[],
-        swingVals=[], strikeVals=[], gbVals=[], fbVals=[], ldVals=[], fpVals=[], oonVals=[];
+        swingVals=[], strikeVals=[], gbVals=[], fbVals=[], ldVals=[],
+        fpVals=[], oonVals=[], race2kVals=[], putawayVals=[];
 
   athleteOutings.forEach(o => {
     if (pf(o.zone_pct))      zoneVals.push(pf(o.zone_pct));
@@ -1876,6 +1917,8 @@ function renderReport() {
     if (pf(o.ld_pct))        ldVals.push(pf(o.ld_pct));
     if (pf(o.fp_strike_pct))  fpVals.push(pf(o.fp_strike_pct));
     if (pf(o.oon_strike_pct)) oonVals.push(pf(o.oon_strike_pct));
+    if (pf(o.race2k_pct))     race2kVals.push(pf(o.race2k_pct));
+    if (pf(o.putaway_pct))    putawayVals.push(pf(o.putaway_pct));
   });
 
   const zonePct     = zoneVals.length     ? avg(zoneVals)     : null;
@@ -1887,8 +1930,10 @@ function renderReport() {
   const gbPct       = gbVals.length       ? avg(gbVals)       : null;
   const fbPct       = fbVals.length       ? avg(fbVals)       : null;
   const ldPct       = ldVals.length       ? avg(ldVals)       : null;
-  const fpStrikePct  = fpVals.length  ? avg(fpVals)  : null;
-  const oonStrikePct = oonVals.length ? avg(oonVals) : null;
+  const fpStrikePct  = fpVals.length      ? avg(fpVals)      : null;
+  const oonStrikePct = oonVals.length     ? avg(oonVals)     : null;
+  const race2kPct    = race2kVals.length  ? avg(race2kVals)  : null;
+  const putawayPct   = putawayVals.length ? avg(putawayVals) : null;
 
   // Peak velo
   const ffOutingPeaks = [];
@@ -1919,8 +1964,10 @@ function renderReport() {
     gbPct:      { p10:30,  p25:38,  p50:45,  p75:52,  p90:58,  hib:true  },
     fbPct:      { p10:20,  p25:25,  p50:30,  p75:36,  p90:42,  hib:false },
     ldPct:      { p10:14,  p25:17,  p50:20,  p75:23,  p90:27,  hib:false },
-    fpStrikePct: { p10:52, p25:57,  p50:62,  p75:67,  p90:72,  hib:true  },
-    oonStrikePct:{ p10:50, p25:55,  p50:60,  p75:65,  p90:70,  hib:true  },
+    fpStrikePct:  { p10:52, p25:57,  p50:62,  p75:67,  p90:72,  hib:true  },
+    oonStrikePct: { p10:50, p25:55,  p50:60,  p75:65,  p90:70,  hib:true  },
+    race2kPct:    { p10:40, p25:47,  p50:54,  p75:61,  p90:68,  hib:true  },
+    putawayPct:   { p10:22, p25:28,  p50:34,  p75:40,  p90:48,  hib:true  },
   };
 
   function getPercentile(val, dist) {
@@ -2013,6 +2060,8 @@ function renderReport() {
       ${strikePct   !== null     ? pctBar('Strike%',       strikePct,    r(strikePct),    DIST.strikePct,   '%') : ''}
       ${fpStrikePct !== null     ? pctBar('F-Strike%',     fpStrikePct,  r(fpStrikePct),  DIST.fpStrikePct, '%') : ''}
       ${oonStrikePct!== null     ? pctBar('1-1 Strike%',   oonStrikePct, r(oonStrikePct), DIST.oonStrikePct,'%') : ''}
+      ${race2kPct   !== null     ? pctBar('Race to 2K',    race2kPct,    r(race2kPct),    DIST.race2kPct,   '%') : ''}
+      ${putawayPct  !== null     ? pctBar('Putaway%',      putawayPct,   r(putawayPct),   DIST.putawayPct,  '%') : ''}
 
       <div class="pct-group-hd">Contact quality</div>
       ${avgEV       !== null     ? pctBar('Avg EV',      avgEV,       r(avgEV),       DIST.avgEV,      ' mph') : ''}
