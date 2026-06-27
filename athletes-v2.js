@@ -495,6 +495,7 @@ function parseStatcastBulk(rows) {
     const ks = pitches.filter(r=>r.events==='strikeout').length;
     const walks = pitches.filter(r=>r.events==='walk'||r.events==='hit_by_pitch').length;
     const hrs   = pitches.filter(r=>r.events==='home_run').length;
+    const hits  = pitches.filter(r=>['single','double','triple','home_run'].includes(r.events||'')).length;
     const outEvents = new Set(['field_out','strikeout','force_out','grounded_into_double_play','sac_fly','sac_bunt','fielders_choice_out','double_play','triple_play']);
     const outsRecorded = pitches.reduce((a,r)=>{
       const ev=r.events||'';
@@ -557,7 +558,7 @@ function parseStatcastBulk(rows) {
       date, opponent:opp, total_pitches:total,
       whiffs:Object.values(pm).reduce((a,s)=>a+s.whiffs,0),
       calledStrikes:Object.values(pm).reduce((a,s)=>a+s.cstrikes,0),
-      walks, ks, hrs, ip,
+      walks, ks, hrs, hits, ip,
       avgEV:allEVs.length?+avgg(allEVs).toFixed(1):null,
       hardHitPct:allEVs.length?+(hardHits/allEVs.length*100).toFixed(1):null,
       zonePct:    zonedP      ?+(inZone/zonedP*100).toFixed(1):null,
@@ -688,7 +689,7 @@ async function runBulkImport() {
         pitchMap: cleanMap,
         stats: {
           total: o.total_pitches, whiffs: o.whiffs, calledStrikes: o.calledStrikes,
-          walks: o.walks, ks: o.ks, hrs: o.hrs||0, ip: o.ip||0, avgEV: o.avgEV, hardHitPct: o.hardHitPct,
+          walks: o.walks, ks: o.ks, hrs: o.hrs||0, hits: o.hits||0, ip: o.ip||0, avgEV: o.avgEV, hardHitPct: o.hardHitPct,
           zonePct: o.zonePct, oSwingPct: o.oSwingPct, zSwingPct: o.zSwingPct,
           zContactPct: o.zContactPct, swingPct: o.swingPct, strikePct: o.strikePct,
           gbPct: o.gbPct, fbPct: o.fbPct, ldPct: o.ldPct,
@@ -734,18 +735,27 @@ function renderProfileHero() {
      <span class="hero-meta-item">${a.level || '—'}</span>`;
   document.getElementById('profile-hero').style.opacity = '1';
 
-  // KPIs from all outings
   const totalPitches = athleteOutings.reduce((a,o)=>a+(+o.total_pitches||0), 0);
   const totalK  = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0), 0);
   const totalBB = athleteOutings.reduce((a,o)=>a+(+o.walks||0), 0);
   const totalHR = athleteOutings.reduce((a,o)=>a+(+o.hrs||0), 0);
+  const totalH  = athleteOutings.reduce((a,o)=>a+(+o.hits||0), 0);
   const totalWhiffs = athleteOutings.reduce((a,o)=>a+(+o.whiffs||0), 0);
   const totalIP = athleteOutings.reduce((a,o)=>a+(+o.ip||0), 0);
 
-  // Whiff%
   const whiffRate = totalPitches ? (totalWhiffs/totalPitches*100).toFixed(1) : '—';
 
-  // K%-BB% (per batter faced estimate: K+BB+HIP as PA proxy)
+  // FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.10
+  const fip = totalIP > 0
+    ? (((13*totalHR + 3*totalBB - 2*totalK) / totalIP) + 3.10).toFixed(2)
+    : '—';
+
+  // WHIP = (BB + H) / IP
+  const whip = totalIP > 0
+    ? ((totalBB + totalH) / totalIP).toFixed(2)
+    : '—';
+
+  // K%-BB%
   const totalBIP = athleteOutings.reduce((a,o) => {
     let pm = {};
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
@@ -758,20 +768,10 @@ function renderProfileHero() {
     ? `${(parseFloat(kPct)-parseFloat(bbPct)).toFixed(1)}%`
     : '—';
 
-  // FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.10
-  const FIP_CONST = 3.10;
-  const fip = totalIP > 0
-    ? (((13*totalHR + 3*totalBB - 2*totalK) / totalIP) + FIP_CONST).toFixed(2)
-    : '—';
-
-  // ERA — we don't store ER but can show FIP in its place or '—' if no IP
-  // Show ERA as '—' unless we have IP data from bulk import
-  const era = totalIP > 0 ? '—' : '—'; // placeholder until we capture ER
-
   document.getElementById('profile-kpis').innerHTML = [
     { v: athleteOutings.length, l: 'Outings' },
-    { v: era,                   l: 'ERA' },
     { v: fip,                   l: 'FIP' },
+    { v: whip,                  l: 'WHIP' },
     { v: whiffRate+'%',         l: 'Whiff%' },
     { v: kMinusBB,              l: 'K%-BB%' },
   ].map(k => `<div class="kpi"><div class="kpi-val mono">${k.v}</div><div class="kpi-lbl">${k.l}</div></div>`).join('');
