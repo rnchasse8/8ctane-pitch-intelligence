@@ -97,25 +97,64 @@ function parseRows(rows) {
 /* ==================== BUILD PITCH MAP ==================== */
 function buildPitchMap(rows) {
   const map = {};
+  const STRIKE_ZONES = new Set(['1','2','3','4','5','6','7','8','9']);
+
   rows.forEach(r => {
     const pt = r._pt;
-    if (!map[pt]) map[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, launch_speeds:[], xwobas:[], events:[], pfx_xs:[], pfx_zs:[] };
+    if (!map[pt]) map[pt] = {
+      count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0,
+      launch_speeds:[], xwobas:[], xbas:[], xslgs:[], events:[],
+      pfx_xs:[], pfx_zs:[], spins:[], locations:[], spray:[],
+      lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
+      rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
+    };
     const s = map[pt];
     s.count++;
-    if (r.release_speed) s.velos.push(pf(r.release_speed));
-    if (r.pfx_x) s.pfx_xs.push(pf(r.pfx_x));
-    if (r.pfx_z) s.pfx_zs.push(pf(r.pfx_z));
+
+    if (r.release_speed)    s.velos.push(pf(r.release_speed));
+    if (r.pfx_x)            s.pfx_xs.push(-pf(r.pfx_x)*12);
+    if (r.pfx_z)            s.pfx_zs.push(pf(r.pfx_z)*12);
+    if (r.release_spin_rate) s.spins.push(pf(r.release_spin_rate));
+
+    const stand = (r.stand||'').toUpperCase();
+    const side  = stand==='L' ? s.lhh : stand==='R' ? s.rhh : null;
+    if (side) { side.count++; if(r.release_speed) side.velos.push(pf(r.release_speed)); }
+
     const desc = r.description || '';
-    if (desc.includes('swinging_strike') || desc === 'missed_bunt') s.whiffs++;
-    else if (desc.includes('called_strike')) s.cstrikes++;
-    else if (desc === 'ball' || desc === 'blocked_ball') s.balls++;
-    else if (desc.includes('foul')) s.fouls++;
-    else if (desc === 'hit_into_play') {
-      s.hip++;
-      if (r.launch_speed) s.launch_speeds.push(pf(r.launch_speed));
+    const isStrikeResult = desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
+
+    if (desc.includes('swinging_strike') || desc === 'missed_bunt') {
+      s.whiffs++; if(side) side.whiffs++;
+    } else if (desc.includes('called_strike')) {
+      s.cstrikes++; if(side) side.cstrikes++;
+    } else if (desc === 'ball' || desc === 'blocked_ball') {
+      s.balls++;
+    } else if (desc.includes('foul')) {
+      s.fouls++;
+    } else if (desc === 'hit_into_play') {
+      s.hip++; if(side) side.hip++;
+      if (r.launch_speed) { s.launch_speeds.push(pf(r.launch_speed)); if(side) side.bip++; }
       if (r.estimated_woba_using_speedangle) s.xwobas.push(pf(r.estimated_woba_using_speedangle));
+      const xba  = pf(r.estimated_ba_using_speedangle);
+      const xslg = pf(r.estimated_slg_using_speedangle);
+      if (xba  && side) side.xbas.push(xba);
+      if (xslg && side) side.xslgs.push(xslg);
+      s.xbas.push(xba); s.xslgs.push(xslg);
+      const bbt = (r.bb_type||'').toLowerCase();
+      if (side && bbt) { if(bbt==='ground_ball')side.gb++;else if(bbt==='fly_ball')side.fb++;else if(bbt==='line_drive')side.ld++; }
+      // Spray chart
+      const hcx=pf(r.hc_x), hcy=pf(r.hc_y);
+      if (hcx&&hcy) s.spray.push([+hcx.toFixed(1), +hcy.toFixed(1), bbt, pf(r.launch_speed)||null, stand]);
     }
+    if (isStrikeResult && side) side.totalStrikes++;
     if (r.events) s.events.push(r.events);
+
+    // Pitch location
+    const px=pf(r.plate_x), pz=pf(r.plate_z);
+    if (px&&pz) {
+      const outcome = desc.includes('swinging_strike')?'W':desc.includes('called_strike')?'CS':desc==='hit_into_play'?'HIP':desc.includes('foul')?'F':'B';
+      s.locations.push([+px.toFixed(2), +pz.toFixed(2), outcome, stand]);
+    }
   });
   return map;
 }
@@ -217,6 +256,22 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 /* ==================== BUILD SINGLE REPORT ==================== */
+let analyzerLocColor = 'pitch';
+let analyzerLocHand  = 'all';
+
+function setAnalyzerLocColor(color, btn) {
+  analyzerLocColor = color;
+  document.querySelectorAll('.loc-color-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderLocations();
+}
+function setAnalyzerLocHand(hand, btn) {
+  analyzerLocHand = hand;
+  document.querySelectorAll('.loc-hand-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderLocations();
+}
+
 function buildSingleReport(rawRows) {
   const rows = parseRows(rawRows);
   if (!rows.length) return;
@@ -250,13 +305,57 @@ function buildSingleReport(rawRows) {
 
   const totalWhiffs = Object.values(pitchMap).reduce((a,s)=>a+s.whiffs, 0);
   const totalCS = Object.values(pitchMap).reduce((a,s)=>a+s.cstrikes, 0);
-  const walks = rows.filter(r => r.events === 'walk').length;
-  const ks = rows.filter(r => r.events === 'strikeout').length;
+  const walks = rows.filter(r => r.events === 'walk' || r.events === 'hit_by_pitch').length;
+  const ks    = rows.filter(r => r.events === 'strikeout').length;
+  const hrs   = rows.filter(r => r.events === 'home_run').length;
+  const hits  = rows.filter(r => ['single','double','triple','home_run'].includes(r.events||'')).length;
   const ffMap = pitchMap['FF'] || pitchMap['FA'];
-  const avgVelo = ffMap && ffMap.velos.length ? avg(ffMap.velos).toFixed(1) : '—';
-  const peakVelo = ffMap && ffMap.velos.length ? Math.max(...ffMap.velos).toFixed(1) : '—';
+  const avgVelo  = ffMap?.velos.length ? avg(ffMap.velos).toFixed(1) : '—';
+  const peakVelo = ffMap?.velos.length ? Math.max(...ffMap.velos).toFixed(1) : '—';
 
-  singleData = { rows, pitchMap, rhhMap, lhhMap, countMap, hardContact, total, pitcherName, gameDate, hand, opp, avgVelo, peakVelo, totalWhiffs, totalCS, walks, ks };
+  // Innings pitched from outs recorded
+  const outEvents = new Set(['field_out','strikeout','force_out','grounded_into_double_play','sac_fly','sac_bunt','fielders_choice_out','double_play','triple_play']);
+  const outsRecorded = rows.reduce((a,r) => {
+    const ev = r.events||'';
+    if (ev==='grounded_into_double_play'||ev==='double_play') return a+2;
+    if (ev==='triple_play') return a+3;
+    if (outEvents.has(ev)) return a+1;
+    return a;
+  }, 0);
+  const ip = outsRecorded/3;
+  const fip  = ip > 0 ? (((13*hrs + 3*walks - 2*ks) / ip) + 3.10).toFixed(2) : '—';
+  const whip = ip > 0 ? ((walks + hits) / ip).toFixed(2) : '—';
+
+  // PA-level: Race to 2K, Putaway%
+  const paMap = {};
+  rows.forEach(r => { const pa=r.at_bat_number||''; if(!pa)return; if(!paMap[pa])paMap[pa]=[]; paMap[pa].push(r); });
+  let race2k_total=0,race2k_hit=0,putaway_total=0,putaway_k=0;
+  Object.values(paMap).forEach(paPitches => {
+    const sorted=[...paPitches].sort((a,b)=>(+a.pitch_number||0)-(+b.pitch_number||0));
+    race2k_total++;
+    let strikes=0;
+    for(let i=0;i<Math.min(3,sorted.length);i++){
+      const d=sorted[i].description||'';
+      if(d.includes('swinging_strike')||d.includes('called_strike')||d.includes('foul')||d==='foul_tip'){strikes++;if(strikes>=2){race2k_hit++;break;}}
+    }
+    const maxStrikes=Math.max(...sorted.map(p=>+(p.strikes||0)));
+    if(maxStrikes>=2){putaway_total++;if(sorted[sorted.length-1].events==='strikeout')putaway_k++;}
+  });
+  const race2kPct  = race2k_total  ? (race2k_hit/race2k_total*100).toFixed(1)   : '—';
+  const putawayPct = putaway_total ? (putaway_k/putaway_total*100).toFixed(1) : '—';
+
+  // F-Strike%, 1-1 Strike%
+  let fp_total=0,fp_strikes=0,oo_total=0,oo_strikes=0;
+  rows.forEach(r => {
+    const b=+(r.balls||0),s=+(r.strikes||0);
+    const isStrike=(r.description||'').includes('swinging_strike')||(r.description||'').includes('called_strike')||(r.description||'').includes('foul')||r.description==='hit_into_play'||r.description==='foul_tip';
+    if(b===0&&s===0){fp_total++;if(isStrike)fp_strikes++;}
+    if(b===1&&s===1){oo_total++;if(isStrike)oo_strikes++;}
+  });
+  const fpStrikePct  = fp_total ? (fp_strikes/fp_total*100).toFixed(1)  : '—';
+  const oonStrikePct = oo_total ? (oo_strikes/oo_total*100).toFixed(1) : '—';
+
+  singleData = { rows, pitchMap, rhhMap, lhhMap, countMap, hardContact, total, pitcherName, gameDate, hand, opp, avgVelo, peakVelo, totalWhiffs, totalCS, walks, ks, hrs, hits, ip, fip, whip, race2kPct, putawayPct, fpStrikePct, oonStrikePct };
 
   renderPlayerHeader();
   renderArsenal();
@@ -264,7 +363,8 @@ function buildSingleReport(rawRows) {
   renderCounts();
   renderMovement();
   renderHardContact();
-  renderInsights();
+  renderLocations();
+  renderAIInsight();
 
   document.getElementById('upload-single').style.display = 'none';
   document.getElementById('report-single').style.display = '';
@@ -276,7 +376,7 @@ function buildSingleReport(rawRows) {
 
 /* ---- Player Header ---- */
 function renderPlayerHeader() {
-  const { pitcherName, gameDate, hand, opp, total, avgVelo, peakVelo, totalWhiffs, totalCS, walks, ks } = singleData;
+  const { pitcherName, gameDate, hand, opp, total, avgVelo, peakVelo, totalWhiffs, totalCS, walks, ks, fip, whip, race2kPct, putawayPct, fpStrikePct, oonStrikePct } = singleData;
   document.getElementById('ph-name').textContent = pitcherName;
   document.getElementById('ph-meta').innerHTML =
     `<span class="player-meta-item">${gameDate}</span>
@@ -285,15 +385,19 @@ function renderPlayerHeader() {
   const whiffRate = total ? (totalWhiffs/total*100).toFixed(1) : '—';
   const cswRate   = total ? ((totalWhiffs+totalCS)/total*100).toFixed(1) : '—';
   document.getElementById('ph-kpis').innerHTML = [
-    { v: total,          l: 'Pitches' },
-    { v: avgVelo+' mph', l: '4S avg velo' },
-    { v: peakVelo+' mph',l: 'Peak velo' },
-    { v: whiffRate+'%',  l: 'Whiff%' },
-    { v: cswRate+'%',    l: 'CSW%' },
-    { v: ks,             l: 'K' },
-    { v: walks,          l: 'BB' },
+    { v: total,              l: 'Pitches'     },
+    { v: fip,                l: 'FIP'         },
+    { v: whip,               l: 'WHIP'        },
+    { v: whiffRate+'%',    l: 'Whiff%'      },
+    { v: cswRate+'%',      l: 'CSW%'        },
+    { v: ks,                 l: 'K'           },
+    { v: walks,              l: 'BB'          },
+    { v: fpStrikePct+'%',  l: 'F-Strike%'   },
+    { v: race2kPct+'%',    l: 'Race to 2K'  },
+    { v: putawayPct+'%',   l: 'Putaway%'    },
   ].map(k => `<div class="kpi"><div class="kpi-val mono">${k.v}</div><div class="kpi-lbl">${k.l}</div></div>`).join('');
 }
+
 
 /* ---- Arsenal ---- */
 function renderArsenal() {
@@ -530,30 +634,32 @@ function renderMovement() {
     }
   });
 
-  // Build per-pitch stat objects with VAA/HAA
+  // Build per-pitch stat objects with VAA/HAA and spin
   const pitchStats = sorted.map(([pt, s]) => {
     const pitchRows = rows.filter(r => r._pt === pt);
     const angles = pitchRows.map(computeApproachAngles).filter(a => a.vaa !== null);
     const avgVAA = angles.length ? avg(angles.map(a => a.vaa)) : null;
     const avgHAA = angles.length ? avg(angles.map(a => a.haa)) : null;
     const peakVelo = s.velos.length ? Math.max(...s.velos) : null;
+    const avgSpin  = s.spins.length ? Math.round(avg(s.spins)) : null;
     return {
       pt,
       avgVelo:  s.velos.length    ? avg(s.velos).toFixed(1)   : '—',
       peakVelo: peakVelo           ? peakVelo.toFixed(1)        : '—',
-      ivb:      s.pfx_zs.length   ? (avg(s.pfx_zs) * 12).toFixed(1)  : '—',
-      hb:       s.pfx_xs.length   ? (-avg(s.pfx_xs) * 12).toFixed(1) : '—',
+      avgSpin:  avgSpin            ? avgSpin+'rpm'              : '—',
+      ivb:      s.pfx_zs.length   ? avg(s.pfx_zs).toFixed(1)  : '—',
+      hb:       s.pfx_xs.length   ? avg(s.pfx_xs).toFixed(1)  : '—',
       vaa:      avgVAA !== null    ? avgVAA.toFixed(1)          : '—',
       haa:      avgHAA !== null    ? avgHAA.toFixed(1)          : '—',
     };
   });
 
-  // Stat cards grid — header + one row per pitch
   const header = `<div class="mov-header-row">
     <div class="mov-header-label">Pitch</div>
     <div class="mov-header-stats">
       <div class="mov-header-stat">Avg velo</div>
       <div class="mov-header-stat">Peak velo</div>
+      <div class="mov-header-stat">Spin</div>
       <div class="mov-header-stat">IVB</div>
       <div class="mov-header-stat">HB</div>
       <div class="mov-header-stat">VAA</div>
@@ -570,6 +676,7 @@ function renderMovement() {
       <div class="mov-stat-group">
         <div class="mov-stat"><div class="mov-stat-val">${p.avgVelo}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${p.peakVelo}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${p.avgSpin}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${p.ivb}"</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${p.hb}"</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${p.vaa}°</div></div>
@@ -635,101 +742,170 @@ function renderHardContact() {
 }
 
 /* ---- Insights ---- */
-function renderInsights() {
-  const { pitchMap, total, countMap, hardContact, walks } = singleData;
-  const sorted = sortedPitches(pitchMap);
-  const insights = [];
+function renderLocations() {
+  if (!singleData) return;
+  const { pitchMap, rows } = singleData;
+  const wrap = document.getElementById('locations-wrap');
+  if (!wrap) return;
 
-  sorted.forEach(([pt, s]) => {
-    const usage   = s.count/total*100;
-    const whiff   = s.count ? s.whiffs/s.count*100 : 0;
-    const csw     = s.count ? (s.whiffs+s.cstrikes)/s.count*100 : 0;
-    const avgXw   = s.xwobas.length ? avg(s.xwobas) : null;
+  const OUTCOME_COLORS = { W:'#e91e8c', CS:'#00d4ff', HIP:'#BA7517', F:'#534AB7', B:'rgba(255,255,255,0.15)' };
+  const OUTCOME_LABELS = { W:'Whiff', CS:'Called Strike', HIP:'In Play', F:'Foul', B:'Ball' };
 
-    // Pull MLB baselines for this pitch type
-    const mlbWhiff  = getBaseline(pt, 'whiff_pct');
-    const mlbCsw    = getBaseline(pt, 'csw_pct');
-    const mlbXwoba  = getBaseline(pt, 'avg_xwoba');
-    const mlbVelo   = getBaseline(pt, 'avg_velo');
-    const avgV      = s.velos.length ? avg(s.velos) : null;
-
-    // Whiff vs MLB average
-    if (mlbWhiff && s.count >= 5) {
-      const diff = whiff - mlbWhiff;
-      if (diff >= 8)
-        insights.push({ type:'good', title:`${pn(pt)} — elite whiff rate`, body:`${whiff.toFixed(1)}% whiff vs. MLB avg ${mlbWhiff}% — ${diff.toFixed(1)}pp above average. This pitch is swing-and-miss at an elite level.` });
-      else if (diff <= -6 && (pt==='FF'||pt==='FA'||pt==='SI'))
-        insights.push({ type:'warn', title:`${pn(pt)} — below-avg whiff rate`, body:`${whiff.toFixed(1)}% vs. MLB avg ${mlbWhiff}%. Hitters are making contact on this pitch — use it as a tunnel/setup pitch rather than a finish pitch.` });
-      else if (diff <= -8)
-        insights.push({ type:'danger', title:`${pn(pt)} — low whiff rate`, body:`${whiff.toFixed(1)}% vs. MLB avg ${mlbWhiff}% (${Math.abs(diff).toFixed(1)}pp below). Evaluate whether this pitch belongs in the arsenal in two-strike counts.` });
+  // Collect locations per pitch type
+  const pitchLocs = {};
+  const allSpray = [];
+  Object.entries(pitchMap).forEach(([pt, s]) => {
+    if (s.locations && s.locations.length) {
+      pitchLocs[pt] = s.locations.filter(loc => analyzerLocHand==='all' || loc[3]===analyzerLocHand);
     }
-
-    // Velocity vs MLB average
-    if (mlbVelo && avgV && (pt==='FF'||pt==='FA'||pt==='SI')) {
-      const veloDiff = avgV - mlbVelo;
-      if (veloDiff <= -2)
-        insights.push({ type:'warn', title:`Below-avg ${pn(pt)} velocity`, body:`${avgV.toFixed(1)} mph vs. MLB avg ${mlbVelo} mph (${Math.abs(veloDiff).toFixed(1)} mph deficit). Must compensate with sequencing, tunneling, and secondary pitch quality.` });
-      else if (veloDiff >= 2)
-        insights.push({ type:'good', title:`Above-avg ${pn(pt)} velocity`, body:`${avgV.toFixed(1)} mph vs. MLB avg ${mlbVelo} mph (+${veloDiff.toFixed(1)} mph). Velocity is a weapon — use it to set up secondaries.` });
+    if (s.spray && s.spray.length) {
+      s.spray.filter(sp => analyzerLocHand==='all' || sp[4]===analyzerLocHand).forEach(sp => allSpray.push({x:sp[0],y:sp[1],bbt:sp[2],ev:sp[3],pt}));
     }
-
-    // xwOBA vs MLB average
-    if (mlbXwoba && avgXw && s.hip >= 3) {
-      const xwDiff = avgXw - mlbXwoba;
-      if (xwDiff <= -0.05)
-        insights.push({ type:'good', title:`${pn(pt)} — elite contact suppression`, body:`${avgXw.toFixed(3)} xwOBA vs. MLB avg ${mlbXwoba} — generating significantly weaker contact than league average.` });
-      else if (xwDiff >= 0.07)
-        insights.push({ type:'danger', title:`${pn(pt)} — contact quality concern`, body:`${avgXw.toFixed(3)} xwOBA vs. MLB avg ${mlbXwoba} (${xwDiff.toFixed(3)} above average). Hitters doing real damage — evaluate location and sequencing.` });
-    }
-
-    if ((pt==='FF'||pt==='FA') && usage > 40)
-      insights.push({ type:'warn', title:'4-seam overuse', body:`${usage.toFixed(0)}% usage on 4-seam is above optimal for a sequencing-based profile. Consider redistributing 10–15pp toward your best secondary offering to reduce predictability.` });
-
-    if (whiff >= 30 && usage < 20 && s.count >= 5)
-      insights.push({ type:'good', title:`${pn(pt)} is underused`, body:`${whiff.toFixed(1)}% whiff rate on just ${usage.toFixed(0)}% usage. This is your best swing-and-miss pitch — increase deployment across more counts, including 0-0 and 2-0.` });
   });
 
-  const fp = countMap['0-0']||{};
-  const fpTotal = Object.values(fp).reduce((a,b)=>a+b,0);
-  const fpFF = (fp['FF']||0)+(fp['FA']||0);
-  if (fpTotal > 3 && fpFF/fpTotal > 0.4)
-    insights.push({ type:'warn', title:'Heavy first-pitch fastball', body:`${Math.round(fpFF/fpTotal*100)}% first-pitch 4-seams. Hitters can sit fastball with no count pressure — sweeper or splitter as primary first-pitch offering creates immediate deficit.` });
+  const hasLocs = Object.values(pitchLocs).some(l=>l.length>0);
+  if (!hasLocs && !allSpray.length) {
+    wrap.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:2rem">No location data available in this CSV.</div>';
+    return;
+  }
 
-  const o2 = countMap['0-2']||{};
-  const o2total = Object.values(o2).reduce((a,b)=>a+b,0);
-  if (o2total > 0 && ((o2['FF']||0)+(o2['FA']||0))/o2total > 0.2)
-    insights.push({ type:'warn', title:'Fastball in 0-2 count', body:`${Math.round(((o2['FF']||0)+(o2['FA']||0))/o2total*100)}% 4-seam in 0-2. This is a chase count — breaking balls out of the zone are the correct offering here.` });
+  // Combined pitch location chart
+  const W=280, H=320, PAD=24;
+  const xMin=-1.75, xMax=1.75, zMin=0.5, zMax=5.0;
+  const toSvgX = x => PAD+(x-xMin)/(xMax-xMin)*(W-PAD*2);
+  const toSvgZ = z => H-PAD-(z-zMin)/(zMax-zMin)*(H-PAD*2);
+  const szX1=toSvgX(-0.71), szX2=toSvgX(0.71), szZ1=toSvgZ(3.5), szZ2=toSvgZ(1.5);
 
-  if (walks > 1)
-    insights.push({ type:'warn', title:`${walks} walks — command concern`, body:`Walk sequences commonly come from fastball command breakdown in hitter counts. Review 3-1 and 3-2 sequences — trust secondaries in full counts.` });
+  const allDots = [];
+  Object.entries(pitchLocs).forEach(([pt, locs]) => {
+    locs.forEach(loc => {
+      const [x,z,outcome] = loc;
+      const cx=toSvgX(x), cy=toSvgZ(z);
+      if(cx<PAD-10||cy<PAD-10||cx>W+10||cy>H+10) return;
+      allDots.push({cx,cy,color:analyzerLocColor==='pitch'?pc(pt):(OUTCOME_COLORS[outcome]||'#444'),priority:outcome==='W'?3:outcome==='CS'?2:outcome==='HIP'?1:0,pt,outcome});
+    });
+  });
+  allDots.sort((a,b)=>a.priority-b.priority);
+  const dots = allDots.map(({cx,cy,color,outcome})=>`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${outcome==='W'?5:4}" fill="${color}" fill-opacity="0.75" stroke="${color}" stroke-width="0.5"/>`).join('');
 
-  const hcFF = hardContact.filter(r=>r._pt==='FF'||r._pt==='FA').length;
-  if (hcFF >= 2)
-    insights.push({ type:'danger', title:'4-seam hard contact pattern', body:`${hcFF} hard contact events (EV ≥ 90) on the 4-seam. Elevate it to the letters when throwing it, or use it purely as a tunnel pitch.` });
+  const ptCounts={};allDots.forEach(({pt})=>ptCounts[pt]=(ptCounts[pt]||0)+1);
+  const pitchLeg=Object.entries(ptCounts).sort((a,b)=>b[1]-a[1]).map(([pt,n])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:11px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${pc(pt)};display:inline-block"></span>${pn(pt)} ${n}</span>`).join('');
+  const outLeg=Object.entries(OUTCOME_COLORS).map(([k,c])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:11px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block"></span>${OUTCOME_LABELS[k]}</span>`).join('');
+  const totalLocs=allDots.length;
 
-  document.getElementById('insight-grid').innerHTML = insights.slice(0,8).map(i =>
-    `<div class="insight-card ${i.type}">
-      <div class="insight-title">${i.title}</div>
-      <div class="insight-body">${i.body}</div>
-    </div>`).join('') || '<div class="empty-state">Upload a larger dataset for automated insights.</div>';
+  const locChart=`<div class="loc-zone-card"><div class="loc-zone-title" style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;margin-bottom:.5rem">Pitch Locations <span style="font-size:11px;color:var(--muted);font-weight:400">${totalLocs} pitches</span></div><svg width="${W}" height="${H}" style="display:block"><rect x="${PAD}" y="${PAD}" width="${W-PAD*2}" height="${H-PAD*2}" fill="rgba(255,255,255,0.02)" rx="2"/><rect x="${szX1}" y="${szZ1}" width="${szX2-szX1}" height="${szZ2-szZ1}" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" rx="1"/>${[1,2].map(i=>`<line x1="${szX1+(szX2-szX1)/3*i}" y1="${szZ1}" x2="${szX1+(szX2-szX1)/3*i}" y2="${szZ2}" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>`).join('')}${[1,2].map(i=>`<line x1="${szX1}" y1="${szZ1+(szZ2-szZ1)/3*i}" x2="${szX2}" y2="${szZ1+(szZ2-szZ1)/3*i}" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>`).join('')}<rect x="${toSvgX(-1.05)}" y="${toSvgZ(4.0)}" width="${toSvgX(1.05)-toSvgX(-1.05)}" height="${toSvgZ(1.0)-toSvgZ(4.0)}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1" stroke-dasharray="4,3" rx="2"/><polygon points="${toSvgX(0)},${H-PAD+4} ${toSvgX(-0.28)},${H-PAD-4} ${toSvgX(-0.28)},${H-PAD} ${toSvgX(0.28)},${H-PAD} ${toSvgX(0.28)},${H-PAD-4}" fill="rgba(255,255,255,0.25)"/><text x="${W/2}" y="${H-2}" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.2)">← Inside · Outside →</text>${dots}</svg><div style="margin-top:8px;line-height:2">${analyzerLocColor==='pitch'?pitchLeg:outLeg}</div></div>`;
 
-  // Sequencing recs
-  const bestPitch = sorted.find(([pt,s]) => s.count >= 5 && s.whiffs/s.count > 0.25);
-  const recs = [
-    { cnt:'0-0 (first pitch)', rec: bestPitch ? `Lead with ${pn(bestPitch[0])} (${(bestPitch[1].whiffs/bestPitch[1].count*100).toFixed(0)}% whiff) — creates immediate count pressure. Reserve 4-seam as a surprise first-pitch offering.` : 'Mix primary secondaries on first pitch — avoid defaulting to the 4-seam.' },
-    { cnt:'0-2 / 1-2',        rec: 'Chase pitch: sweeper or curveball expanded out of the zone. No fastball in two-strike counts. Expand down-and-away from RHH, back foot to LHH.' },
-    { cnt:'3-2 (full count)',  rec: bestPitch ? `Trust ${pn(bestPitch[0])} — highest CSW pitch. Throwing 4-seam in 3-2 when command is marginal leads directly to walks.` : 'Trust your best secondary — avoid defaulting to 4-seam in full counts.' },
-    { cnt:'2-0 / 3-0',        rec: 'Sweeper or splitter in 2-0 is unexpected and prevents hitters from sitting fastball. 4-seam only if command is locked in and location is elevated.' },
-    { cnt:'1-0 / 1-1',        rec: 'Even counts are where the at-bat is decided. Mixing secondaries here prevents hitters from timing the fastball across the at-bat.' },
-  ];
-  document.getElementById('seq-recs').innerHTML = recs.map(r =>
-    `<div class="seq-row"><div class="seq-count">${r.cnt}</div><div class="seq-text">${r.rec}</div></div>`).join('');
+  // Spray chart
+  let sprayChart='';
+  if (allSpray.length) {
+    const SW=340,SH=310;
+    const hpX=SW/2,hpY=SH-18;
+    const lfX=22,lfY=95,rfX=SW-22,rfY=95,cfX=SW/2,cfY=10;
+    const b1X=hpX+72,b1Y=hpY-72,b2X=hpX,b2Y=hpY-144,b3X=hpX-72,b3Y=hpY-72;
+    const wtLfX=lfX-14,wtLfY=lfY+8,wtRfX=rfX+14,wtRfY=rfY+8,wtCfY=cfY-14;
+    const HX_CENTER=125,HX_RANGE=90,HY_HOME=200,HY_FENCE=45;
+    const toX=(hcx,hcy)=>{const d=Math.max(0,Math.min(1,(hcy-HY_FENCE)/(HY_HOME-HY_FENCE)));return hpX+(hcx-HX_CENTER)/HX_RANGE*(SW/2-25)*(1-d*0.05);};
+    const toY=(hcx,hcy)=>{const d=Math.max(0,Math.min(1.1,(hcy-HY_FENCE)/(HY_HOME-HY_FENCE)));return hpY-(1-d)*(hpY-cfY-10);};
+    const BB_COLORS={ground_ball:'#c13584',line_drive:'#f0d44a',fly_ball:'#4a9e4a',popup:'#e05c2a'};
+    const BB_LABELS={ground_ball:'Ground Ball',line_drive:'Line Drive',fly_ball:'Fly Ball',popup:'Popup'};
+    const ptC2={};allSpray.forEach(({pt})=>ptC2[pt]=(ptC2[pt]||0)+1);
+    const sDots=allSpray.map(({x,y,bbt,ev,pt})=>{const sx=toX(x,y),sy=toY(x,y);if(sx<5||sy<5||sx>SW-5||sy>SH+5)return'';const color=analyzerLocColor==='pitch'?pc(pt):(BB_COLORS[bbt]||'#888');const hard=ev&&ev>=95;return`<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="${hard?6:4.5}" fill="${color}" fill-opacity="0.92" stroke="${hard?'#fff':'rgba(0,0,0,0.35)'}" stroke-width="${hard?1.5:0.5}"/>`;}).join('');
+    const sLeg=analyzerLocColor==='pitch'?Object.entries(ptC2).sort((a,b)=>b[1]-a[1]).map(([pt])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${pc(pt)};display:inline-block"></span>${pn(pt)}</span>`).join(''):Object.entries(BB_COLORS).map(([k,c])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block"></span>${BB_LABELS[k]}</span>`).join('');
+    sprayChart=`<div class="loc-zone-card"><div class="loc-zone-title" style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;margin-bottom:.5rem">Spray Chart <span style="font-size:11px;color:var(--muted);font-weight:400">${allSpray.length} batted balls</span></div><svg width="${SW}" height="${SH}" style="display:block"><path d="M ${hpX} ${hpY} L ${wtLfX} ${wtLfY} Q ${cfX} ${wtCfY} ${wtRfX} ${wtRfY} Z" fill="rgba(110,78,30,0.6)"/><path d="M ${hpX} ${hpY} L ${lfX} ${lfY} Q ${cfX} ${cfY} ${rfX} ${rfY} Z" fill="rgba(35,72,35,0.75)"/><path d="M ${lfX} ${lfY} Q ${cfX} ${cfY} ${rfX} ${rfY}" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="2.5"/><line x1="${hpX}" y1="${hpY}" x2="${wtLfX-8}" y2="${wtLfY+4}" stroke="rgba(255,255,255,0.55)" stroke-width="1.5"/><line x1="${hpX}" y1="${hpY}" x2="${wtRfX+8}" y2="${wtRfY+4}" stroke="rgba(255,255,255,0.55)" stroke-width="1.5"/><path d="M ${hpX} ${hpY} L ${b1X+20} ${b1Y+12} L ${b2X} ${b2Y-8} L ${b3X-20} ${b3Y+12} Z" fill="rgba(130,88,35,0.5)"/><polygon points="${hpX},${hpY} ${b1X},${b1Y} ${b2X},${b2Y} ${b3X},${b3Y}" fill="rgba(35,72,35,0.85)"/><line x1="${hpX}" y1="${hpY}" x2="${b1X}" y2="${b1Y}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/><line x1="${b1X}" y1="${b1Y}" x2="${b2X}" y2="${b2Y}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/><line x1="${b2X}" y1="${b2Y}" x2="${b3X}" y2="${b3Y}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/><line x1="${b3X}" y1="${b3Y}" x2="${hpX}" y2="${hpY}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/><ellipse cx="${hpX}" cy="${(hpY+b2Y)/2+6}" rx="9" ry="7" fill="rgba(130,88,35,0.7)"/><rect x="${b2X-5}" y="${b2Y-5}" width="10" height="10" fill="rgba(235,230,210,0.9)" transform="rotate(45,${b2X},${b2Y})" rx="1"/><rect x="${b1X-5}" y="${b1Y-5}" width="10" height="10" fill="rgba(235,230,210,0.9)" transform="rotate(45,${b1X},${b1Y})" rx="1"/><rect x="${b3X-5}" y="${b3Y-5}" width="10" height="10" fill="rgba(235,230,210,0.9)" transform="rotate(45,${b3X},${b3Y})" rx="1"/><polygon points="${hpX},${hpY-5} ${hpX-8},${hpY-12} ${hpX-8},${hpY+4} ${hpX+8},${hpY+4} ${hpX+8},${hpY-12}" fill="rgba(235,230,210,0.9)"/>${sDots}</svg><div style="margin-top:8px;line-height:2">${sLeg}</div><div style="font-size:10px;color:var(--muted);margin-top:2px">White outline = hard hit (95+ mph EV)</div></div>`;
+  }
 
-  document.getElementById('hand-recs').innerHTML = [
-    { cnt:'vs. RHH', rec:'Sweeper shapes away from RHH into the back foot — primary weapon. 4-seam up-and-in (letters) to set up sweeper down-and-away. Curveball back foot in two-strike counts. Cutter jam pitch or backdoor strike.' },
-    { cnt:'vs. LHH', rec:'Backdoor curveball at the knees is the best weapon vs. LHH. Cutter cuts back toward the plate for called strikes away. Sweeper moves into the LHH bat path — use carefully. 4-seam can work arm-side elevated.' },
-  ].map(r => `<div class="seq-row"><div class="seq-count">${r.cnt}</div><div class="seq-text">${r.rec}</div></div>`).join('');
+  wrap.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:1.5rem">${locChart}${sprayChart}</div>`;
 }
+
+/* ---- AI Insight ---- */
+async function renderAIInsight() {
+  const container = document.getElementById('ai-insight-content');
+  if (!singleData) return;
+  const SCRIPT_URL = localStorage.getItem('8ctane_script_url') || '';
+  if (!SCRIPT_URL) {
+    container.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.5rem;font-size:13px;color:var(--muted)">
+      <strong style="color:var(--text)">AI Insight requires Apps Script connection.</strong><br>
+      Go to the Athletes page, paste your Apps Script URL in ⚙ Configure, then reload this page.
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = `<div style="text-align:center;padding:3rem;color:var(--muted);font-size:13px"><div style="width:28px;height:28px;border:2px solid var(--border2);border-top-color:var(--cyan);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 1rem"></div>Generating AI analysis...</div>`;
+
+  const { pitchMap, total, pitcherName, hand, gameDate, opp, walks, ks, fip, whip, race2kPct, putawayPct, fpStrikePct, oonStrikePct } = singleData;
+  const sorted = sortedPitches(pitchMap).filter(([,s]) => s.count > 10);
+  const mlb = (typeof MLB_BASELINE_REF !== 'undefined') ? MLB_BASELINE_REF : {};
+
+  const pitchLines = sorted.map(([pt, s]) => {
+    const whiff = s.count ? (s.whiffs/s.count*100).toFixed(1) : 0;
+    const csw   = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0;
+    const xwoba = s.xwobas.length ? avg(s.xwobas).toFixed(3) : 'N/A';
+    const xba   = s.xbas.length  ? avg(s.xbas).toFixed(3)   : 'N/A';
+    const xslg  = s.xslgs.length ? avg(s.xslgs).toFixed(3)  : 'N/A';
+    const velo  = s.velos.length  ? avg(s.velos).toFixed(1)  : '?';
+    const ivb   = s.pfx_zs.length ? avg(s.pfx_zs).toFixed(1) : '?';
+    const hb    = s.pfx_xs.length ? avg(s.pfx_xs).toFixed(1) : '?';
+    const spin  = s.spins.length  ? Math.round(avg(s.spins))+'rpm' : 'N/A';
+    const mlbW  = mlb[pt]?.whiff_pct;
+    return `${pn(pt)} (${pt}): ${(s.count/total*100).toFixed(0)}% usage | ${velo}mph | Spin:${spin} | IVB:${ivb}" HB:${hb}" | Whiff:${whiff}% (MLB:${mlbW||'?'}%) | CSW:${csw}% | xwOBA:${xwoba} | xBA:${xba} | xSLG:${xslg}`;
+  }).join('\n');
+
+  const prompt = `You are a pitching coach at 8ctane Baseball analyzing a pitcher's outing. Write directly to the pitcher. Direct, encouraging, specific. Use "you"/"your". NEVER mention psStuff+ unless provided. Pitches with ≤10 samples excluded.
+
+PITCHER: ${pitcherName} (${hand}HP)
+OUTING: ${gameDate} vs ${opp} | ${total} pitches | ${ks}K ${walks}BB
+FIP:${fip} | WHIP:${whip} | F-Strike%:${fpStrikePct}% | Race to 2K:${race2kPct}% | Putaway%:${putawayPct}%
+
+ARSENAL (IVB/HB in inches, arm-side positive):
+${pitchLines}
+
+RULES: Lead with strengths. Flag shape gaps (big IVB FB + big breaking ball = needs bridging pitch). ALWAYS include MLB comp with same handedness. Recommend pitch add only if clear gap. Never suggest knuckleball/eephus. 30%+ whiff = elite. F-Strike% below 58% or Putaway% below 28% should lead concerns.
+
+JSON only — no markdown:
+{"headline":"2-3 words","summary":"3-4 sentences","pitchBlurbs":[{"pitch":"...","blurb":"1-2 sentences on shape/results"}],"strengths":[{"title":"...","detail":"..."}],"concerns":[{"title":"...","detail":"..."}],"arsenalAssessment":{"keepPitches":[{"pitch":"...","reason":"..."}],"developPitches":[{"pitch":"...","reason":"..."}],"addPitch":{"pitch":"...","reason":"..."},"removePitch":{"pitch":"...","reason":"..."}},"mlbComp":{"name":"...","reason":"2-3 sentences"},"splitAdvice":{"vsRHH":"...","vsLHH":"..."},"developmentPriorities":["...","...","..."]}`;
+
+  try {
+    const res = await fetch(`${SCRIPT_URL}?action=analyze`, {
+      method:'POST', body: JSON.stringify({ action:'analyze', messages:[{role:'user',content:prompt}] })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    const raw = data.text||''; const match = raw.match(/\{[\s\S]*\}/);
+    const a = JSON.parse(match?match[0]:raw);
+
+    const strengthCards=(a.strengths||[]).map(s=>`<div class="insight-card good"><div class="insight-title">${s.title}</div><div class="insight-body">${s.detail}</div></div>`).join('');
+    const concernCards=(a.concerns||[]).map(s=>`<div class="insight-card danger"><div class="insight-title">${s.title}</div><div class="insight-body">${s.detail}</div></div>`).join('');
+    const keepP=(a.arsenalAssessment?.keepPitches||[]).map(p=>`<div class="arsenal-rec keep">✓ <strong>${p.pitch}</strong> — ${p.reason}</div>`).join('');
+    const devP=(a.arsenalAssessment?.developPitches||[]).map(p=>`<div class="arsenal-rec develop">↑ <strong>${p.pitch}</strong> — ${p.reason}</div>`).join('');
+    const addP=a.arsenalAssessment?.addPitch?`<div class="arsenal-rec add">+ Add: <strong>${a.arsenalAssessment.addPitch.pitch}</strong> — ${a.arsenalAssessment.addPitch.reason}</div>`:'';
+    const remP=a.arsenalAssessment?.removePitch?`<div class="arsenal-rec remove">− <strong>${a.arsenalAssessment.removePitch.pitch}</strong> — ${a.arsenalAssessment.removePitch.reason}</div>`:'';
+    const blurbs=(a.pitchBlurbs||[]).map(pb=>{
+      const key=Object.keys(PITCH_NAMES).find(k=>PITCH_NAMES[k]===pb.pitch)||'OTHER';
+      return`<div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:.75rem 1.125rem;margin-bottom:.5rem"><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="width:9px;height:9px;border-radius:50%;background:${pc(key)};display:inline-block;flex-shrink:0"></span><span style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700">${pb.pitch}</span></div><div style="font-size:13px;color:var(--muted);line-height:1.65">${pb.blurb}</div></div>`;
+    }).join('');
+    const mlbComp=a.mlbComp?.name?`<div class="section" style="margin-top:1.5rem"><div class="section-hd">MLB Comparison</div><div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--cyan);border-radius:8px;padding:.875rem 1.25rem"><div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:800;color:var(--cyan);margin-bottom:4px">${a.mlbComp.name}</div><div style="font-size:13px;color:var(--muted);line-height:1.65">${a.mlbComp.reason}</div></div></div>`:'';
+
+    container.innerHTML=`
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:30px;font-weight:800;margin-bottom:.5rem;line-height:1.1">${a.headline||''}</div>
+      <div style="font-size:14px;color:var(--muted);line-height:1.75;max-width:680px;margin-bottom:1.5rem">${a.summary||''}</div>
+      ${blurbs?`<div class="section-hd">Pitch Breakdown</div>${blurbs}`:''}
+      <div class="section-hd" style="margin-top:1.5rem">Strengths &amp; concerns</div>
+      <div class="insight-grid">${strengthCards}${concernCards}</div>
+      <div class="section-hd" style="margin-top:1.5rem">Arsenal</div>
+      <div style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.5rem">${keepP}${devP}${addP}${remP}</div>
+      ${mlbComp}
+      <div class="section-hd" style="margin-top:1.5rem">Splits</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem 1.25rem"><div style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#378ADD;margin-bottom:.5rem">vs. Right-handed</div><div style="font-size:12px;color:var(--muted);line-height:1.65">${a.splitAdvice?.vsRHH||''}</div></div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem 1.25rem"><div style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#D85A30;margin-bottom:.5rem">vs. Left-handed</div><div style="font-size:12px;color:var(--muted);line-height:1.65">${a.splitAdvice?.vsLHH||''}</div></div>
+      </div>
+      <div class="section-hd">Development priorities</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden">${(a.developmentPriorities||[]).map((p,i)=>`<div style="display:flex;align-items:flex-start;gap:1rem;padding:.75rem 1.25rem;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted);line-height:1.6"><span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--cyan);min-width:16px;padding-top:2px;flex-shrink:0">${i+1}</span><span>${p}</span></div>`).join('')}</div>`;
+  } catch(e) {
+    container.innerHTML = `<div style="color:var(--danger);font-size:13px;padding:1rem">Could not generate insights: ${e.message}</div>`;
+  }
+}
+
 
 /* ==================== MULTI-START COMPARISON ==================== */
 function runComparison() {

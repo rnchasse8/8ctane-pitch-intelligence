@@ -98,8 +98,9 @@
       <button class="tab" data-tab="splits">Splits</button>
       <button class="tab" data-tab="counts">Counts</button>
       <button class="tab" data-tab="movement">Pitch Shapes</button>
+      <button class="tab" data-tab="locations">Locations</button>
       <button class="tab" data-tab="contact">Hard Contact</button>
-      <button class="tab" data-tab="insights">Insights</button>
+      <button class="tab" data-tab="insights">AI Insight</button>
     </nav>
   </div>
 
@@ -206,19 +207,24 @@
       </div>
     </div>
 
-    <!-- INSIGHTS -->
+    <!-- LOCATIONS -->
+    <div class="tab-panel" id="panel-locations">
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem;align-items:center">
+        <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;min-width:70px">Color by:</span>
+        <button class="btn-ghost btn-sm loc-color-btn active" data-color="pitch" onclick="setAnalyzerLocColor('pitch',this)">Pitch type</button>
+        <button class="btn-ghost btn-sm loc-color-btn" data-color="outcome" onclick="setAnalyzerLocColor('outcome',this)">Outcome</button>
+        <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;min-width:50px;margin-left:1rem">View:</span>
+        <button class="btn-ghost btn-sm loc-hand-btn active" data-hand="all" onclick="setAnalyzerLocHand('all',this)">All</button>
+        <button class="btn-ghost btn-sm loc-hand-btn" data-hand="R" onclick="setAnalyzerLocHand('R',this)">vs. RHB</button>
+        <button class="btn-ghost btn-sm loc-hand-btn" data-hand="L" onclick="setAnalyzerLocHand('L',this)">vs. LHB</button>
+      </div>
+      <div id="locations-wrap" style="display:flex;flex-wrap:wrap;gap:1.5rem"></div>
+    </div>
+
+    <!-- AI INSIGHT -->
     <div class="tab-panel" id="panel-insights">
-      <div class="section">
-        <div class="section-hd">Automated findings</div>
-        <div class="insight-grid" id="insight-grid"></div>
-      </div>
-      <div class="section" style="margin-top:1.5rem">
-        <div class="section-hd">Count-by-count sequencing recommendations</div>
-        <div id="seq-recs"></div>
-      </div>
-      <div class="section" style="margin-top:1.5rem">
-        <div class="section-hd">Handedness sequencing</div>
-        <div id="hand-recs"></div>
+      <div id="ai-insight-content">
+        <div style="text-align:center;padding:3rem;color:var(--muted);font-size:13px">Upload a CSV to generate AI insights.</div>
       </div>
     </div>
 
@@ -260,6 +266,7 @@
   <span>Pitch Intelligence · Powered by Statcast</span>
 </footer>
 
+<script src="baselines-ref.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
