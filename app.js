@@ -833,7 +833,7 @@ async function renderAIInsight() {
   container.innerHTML = `<div style="text-align:center;padding:3rem;color:var(--muted);font-size:13px"><div style="width:28px;height:28px;border:2px solid var(--border2);border-top-color:var(--cyan);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 1rem"></div>Generating AI analysis...</div>`;
 
   const { pitchMap, total, pitcherName, hand, gameDate, opp, walks, ks, fip, whip, race2kPct, putawayPct, fpStrikePct, oonStrikePct } = singleData;
-  const sorted = sortedPitches(pitchMap).filter(([,s]) => s.count > 10);
+  const sorted = sortedPitches(pitchMap);
   const mlb = (typeof MLB_BASELINE_REF !== 'undefined') ? MLB_BASELINE_REF : {};
 
   const pitchLines = sorted.map(([pt, s]) => {
@@ -850,7 +850,7 @@ async function renderAIInsight() {
     return `${pn(pt)} (${pt}): ${(s.count/total*100).toFixed(0)}% usage | ${velo}mph | Spin:${spin} | IVB:${ivb}" HB:${hb}" | Whiff:${whiff}% (MLB:${mlbW||'?'}%) | CSW:${csw}% | xwOBA:${xwoba} | xBA:${xba} | xSLG:${xslg}`;
   }).join('\n');
 
-  const prompt = `You are a pitching coach at 8ctane Baseball analyzing a pitcher's outing. Write directly to the pitcher. Direct, encouraging, specific. Use "you"/"your". NEVER mention psStuff+ unless provided. Pitches with ≤10 samples excluded.
+  const prompt = `You are a pitching coach at 8ctane Baseball analyzing a pitcher's outing. Write directly to the pitcher. Direct, encouraging, specific. Use "you"/"your". NEVER mention psStuff+ unless provided.
 
 PITCHER: ${pitcherName} (${hand}HP)
 OUTING: ${gameDate} vs ${opp} | ${total} pitches | ${ks}K ${walks}BB
