@@ -2197,56 +2197,56 @@ function renderLocations() {
 }
 
 function buildSprayChart(sprayData) {
-  const W = 340, H = 320;
+  // Field dimensions in SVG space
+  // Home plate at bottom-center, CF at top-center
+  // Foul lines go ~45deg from home to LF/RF corners
+  // Outfield fence is a wide arc connecting LF to RF through CF
+  const W = 340, H = 310;
+  const hpX = W/2, hpY = H - 18;  // home plate
 
-  // Statcast coords: hc_x ~26-205 (left to right), hc_y ~45-180 (LOW=outfield, HIGH=home)
-  // SVG: we want home plate near bottom (large SVG Y), outfield near top (small SVG Y)
-  // So: svgY = map(hc_y) such that hc_y=180 -> svgY=H-20, hc_y=45 -> svgY=20
+  // Foul pole positions (where foul lines meet the fence)
+  const lfX = 22,    lfY = 95;   // left field foul pole
+  const rfX = W-22,  rfY = 95;   // right field foul pole
+  const cfX = W/2,   cfY = 10;   // center field
 
-  const HX_CENTER = 125;
-  const HY_HOME_REF = 205;  // reference home plate hc_y (extrapolated)
-  const HY_CF_REF   = 30;   // reference CF hc_y
+  // Bases (diamond rotated 45deg)
+  const b1X = hpX+72, b1Y = hpY-72;   // 1B (right)
+  const b2X = hpX,    b2Y = hpY-144;  // 2B (top)
+  const b3X = hpX-72, b3Y = hpY-72;   // 3B (left)
 
-  const SVG_HOME_Y = H - 22;
-  const SVG_CF_Y   = 18;
-  const SVG_CX     = W / 2;
+  // Statcast coordinate mapping onto the field wedge
+  // hc_x: ~26-205, center=125 → left-right
+  // hc_y: HIGH=near home, LOW=outfield (inverted)
+  // We map: depth = (hc_y - 45) / (200 - 45)  → 0=outfield, 1=home
+  // We map: lateral = (hc_x - 125) / 90        → -1=LF, 0=CF, 1=RF
 
-  const scaleY = (SVG_HOME_Y - SVG_CF_Y) / (HY_HOME_REF - HY_CF_REF);
-  const scaleX = scaleY * 1.02;
+  const HX_CENTER = 125, HX_RANGE = 90;
+  const HY_HOME = 200, HY_FENCE = 45;
 
-  const toX = hcx => SVG_CX + (hcx - HX_CENTER) * scaleX;
-  const toY = hcy => SVG_HOME_Y - (hcy - HY_CF_REF) * scaleY; // hc_y high -> svgY high (bottom)
+  const toSvgX = (hcx, hcy) => {
+    const depth    = Math.max(0, Math.min(1, (hcy - HY_FENCE) / (HY_HOME - HY_FENCE)));
+    const lateral  = (hcx - HX_CENTER) / HX_RANGE;
+    // At depth=1 (home), lateral range ~= 0. At depth=0 (fence), lateral range = full width
+    const maxSpread = W/2 - 25;
+    return hpX + lateral * maxSpread * (1 - depth * 0.05);
+  };
 
-  // Key SVG points
-  const hpX = SVG_CX, hpY = SVG_HOME_Y;
-  const cfX = SVG_CX, cfY = SVG_CF_Y;
-
-  // Foul lines: 45 degrees from home, hc_x ~25 is LF line, ~205 is RF line
-  const lfFenceX = toX(28),  lfFenceY = toY(55);
-  const rfFenceX = toX(222), rfFenceY = toY(55);
-
-  // Foul line extension beyond fence
-  const lfFoulX = toX(10),  lfFoulY = toY(40);
-  const rfFoulX = toX(240), rfFoulY = toY(40);
-
-  // Bases
-  const b2X = hpX,       b2Y = toY(HY_HOME_REF - 127);
-  const b1X = hpX + 73,  b1Y = toY(HY_HOME_REF - 63);
-  const b3X = hpX - 73,  b3Y = toY(HY_HOME_REF - 63);
+  const toSvgY = (hcx, hcy) => {
+    const depth = Math.max(0, Math.min(1.1, (hcy - HY_FENCE) / (HY_HOME - HY_FENCE)));
+    return hpY - (1 - depth) * (hpY - cfY - 10) - depth * 0;
+  };
 
   const BB_COLORS = { ground_ball:'#c13584', line_drive:'#f0d44a', fly_ball:'#4a9e4a', popup:'#e05c2a' };
   const BB_LABELS = { ground_ball:'Ground Ball', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup' };
-
   const ptCounts = {};
   sprayData.forEach(({pt}) => ptCounts[pt] = (ptCounts[pt]||0)+1);
 
-  // Only plot balls that landed in fair territory (between foul lines, not too far)
   const dots = sprayData.map(({ x, y, bbt, ev, pt }) => {
-    const svgX = toX(x), svgY = toY(y);
-    if (svgX < 5 || svgY < 5 || svgX > W-5 || svgY > H) return '';
+    const svgX = toSvgX(x, y), svgY = toSvgY(x, y);
+    if (svgX < 5 || svgY < 5 || svgX > W-5 || svgY > H+5) return '';
     const color = locationColor === 'pitch' ? pc(pt) : (BB_COLORS[bbt] || '#888');
     const hard = ev && ev >= 95;
-    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6:4.5}" fill="${color}" fill-opacity="0.9" stroke="${hard?'#fff':'rgba(0,0,0,0.4)'}" stroke-width="${hard?1.5:0.5}"/>`;
+    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6:4.5}" fill="${color}" fill-opacity="0.92" stroke="${hard?'#fff':'rgba(0,0,0,0.35)'}" stroke-width="${hard?1.5:0.5}"/>`;
   }).join('');
 
   const pitchLegend = Object.entries(ptCounts).sort((a,b)=>b[1]-a[1])
@@ -2255,35 +2255,40 @@ function buildSprayChart(sprayData) {
     .map(([k,c])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${c};display:inline-block"></span>${BB_LABELS[k]}</span>`).join('');
   const legend = locationColor === 'pitch' ? pitchLegend : outcomeLegend;
 
+  // Warning track arc (slightly outside fence)
+  const wtLfX = lfX-14, wtLfY = lfY+8;
+  const wtRfX = rfX+14, wtRfY = rfY+8;
+  const wtCfY = cfY - 14;
+
   return `<div class="loc-zone-card">
     <div class="loc-zone-title">Spray Chart <span style="font-size:11px;color:var(--muted);font-weight:400">${sprayData.length} batted balls</span></div>
     <svg width="${W}" height="${H}" style="display:block">
-      <!-- Warning track (tan arc outside fence) -->
-      <path d="M ${lfFoulX-5} ${lfFoulY} Q ${cfX} ${cfY-22} ${rfFoulX+5} ${rfFoulY} L ${rfFenceX} ${rfFenceY} Q ${cfX} ${cfY+12} ${lfFenceX} ${lfFenceY} Z" fill="rgba(120,85,35,0.5)"/>
-      <!-- Outfield grass -->
-      <path d="M ${hpX} ${hpY} L ${lfFenceX} ${lfFenceY} Q ${cfX} ${cfY+10} ${rfFenceX} ${rfFenceY} Z" fill="rgba(38,75,38,0.7)"/>
+      <!-- Warning track -->
+      <path d="M ${hpX} ${hpY} L ${wtLfX} ${wtLfY} Q ${cfX} ${wtCfY} ${wtRfX} ${wtRfY} Z" fill="rgba(110,78,30,0.6)"/>
+      <!-- Outfield grass wedge -->
+      <path d="M ${hpX} ${hpY} L ${lfX} ${lfY} Q ${cfX} ${cfY} ${rfX} ${rfY} Z" fill="rgba(35,72,35,0.75)"/>
       <!-- Outfield fence arc -->
-      <path d="M ${lfFenceX} ${lfFenceY} Q ${cfX} ${cfY+8} ${rfFenceX} ${rfFenceY}" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="2.5"/>
+      <path d="M ${lfX} ${lfY} Q ${cfX} ${cfY} ${rfX} ${rfY}" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="2.5"/>
       <!-- Foul lines -->
-      <line x1="${hpX}" y1="${hpY}" x2="${lfFoulX}" y2="${lfFoulY}" stroke="rgba(255,255,255,0.55)" stroke-width="1.5"/>
-      <line x1="${hpX}" y1="${hpY}" x2="${rfFoulX}" y2="${rfFoulY}" stroke="rgba(255,255,255,0.55)" stroke-width="1.5"/>
-      <!-- Infield dirt -->
-      <path d="M ${hpX} ${hpY} L ${b1X+22} ${b1Y+12} L ${b2X} ${b2Y-10} L ${b3X-22} ${b3Y+12} Z" fill="rgba(140,95,40,0.45)"/>
-      <!-- Infield grass -->
-      <polygon points="${hpX},${hpY} ${b1X},${b1Y} ${b2X},${b2Y} ${b3X},${b3Y}" fill="rgba(38,75,38,0.8)"/>
+      <line x1="${hpX}" y1="${hpY}" x2="${wtLfX-8}" y2="${wtLfY+4}" stroke="rgba(255,255,255,0.55)" stroke-width="1.5"/>
+      <line x1="${hpX}" y1="${hpY}" x2="${wtRfX+8}" y2="${wtRfY+4}" stroke="rgba(255,255,255,0.55)" stroke-width="1.5"/>
+      <!-- Infield dirt (large circle area) -->
+      <path d="M ${hpX} ${hpY} L ${b1X+20} ${b1Y+12} L ${b2X} ${b2Y-8} L ${b3X-20} ${b3Y+12} Z" fill="rgba(130,88,35,0.5)"/>
+      <!-- Infield grass (inner diamond) -->
+      <polygon points="${hpX},${hpY} ${b1X},${b1Y} ${b2X},${b2Y} ${b3X},${b3Y}" fill="rgba(35,72,35,0.85)"/>
       <!-- Base paths -->
       <line x1="${hpX}" y1="${hpY}" x2="${b1X}" y2="${b1Y}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
       <line x1="${b1X}" y1="${b1Y}" x2="${b2X}" y2="${b2Y}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
       <line x1="${b2X}" y1="${b2Y}" x2="${b3X}" y2="${b3Y}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
       <line x1="${b3X}" y1="${b3Y}" x2="${hpX}" y2="${hpY}" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
       <!-- Pitcher mound -->
-      <ellipse cx="${hpX}" cy="${(hpY+b2Y)/2+8}" rx="9" ry="7" fill="rgba(140,95,40,0.6)"/>
+      <ellipse cx="${hpX}" cy="${(hpY+b2Y)/2+6}" rx="9" ry="7" fill="rgba(130,88,35,0.7)"/>
       <!-- Bases -->
-      <rect x="${b2X-5}" y="${b2Y-5}" width="10" height="10" fill="rgba(240,240,220,0.85)" transform="rotate(45,${b2X},${b2Y})" rx="1"/>
-      <rect x="${b1X-5}" y="${b1Y-5}" width="10" height="10" fill="rgba(240,240,220,0.85)" transform="rotate(45,${b1X},${b1Y})" rx="1"/>
-      <rect x="${b3X-5}" y="${b3Y-5}" width="10" height="10" fill="rgba(240,240,220,0.85)" transform="rotate(45,${b3X},${b3Y})" rx="1"/>
+      <rect x="${b2X-5}" y="${b2Y-5}" width="10" height="10" fill="rgba(235,230,210,0.9)" transform="rotate(45,${b2X},${b2Y})" rx="1"/>
+      <rect x="${b1X-5}" y="${b1Y-5}" width="10" height="10" fill="rgba(235,230,210,0.9)" transform="rotate(45,${b1X},${b1Y})" rx="1"/>
+      <rect x="${b3X-5}" y="${b3Y-5}" width="10" height="10" fill="rgba(235,230,210,0.9)" transform="rotate(45,${b3X},${b3Y})" rx="1"/>
       <!-- Home plate -->
-      <polygon points="${hpX},${hpY-5} ${hpX-8},${hpY-12} ${hpX-8},${hpY+4} ${hpX+8},${hpY+4} ${hpX+8},${hpY-12}" fill="rgba(240,240,220,0.85)"/>
+      <polygon points="${hpX},${hpY-5} ${hpX-8},${hpY-12} ${hpX-8},${hpY+4} ${hpX+8},${hpY+4} ${hpX+8},${hpY-12}" fill="rgba(235,230,210,0.9)"/>
       ${dots}
     </svg>
     <div style="margin-top:8px;line-height:2">${legend}</div>
