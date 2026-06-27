@@ -418,8 +418,7 @@ function parseStatcastBulk(rows) {
       pt = NORMALIZE[pt] || pt;
       if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
       if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
-        spins:[],spin_effs:[],
-        locations:[],
+        spins:[],locations:[],spray:[],
         lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]},
         rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]}};
       const s = pm[pt];
@@ -468,6 +467,13 @@ function parseStatcastBulk(rows) {
         const xw = parseFloat(r.estimated_woba_using_speedangle); if(!isNaN(xw))s.xwobas.push(xw);
         const xba  = parseFloat(r.estimated_ba_using_speedangle);  if(!isNaN(xba)  && side) side.xbas.push(xba);
         const xslg = parseFloat(r.estimated_slg_using_speedangle); if(!isNaN(xslg) && side) side.xslgs.push(xslg);
+        // Spray chart
+        const hcx = parseFloat(r.hc_x); const hcy = parseFloat(r.hc_y);
+        if (!isNaN(hcx) && !isNaN(hcy)) {
+          const bbt = (r.bb_type||'').toLowerCase();
+          const ev2 = parseFloat(r.launch_speed);
+          s.spray.push([+hcx.toFixed(1), +hcy.toFixed(1), bbt, isNaN(ev2)?null:+ev2.toFixed(1), stand]);
+        }
       }
       // Track strikes and BIP types per side
       const isStrikeDesc = desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
@@ -531,6 +537,7 @@ function parseStatcastBulk(rows) {
         avgHB:    s.pfx_xs.length ? +avgg(s.pfx_xs).toFixed(1) : null,
         avgSpin:  s.spins.length  ? +avgg(s.spins).toFixed(0)  : null,
         locations: s.locations || [],
+        spray: s.spray || [],
         lhh: makeSplitStats(s.lhh),
         rhh: makeSplitStats(s.rhh),
       };
@@ -1914,7 +1921,26 @@ function renderLocations() {
   const OUTCOME_COLORS = { W:'#e91e8c', CS:'#00d4ff', HIP:'#BA7517', F:'#534AB7', B:'#444' };
   const OUTCOME_LABELS = { W:'Whiff', CS:'Called Strike', HIP:'In Play', F:'Foul', B:'Ball' };
 
-  container.innerHTML = sorted.map(([pt, locs]) => {
+  // Collect all spray data across pitch types
+  const allSpray = [];
+  athleteOutings.forEach(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    Object.entries(pm).forEach(([pt, s]) => {
+      if (!s.spray || !s.spray.length) return;
+      s.spray.forEach(sp => {
+        const [x, y, bbt, ev, stand] = sp;
+        if (locationHand === 'all' || stand === locationHand) {
+          allSpray.push({ x, y, bbt, ev, pt });
+        }
+      });
+    });
+  });
+
+  const sprayChart = allSpray.length ? buildSprayChart(allSpray) : '';
+
+  container.innerHTML = (sprayChart ? `<div>${sprayChart}</div>` : '') +
+    sorted.map(([pt, locs]) => {
     // Strike zone: x from -1.5 to 1.5 ft, z from 1.0 to 4.5 ft
     const W = 220, H = 260;
     const PAD = 20;
@@ -1958,6 +1984,57 @@ function renderLocations() {
       ${legend ? `<div style="margin-top:4px;line-height:1.8">${legend}</div>` : ''}
     </div>`;
   }).join('');
+}
+
+function buildSprayChart(sprayData) {
+  // Statcast hc_x: 0=left, 250=center, 500=right (in pixels on a 250x250 field image)
+  // hc_y: 0=bottom (home), 250=top (CF)
+  // We normalize to SVG coordinates
+  const W = 300, H = 290;
+  const BB_COLORS = { ground_ball:'#BA7517', line_drive:'#00d4ff', fly_ball:'#e91e8c', popup:'#888' };
+  const BB_LABELS  = { ground_ball:'Grounder', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup' };
+
+  // Convert Statcast hc coords to SVG
+  // hc_x: 0-250 maps left-right, center=125
+  // hc_y: 0-250 maps top-bottom (y=0 is home plate area ~200, y=250 is outfield)
+  const toX = hcx => (hcx / 250) * W;
+  const toY = hcy => H - (hcy / 250) * H;
+
+  // Draw field outline (simple arc)
+  const cx = W/2, cy = H + 20;
+  const r1 = 95, r2 = H + 20; // infield/outfield arcs
+
+  const dots = sprayData.map(({ x, y, bbt, ev, pt }) => {
+    const svgX = toX(x), svgY = toY(y);
+    if (svgX < 0 || svgY < 0 || svgX > W || svgY > H) return '';
+    const color = locationColor === 'pitch' ? pc(pt) : (BB_COLORS[bbt] || '#888');
+    const hard  = ev && ev >= 95;
+    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6:4}" fill="${color}" fill-opacity="0.7" stroke="${hard?'#fff':'none'}" stroke-width="${hard?0.8:0}"/>`;
+  }).join('');
+
+  const legend = locationColor === 'pitch'
+    ? '' // pitch colors shown in pitch zone cards
+    : Object.entries(BB_COLORS).map(([k,c])=>
+        `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:10px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block"></span>${BB_LABELS[k]}</span>`
+      ).join('');
+
+  return `<div class="loc-zone-card" style="width:${W+20}px">
+    <div class="loc-zone-title">Spray Chart <span style="font-size:11px;color:var(--muted);font-weight:400">${sprayData.length} batted balls</span></div>
+    <svg width="${W}" height="${H}" style="display:block;background:rgba(255,255,255,0.02);border-radius:4px;overflow:hidden">
+      <!-- outfield fence arc -->
+      <path d="M 20 ${H} A ${H-10} ${H-10} 0 0 1 ${W-20} ${H}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+      <!-- infield arc -->
+      <path d="M ${cx-r1} ${cy} A ${r1} ${r1} 0 0 1 ${cx+r1} ${cy}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      <!-- baselines -->
+      <line x1="${cx}" y1="${H}" x2="20" y2="${H-200}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      <line x1="${cx}" y1="${H}" x2="${W-20}" y2="${H-200}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      <!-- home plate -->
+      <polygon points="${cx},${H-5} ${cx-8},${H-12} ${cx-8},${H} ${cx+8},${H} ${cx+8},${H-12}" fill="rgba(255,255,255,0.2)"/>
+      ${dots}
+    </svg>
+    <div style="margin-top:6px;font-size:10px;color:var(--muted2)">⬤ Hard hit (95+ mph EV)</div>
+    ${legend ? `<div style="margin-top:4px">${legend}</div>` : ''}
+  </div>`;
 }
 
 /* ==================== SPLITS ==================== */
