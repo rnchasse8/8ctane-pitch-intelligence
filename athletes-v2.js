@@ -2197,33 +2197,63 @@ function renderLocations() {
 }
 
 function buildSprayChart(sprayData) {
-  const W = 320, H = 300;
-  const BB_COLORS = { ground_ball:'#BA7517', line_drive:'#00d4ff', fly_ball:'#e91e8c', popup:'#888780' };
-  const BB_LABELS  = { ground_ball:'Ground Ball', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup' };
+  // Canvas size — proper diamond orientation (home at bottom, CF at top)
+  const W = 340, H = 340;
 
-  // Statcast hc_x: ~25-205, center~125
-  // Statcast hc_y: LOW=outfield, HIGH=home plate (inverted — small y = deep)
-  const HX_CENTER = 125, HY_MIN = 30, HY_MAX = 215;
-  const cx = W/2, homY = H - 18;
+  // Statcast coordinate system:
+  // hc_x: ~25 (LF line) to ~205 (RF line), center = 125
+  // hc_y: LOW = outfield/deep, HIGH = home plate
+  //   Observed: home plate area ~200, CF ~45
+  const HX_CENTER = 125;
+  const HY_HOME   = 208;   // home plate reference
+  const HY_CF     = 35;    // center field reference
+  const SCALE_X   = 1.35;  // horizontal stretch
+  const SCALE_Y   = 1.35;  // vertical stretch
 
-  const toX = hcx => W/2 + (hcx - HX_CENTER) / ((HX_MAX - HX_MIN)/2) * (W/2 - 18);
-  const toY = hcy => 10 + (hcy - HY_MIN) / (HY_MAX - HY_MIN) * (H - 32);
+  // SVG home plate position
+  const svgHpX = W / 2;
+  const svgHpY = H - 22;
 
-  const HX_MAX = 205, HX_MIN = 45;
-  const lfX = toX(HX_MIN), lfY = toY(HY_MIN + 15);
-  const rfX = toX(HX_MAX), rfY = toY(HY_MIN + 15);
-  const hpX = toX(HX_CENTER), hpY = toY(HY_MAX - 10);
+  const toX = hcx => svgHpX + (hcx - HX_CENTER) * SCALE_X;
+  const toY = hcy => svgHpY - (HY_HOME - hcy) * SCALE_Y;
 
-  const dots = sprayData.map(({ x, y, bbt, ev, pt }) => {
-    const svgX = toX(x), svgY = toY(y);
-    if (svgX < -10 || svgY < -10 || svgX > W+10 || svgY > H+10) return '';
-    const color = locationColor === 'pitch' ? pc(pt) : (BB_COLORS[bbt] || '#888');
-    const hard = ev && ev >= 95;
-    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6.5:4.5}" fill="${color}" fill-opacity="0.78" stroke="${hard?'rgba(255,255,255,0.85)':'none'}" stroke-width="${hard?1.2:0}"/>`;
-  }).join('');
+  // Key field points
+  const hpX = svgHpX, hpY = svgHpY;
+  const cfX = toX(HX_CENTER), cfY = toY(HY_CF);
+  const lfX = toX(25),  lfY = toY(HY_CF + 8);
+  const rfX = toX(205), rfY = toY(HY_CF + 8);
+
+  // Bases (in a diamond: 2B at top, 1B at right, 3B at left)
+  const b2X = hpX,        b2Y = toY(HY_HOME - 127);
+  const b1X = hpX + 75,   b1Y = toY(HY_HOME - 63);
+  const b3X = hpX - 75,   b3Y = toY(HY_HOME - 63);
+
+  // Foul lines extend past fence
+  const foulExtend = 30;
+  const lfFoulX = lfX - foulExtend * 0.7, lfFoulY = lfY - foulExtend;
+  const rfFoulX = rfX + foulExtend * 0.7, rfFoulY = rfY - foulExtend;
+
+  // Outfield arc path (quadratic bezier through CF)
+  const arcPath = `M ${lfX} ${lfY} Q ${cfX} ${cfY} ${rfX} ${rfY}`;
+
+  // Infield dirt — approximate pentagon
+  const ifPath = `M ${hpX} ${hpY} L ${b1X+20} ${b1Y+10} L ${b2X+22} ${b2Y-5} L ${b2X-22} ${b2Y-5} L ${b3X-20} ${b3Y+10} Z`;
+
+  // Color legend
+  const BB_COLORS = { ground_ball:'#c13584', line_drive:'#f0d44a', fly_ball:'#4a7c4a', popup:'#e05c2a' };
+  const BB_LABELS = { ground_ball:'Ground Ball', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup' };
 
   const ptCounts = {};
   sprayData.forEach(({pt}) => ptCounts[pt] = (ptCounts[pt]||0)+1);
+
+  const dots = sprayData.map(({ x, y, bbt, ev, pt }) => {
+    const svgX = toX(x), svgY = toY(y);
+    if (svgX < -15 || svgY < -15 || svgX > W+15 || svgY > H+15) return '';
+    const color = locationColor === 'pitch' ? pc(pt) : (BB_COLORS[bbt] || '#888');
+    const hard = ev && ev >= 95;
+    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6:4.5}" fill="${color}" fill-opacity="0.9" stroke="${hard?'#fff':'rgba(0,0,0,0.3)'}" stroke-width="${hard?1.2:0.5}"/>`;
+  }).join('');
+
   const pitchLegend = Object.entries(ptCounts).sort((a,b)=>b[1]-a[1])
     .map(([pt])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${pc(pt)};display:inline-block"></span>${pn(pt)}</span>`).join('');
   const outcomeLegend = Object.entries(BB_COLORS)
@@ -2232,16 +2262,33 @@ function buildSprayChart(sprayData) {
 
   return `<div class="loc-zone-card">
     <div class="loc-zone-title">Spray Chart <span style="font-size:11px;color:var(--muted);font-weight:400">${sprayData.length} batted balls</span></div>
-    <svg width="${W}" height="${H}" style="display:block">
-      <path d="M ${hpX} ${hpY} L ${lfX} ${lfY} Q ${toX(HX_CENTER)} 8 ${rfX} ${rfY} Z" fill="rgba(255,255,255,0.015)"/>
-      <path d="M ${lfX} ${lfY} Q ${toX(HX_CENTER)} 8 ${rfX} ${rfY}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-      <line x1="${hpX}" y1="${hpY}" x2="${lfX-8}" y2="${lfY}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
-      <line x1="${hpX}" y1="${hpY}" x2="${rfX+8}" y2="${rfY}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
-      <circle cx="${hpX}" cy="${toY(HY_MAX - 65)}" r="50" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-dasharray="3,3"/>
-      <rect x="${hpX-5}" y="${toY(HY_MAX-115)-5}" width="10" height="10" fill="rgba(255,255,255,0.25)" transform="rotate(45,${hpX},${toY(HY_MAX-115)})" rx="1"/>
-      <rect x="${hpX+60-5}" y="${toY(HY_MAX-62)-5}" width="10" height="10" fill="rgba(255,255,255,0.25)" transform="rotate(45,${hpX+60},${toY(HY_MAX-62)})" rx="1"/>
-      <rect x="${hpX-60-5}" y="${toY(HY_MAX-62)-5}" width="10" height="10" fill="rgba(255,255,255,0.25)" transform="rotate(45,${hpX-60},${toY(HY_MAX-62)})" rx="1"/>
-      <polygon points="${hpX},${hpY-4} ${hpX-8},${hpY-11} ${hpX-8},${hpY+3} ${hpX+8},${hpY+3} ${hpX+8},${hpY-11}" fill="rgba(255,255,255,0.3)"/>
+    <svg width="${W}" height="${H}" style="display:block;overflow:visible">
+      <!-- outfield grass (tan/warning track feel) -->
+      <path d="M ${hpX} ${hpY} L ${lfFoulX} ${lfFoulY} Q ${cfX} ${cfY-18} ${rfFoulX} ${rfFoulY} Z" fill="rgba(101,80,40,0.35)"/>
+      <!-- outfield fence arc fill (green) -->
+      <path d="M ${lfX} ${lfY} Q ${cfX} ${cfY} ${rfX} ${rfY} L ${hpX} ${hpY} Z" fill="rgba(40,80,40,0.45)"/>
+      <!-- outfield fence -->
+      <path d="${arcPath}" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2.5"/>
+      <!-- foul lines -->
+      <line x1="${hpX}" y1="${hpY}" x2="${lfFoulX}" y2="${lfFoulY}" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/>
+      <line x1="${hpX}" y1="${hpY}" x2="${rfFoulX}" y2="${rfFoulY}" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/>
+      <!-- infield dirt -->
+      <path d="${ifPath}" fill="rgba(160,110,50,0.3)" stroke="none"/>
+      <!-- infield grass (inner diamond) -->
+      <polygon points="${hpX},${hpY} ${b1X},${b1Y} ${b2X},${b2Y} ${b3X},${b3Y}" fill="rgba(40,80,40,0.5)" stroke="none"/>
+      <!-- base paths -->
+      <line x1="${hpX}" y1="${hpY}" x2="${b1X}" y2="${b1Y}" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+      <line x1="${b1X}" y1="${b1Y}" x2="${b2X}" y2="${b2Y}" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+      <line x1="${b2X}" y1="${b2Y}" x2="${b3X}" y2="${b3Y}" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+      <line x1="${b3X}" y1="${b3Y}" x2="${hpX}" y2="${hpY}" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+      <!-- pitchers mound -->
+      <circle cx="${hpX}" cy="${(hpY+b2Y)/2+5}" r="8" fill="rgba(160,110,50,0.5)"/>
+      <!-- bases -->
+      <rect x="${b2X-5}" y="${b2Y-5}" width="10" height="10" fill="rgba(255,255,255,0.7)" transform="rotate(45,${b2X},${b2Y})" rx="1"/>
+      <rect x="${b1X-5}" y="${b1Y-5}" width="10" height="10" fill="rgba(255,255,255,0.7)" transform="rotate(45,${b1X},${b1Y})" rx="1"/>
+      <rect x="${b3X-5}" y="${b3Y-5}" width="10" height="10" fill="rgba(255,255,255,0.7)" transform="rotate(45,${b3X},${b3Y})" rx="1"/>
+      <!-- home plate -->
+      <polygon points="${hpX},${hpY-5} ${hpX-7},${hpY-11} ${hpX-7},${hpY+2} ${hpX+7},${hpY+2} ${hpX+7},${hpY-11}" fill="rgba(255,255,255,0.8)"/>
       ${dots}
     </svg>
     <div style="margin-top:8px;line-height:2">${legend}</div>
