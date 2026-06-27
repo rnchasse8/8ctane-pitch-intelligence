@@ -493,7 +493,17 @@ function parseStatcastBulk(rows) {
     const hardHits = Object.values(pm).reduce((a,s)=>a+s.hard_hits,0);
     const zonedP = inZone+outZone;
     const ks = pitches.filter(r=>r.events==='strikeout').length;
-    const walks = pitches.filter(r=>r.events==='walk').length;
+    const walks = pitches.filter(r=>r.events==='walk'||r.events==='hit_by_pitch').length;
+    const hrs   = pitches.filter(r=>r.events==='home_run').length;
+    const outEvents = new Set(['field_out','strikeout','force_out','grounded_into_double_play','sac_fly','sac_bunt','fielders_choice_out','double_play','triple_play']);
+    const outsRecorded = pitches.reduce((a,r)=>{
+      const ev=r.events||'';
+      if(ev==='grounded_into_double_play'||ev==='double_play') return a+2;
+      if(ev==='triple_play') return a+3;
+      if(outEvents.has(ev)) return a+1;
+      return a;
+    }, 0);
+    const ip = +(outsRecorded/3).toFixed(2);
     const avgg = arr => arr.length ? arr.reduce((a,b)=>a+b)/arr.length : null;
 
     const makeSplitStats = (side) => {
@@ -547,7 +557,7 @@ function parseStatcastBulk(rows) {
       date, opponent:opp, total_pitches:total,
       whiffs:Object.values(pm).reduce((a,s)=>a+s.whiffs,0),
       calledStrikes:Object.values(pm).reduce((a,s)=>a+s.cstrikes,0),
-      walks, ks,
+      walks, ks, hrs, ip,
       avgEV:allEVs.length?+avgg(allEVs).toFixed(1):null,
       hardHitPct:allEVs.length?+(hardHits/allEVs.length*100).toFixed(1):null,
       zonePct:    zonedP      ?+(inZone/zonedP*100).toFixed(1):null,
@@ -678,7 +688,7 @@ async function runBulkImport() {
         pitchMap: cleanMap,
         stats: {
           total: o.total_pitches, whiffs: o.whiffs, calledStrikes: o.calledStrikes,
-          walks: o.walks, ks: o.ks, avgEV: o.avgEV, hardHitPct: o.hardHitPct,
+          walks: o.walks, ks: o.ks, hrs: o.hrs||0, ip: o.ip||0, avgEV: o.avgEV, hardHitPct: o.hardHitPct,
           zonePct: o.zonePct, oSwingPct: o.oSwingPct, zSwingPct: o.zSwingPct,
           zContactPct: o.zContactPct, swingPct: o.swingPct, strikePct: o.strikePct,
           gbPct: o.gbPct, fbPct: o.fbPct, ldPct: o.ldPct,
@@ -726,17 +736,44 @@ function renderProfileHero() {
 
   // KPIs from all outings
   const totalPitches = athleteOutings.reduce((a,o)=>a+(+o.total_pitches||0), 0);
-  const totalK = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0), 0);
+  const totalK  = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0), 0);
   const totalBB = athleteOutings.reduce((a,o)=>a+(+o.walks||0), 0);
+  const totalHR = athleteOutings.reduce((a,o)=>a+(+o.hrs||0), 0);
   const totalWhiffs = athleteOutings.reduce((a,o)=>a+(+o.whiffs||0), 0);
+  const totalIP = athleteOutings.reduce((a,o)=>a+(+o.ip||0), 0);
+
+  // Whiff%
   const whiffRate = totalPitches ? (totalWhiffs/totalPitches*100).toFixed(1) : '—';
+
+  // K%-BB% (per batter faced estimate: K+BB+HIP as PA proxy)
+  const totalBIP = athleteOutings.reduce((a,o) => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    return a + Object.values(pm).reduce((s,p)=>s+(p.hip||0), 0);
+  }, 0);
+  const totalPA = totalK + totalBB + totalBIP;
+  const kPct  = totalPA ? (totalK/totalPA*100).toFixed(1) : null;
+  const bbPct = totalPA ? (totalBB/totalPA*100).toFixed(1) : null;
+  const kMinusBB = (kPct !== null && bbPct !== null)
+    ? `${(parseFloat(kPct)-parseFloat(bbPct)).toFixed(1)}%`
+    : '—';
+
+  // FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.10
+  const FIP_CONST = 3.10;
+  const fip = totalIP > 0
+    ? (((13*totalHR + 3*totalBB - 2*totalK) / totalIP) + FIP_CONST).toFixed(2)
+    : '—';
+
+  // ERA — we don't store ER but can show FIP in its place or '—' if no IP
+  // Show ERA as '—' unless we have IP data from bulk import
+  const era = totalIP > 0 ? '—' : '—'; // placeholder until we capture ER
 
   document.getElementById('profile-kpis').innerHTML = [
     { v: athleteOutings.length, l: 'Outings' },
-    { v: totalPitches.toLocaleString(), l: 'Total pitches' },
-    { v: whiffRate+'%', l: 'Season whiff%' },
-    { v: totalK, l: 'K' },
-    { v: totalBB, l: 'BB' },
+    { v: era,                   l: 'ERA' },
+    { v: fip,                   l: 'FIP' },
+    { v: whiffRate+'%',         l: 'Whiff%' },
+    { v: kMinusBB,              l: 'K%-BB%' },
   ].map(k => `<div class="kpi"><div class="kpi-val mono">${k.v}</div><div class="kpi-lbl">${k.l}</div></div>`).join('');
 }
 
@@ -1296,24 +1333,34 @@ async function renderSeasonInsight() {
   const sorted  = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
 
   // Build pitch summary for AI
-  const pitchSummary = sorted.map(([pt,s]) => {
-    const mlb = MLB_BASELINE_REF[pt];
-    return {
-      pitch: pn(pt),
-      code: pt,
-      usage: total ? +(s.count/total*100).toFixed(1) : 0,
-      avgVelo: s.velos.length ? +avg(s.velos).toFixed(1) : null,
-      whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : 0,
-      cswPct: s.count ? +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0,
-      avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
-      avgEV: s.evs.length ? +avg(s.evs).toFixed(1) : null,
-      avgIVB: s.ivbs.length ? +avg(s.ivbs).toFixed(1) : null,
-      avgHB: s.hbs.length ? +avg(s.hbs).toFixed(1) : null,
-      avgVAA: s.vaas.length ? +avg(s.vaas).toFixed(1) : null,
-      mlbWhiff: mlb?.whiff_pct || null,
-      mlbXwoba: mlb?.avg_xwoba || null,
-    };
-  });
+  // Filter out pitches with ≤10 samples (likely mistagged)
+  const pitchSummary = sorted
+    .filter(([,s]) => s.count > 10)
+    .map(([pt,s]) => {
+      const mlb = MLB_BASELINE_REF[pt];
+      const xbas  = athleteOutings.flatMap(o => { try { const pm = typeof o.pitch_stats==='object'?o.pitch_stats:JSON.parse(o.pitch_stats_json||'{}'); return pm[pt]?.avgXba ? [pf(pm[pt].avgXba)] : []; } catch(e){ return []; } });
+      const xslgs = athleteOutings.flatMap(o => { try { const pm = typeof o.pitch_stats==='object'?o.pitch_stats:JSON.parse(o.pitch_stats_json||'{}'); return pm[pt]?.avgXslg ? [pf(pm[pt].avgXslg)] : []; } catch(e){ return []; } });
+      const spins = athleteOutings.flatMap(o => { try { const pm = typeof o.pitch_stats==='object'?o.pitch_stats:JSON.parse(o.pitch_stats_json||'{}'); return pm[pt]?.avgSpin ? [pf(pm[pt].avgSpin)] : []; } catch(e){ return []; } });
+      return {
+        pitch: pn(pt),
+        code: pt,
+        count: s.count,
+        usage: total ? +(s.count/total*100).toFixed(1) : 0,
+        avgVelo: s.velos.length ? +avg(s.velos).toFixed(1) : null,
+        whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : 0,
+        cswPct: s.count ? +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0,
+        avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
+        avgXba:  xbas.length  ? +avg(xbas).toFixed(3)  : null,
+        avgXslg: xslgs.length ? +avg(xslgs).toFixed(3) : null,
+        avgEV: s.evs.length ? +avg(s.evs).toFixed(1) : null,
+        avgIVB: s.ivbs.length ? +avg(s.ivbs).toFixed(1) : null,
+        avgHB: s.hbs.length ? +avg(s.hbs).toFixed(1) : null,
+        avgVAA: s.vaas.length ? +avg(s.vaas).toFixed(1) : null,
+        avgSpin: spins.length ? Math.round(avg(spins)) : null,
+        mlbWhiff: mlb?.whiff_pct || null,
+        mlbXwoba: mlb?.avg_xwoba || null,
+      };
+    });
 
   // Zone/swing season averages
   const zonePct     = avg(athleteOutings.map(o=>pf(o.zone_pct)).filter(Boolean));
@@ -1339,65 +1386,65 @@ PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.te
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
 ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}% | F-Strike%: ${fpStrikePct?.toFixed(1)||'N/A'}% | 1-1 Strike%: ${oonStrikePct?.toFixed(1)||'N/A'}%
 
-ARSENAL (IVB and HB in inches):
+NOTE: Pitches with 10 or fewer samples have been excluded as likely mistagged. Only analyze the pitches listed below.
+
+ARSENAL (IVB and HB in inches — only pitches with >10 samples):
 ${pitchSummary.map(p => {
   const real = pm_stored[p.code] || pm_stored[p.code === 'FA' ? 'FF' : p.code === 'FF' ? 'FA' : p.code];
-  const shapeLine = real ? ' | Spin:' + (real.spinRate||'?') + ' ArmSide:' + (real.armSide||'?') + '" Vert:' + (real.vertical||'?') + '"' +
-    (real.xwOBA !== undefined ? ' xwOBA:' + (real.xwOBA||'?') : '') +
-    (real.whiffPct !== undefined ? ' Whiff%:' + (real.whiffPct||'?') : '') +
-    (real.hardHitPct !== undefined ? ' HardHit%:' + (real.hardHitPct||'?') : '') : '';
-  return p.pitch + ' (' + p.code + '): ' + p.usage + '% usage | ' + (p.avgVelo||'?') + ' mph | IVB:' + (p.avgIVB||'?') + '" HB:' + (p.avgHB||'?') + '" | Whiff:' + p.whiffPct + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | xwOBA:' + (p.avgXwoba||'?') + shapeLine;
+  const gradeStr = (real && real.psStuffPlus) ? ' | psStuff+:' + real.psStuffPlus + ' [8ctane]' : '';
+  const spinStr = p.avgSpin ? ' | Spin:' + p.avgSpin + 'rpm' : '';
+  const shapeStr = ' | IVB:' + (p.avgIVB||'?') + '" HB:' + (p.avgHB||'?') + '"';
+  const resultsStr = ' | Whiff:' + p.whiffPct + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | xwOBA:' + (p.avgXwoba||'N/A') + ' | xBA:' + (p.avgXba||'N/A') + ' | xSLG:' + (p.avgXslg||'N/A');
+  return p.pitch + ' (' + p.code + '): ' + p.count + ' pitches, ' + p.usage + '% usage | ' + (p.avgVelo||'?') + 'mph' + spinStr + shapeStr + resultsStr + gradeStr;
 }).join('\n')}
 
 8CTANE COACHING PHILOSOPHY — follow these exactly:
 
 PRIORITY ORDER:
 1. STUFF QUALITY — velo, movement shape, whiff rate. This is the primary signal for everything.
-2. STRIKE THROWING — Zone%, F-Strike%, and 1-1 Strike% are critical. F-Strike% below 58% or 1-1 Strike% below 55% should lead the concerns section. These are high-leverage counts that define at-bat outcomes.
-3. COUNT-BASED LOCATION — where to throw each pitch in specific counts based on stuff profile.
-4. RESULTS — xwOBA and contact quality as supporting context only.
+2. STRIKE THROWING — Zone%, F-Strike%, and 1-1 Strike% are critical. F-Strike% below 58% or 1-1 Strike% below 55% should lead the concerns section.
+3. RESULTS — xwOBA, xBA, xSLG as supporting context.
 
 ARSENAL SHAPE RULES:
-- A "big shape" fastball = IVB greater than 18 inches.
-- A "big shape" breaking ball = CU/SL/ST with HB greater than 10 inches glove-side OR drop greater than 10 inches.
-- If the pitcher has BOTH a big shape fastball AND a big shape breaking ball but NO bridging pitch (tight-shape cutter, slider, or firm changeup with less than 6" movement in any direction), flag this as a clear gap and recommend adding a bridging pitch.
-- When recommending a pitch addition, name a specific current MLB pitcher with a similar arsenal who successfully uses that bridging pitch. Make the comparison concrete and relevant.
-- ONLY recommend adding a pitch if there is a clear shape gap OR a highly relevant MLB comp. Do not force a recommendation.
-- NEVER suggest a knuckleball, eephus, screwball, or any other rarely-thrown pitch. Stick to: cutter, sinker, slider, sweeper, changeup, splitter, curveball.
+- Big shape fastball = IVB > 18". Big shape breaking ball = HB > 10" glove-side OR drop > 10".
+- If pitcher has BOTH but NO bridging pitch (cutter/firm slider with < 6" movement), flag the gap and recommend the bridging pitch.
+- ALWAYS include an MLB pitcher comp with similar arsenal and handedness — someone currently active who throws a similar mix. Make it specific and relevant.
+- ONLY recommend adding a pitch if there is a clear shape gap. Stick to: cutter, sinker, slider, sweeper, changeup, splitter, curveball. NEVER suggest knuckleball, eephus, or screwball.
+- Never remove a pitch based on usage alone — only on poor stuff AND poor results.
 
 WHIFF RULES:
-- Any pitch with whiff rate 30%+ is an elite weapon — highlight it prominently and recommend throwing it more in high-leverage counts.
-- Any pitch with whiff rate below 12% getting heavy usage (20%+) should be addressed constructively.
-- Never remove a pitch based on usage alone — only on poor results AND poor stuff.
+- 30%+ whiff = elite weapon, highlight prominently.
+- Below 12% whiff with 20%+ usage = address constructively.
 
-TONE:
-- Always lead with what the pitcher is doing well.
-- Be specific — name the actual pitch and what makes it work.
-- Frame every concern as something fixable, not a flaw.
-- Speak directly to the pitcher throughout.
+TONE: Lead with strengths. Name the actual pitch. Frame concerns as fixable. Speak directly to the pitcher.
 
 Respond with JSON only (no markdown):
 {
   "headline": "2-3 word headline capturing the season",
   "summary": "3-4 sentences to the pitcher — lead with strengths, address the main story",
+  "pitchBlurbs": [
+    {
+      "pitch": "pitch name",
+      "grade": "Elite / Plus / Average / Below Average / Poor — only include if psStuff+ was provided, otherwise omit this field",
+      "blurb": "1-2 sentences covering what makes this pitch work or not — reference shape, velo, whiff rate, xwOBA/xBA/xSLG where relevant. Written directly to the pitcher."
+    }
+  ],
   "strengths": [{"title": "...", "detail": "specific and encouraging, name the pitch and what makes it work"}],
   "concerns": [{"title": "...", "detail": "honest but constructive — what needs fixing and why it's fixable"}],
   "arsenalAssessment": {
     "keepPitches": [{"pitch": "...", "reason": "why this pitch is a weapon for you"}],
     "developPitches": [{"pitch": "...", "reason": "what you can unlock with more work on this pitch"}],
-    "addPitch": {"pitch": "...", "reason": "specific gap in your arsenal + name an MLB pitcher with similar profile who uses this pitch successfully — only include if there is a clear shape gap or strong MLB comp"},
-    "removePitch": {"pitch": "...", "reason": "honest explanation — only recommend if poor stuff AND poor results, not just low usage"}
+    "addPitch": {"pitch": "...", "reason": "specific gap in arsenal + name MLB pitcher with similar profile and handedness who uses this pitch successfully"},
+    "removePitch": {"pitch": "...", "reason": "honest explanation — only include if poor stuff AND poor results"}
+  },
+  "mlbComp": {
+    "name": "MLB pitcher name",
+    "reason": "2-3 sentences — why this pitcher is a relevant comp (similar handedness, similar arsenal shape, similar movement profiles). What can this pitcher learn from watching that comp?"
   },
   "splitAdvice": {
     "vsRHH": "2-3 sentences — specific pitch sequencing advice based on movement profiles",
     "vsLHH": "2-3 sentences — specific pitch sequencing advice based on movement profiles"
   },
-  "countStrategy": [
-    {"count": "0-0", "pitch": "...", "location": "...", "reason": "why this pitch in this count based on stuff"},
-    {"count": "0-2", "pitch": "...", "location": "...", "reason": "..."},
-    {"count": "2-0", "pitch": "...", "location": "...", "reason": "..."},
-    {"count": "3-2", "pitch": "...", "location": "...", "reason": "..."}
-  ],
   "developmentPriorities": ["most important thing to work on right now", "second priority", "third priority"]
 }`;
 
@@ -1432,14 +1479,29 @@ function renderSeasonInsightHTML(a, pitchSummary, total) {
   const removePitch = a.arsenalAssessment?.removePitch
     ? `<div class="arsenal-rec remove">− Consider removing: <strong>${a.arsenalAssessment.removePitch.pitch}</strong> — ${a.arsenalAssessment.removePitch.reason}</div>` : '';
 
-  const countRows = (a.countStrategy||[]).map(c => `
-    <div class="count-strategy-row">
-      <div class="cs-count">${c.count}</div>
-      <div class="cs-detail">
-        <div class="cs-pitch">${c.pitch}</div>
-        <div class="cs-rec">${c.recommendation}</div>
+  // Per-pitch blurbs
+  const pitchBlurbs = (a.pitchBlurbs||[]).map(pb => {
+    const match = pitchSummary.find(p => p.pitch === pb.pitch || p.code === pb.pitch);
+    const dotColor = match ? pc(match.code) : '#555';
+    const gradeHTML = pb.grade
+      ? `<span class="pitch-blurb-grade ${pb.grade.toLowerCase().replace(' ','_')}">${pb.grade}</span>` : '';
+    return `<div class="pitch-blurb-row">
+      <div class="pitch-blurb-header">
+        <span class="pitch-dot" style="background:${dotColor};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:7px;flex-shrink:0"></span>
+        <span class="pitch-blurb-name">${pb.pitch}</span>
+        ${gradeHTML}
       </div>
-    </div>`).join('');
+      <div class="pitch-blurb-text">${pb.blurb}</div>
+    </div>`;
+  }).join('');
+
+  // MLB comp
+  const mlbCompHTML = a.mlbComp?.name ? `
+    <div class="section-hd" style="margin-top:1.5rem">MLB Comparison</div>
+    <div class="mlb-comp-card">
+      <div class="mlb-comp-name">${a.mlbComp.name}</div>
+      <div class="mlb-comp-reason">${a.mlbComp.reason}</div>
+    </div>` : '';
 
   container.innerHTML = `
     <div class="insight-page">
@@ -1447,11 +1509,16 @@ function renderSeasonInsightHTML(a, pitchSummary, total) {
       <div class="insight-headline">${a.headline||''}</div>
       <div class="insight-summary">${a.summary||''}</div>
 
+      ${pitchBlurbs ? `<div class="section-hd" style="margin-top:1.5rem">Pitch Breakdown</div>
+      <div class="pitch-blurbs-wrap">${pitchBlurbs}</div>` : ''}
+
       <div class="section-hd" style="margin-top:1.5rem">Strengths & concerns</div>
       <div class="insight-grid">${strengthCards}${concernCards}</div>
 
       <div class="section-hd" style="margin-top:1.5rem">Arsenal assessment</div>
       <div class="arsenal-recs">${keepPitches}${devPitches}${addPitch}${removePitch}</div>
+
+      ${mlbCompHTML}
 
       <div class="section-hd" style="margin-top:1.5rem">Splits sequencing</div>
       <div class="splits-advice-grid">
@@ -1464,19 +1531,6 @@ function renderSeasonInsightHTML(a, pitchSummary, total) {
           <div class="splits-advice-body">${a.splitAdvice?.vsLHH||''}</div>
         </div>
       </div>
-
-      ${(a.countStrategy||[]).length ? `
-      <div class="section-hd" style="margin-top:1.5rem">Count strategy</div>
-      <div class="count-strategy-wrap">
-        ${(a.countStrategy||[]).map(c => `
-        <div class="count-strategy-row">
-          <div class="cs-count">${c.count}</div>
-          <div class="cs-detail">
-            <div class="cs-pitch">${c.pitch} <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace">${c.location||''}</span></div>
-            <div class="cs-rec">${c.reason}</div>
-          </div>
-        </div>`).join('')}
-      </div>` : ''}
 
       <div class="section-hd" style="margin-top:1.5rem">Development priorities</div>
       <div class="dev-priorities">
@@ -1894,146 +1948,161 @@ function renderLocations() {
 
   // Aggregate locations per pitch type
   const pitchLocs = {};
+  const allSpray = [];
+
   athleteOutings.forEach(o => {
     let pm = {};
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
-      if (!s.locations || !s.locations.length) return;
-      if (!pitchLocs[pt]) pitchLocs[pt] = [];
-      s.locations.forEach(loc => {
-        const [x, z, outcome, stand] = loc;
-        if (locationHand === 'all' || stand === locationHand) {
-          pitchLocs[pt].push({ x, z, outcome, stand });
-        }
-      });
+      if (s.locations && s.locations.length) {
+        if (!pitchLocs[pt]) pitchLocs[pt] = [];
+        s.locations.forEach(loc => {
+          const [x, z, outcome, stand] = loc;
+          if (locationHand === 'all' || stand === locationHand) pitchLocs[pt].push({ x, z, outcome, stand });
+        });
+      }
+      if (s.spray && s.spray.length) {
+        s.spray.forEach(sp => {
+          const [x, y, bbt, ev, stand] = sp;
+          if (locationHand === 'all' || stand === locationHand) allSpray.push({ x, y, bbt, ev, pt });
+        });
+      }
     });
   });
 
-  const sorted = Object.entries(pitchLocs)
-    .filter(([,locs]) => locs.length > 0)
-    .sort((a,b) => b[1].length - a[1].length);
+  const hasLocations = Object.values(pitchLocs).some(l => l.length > 0);
+  const hasSpray     = allSpray.length > 0;
 
-  if (!sorted.length) {
+  if (!hasLocations && !hasSpray) {
     container.innerHTML = '<div class="empty-state">No pitch location data available. Re-import your outings using Bulk Import to capture locations.</div>';
     return;
   }
 
-  const OUTCOME_COLORS = { W:'#e91e8c', CS:'#00d4ff', HIP:'#BA7517', F:'#534AB7', B:'#444' };
+  const OUTCOME_COLORS = { W:'#e91e8c', CS:'#00d4ff', HIP:'#BA7517', F:'#534AB7', B:'rgba(255,255,255,0.15)' };
   const OUTCOME_LABELS = { W:'Whiff', CS:'Called Strike', HIP:'In Play', F:'Foul', B:'Ball' };
 
-  // Collect all spray data across pitch types
-  const allSpray = [];
-  athleteOutings.forEach(o => {
-    let pm = {};
-    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
-    Object.entries(pm).forEach(([pt, s]) => {
-      if (!s.spray || !s.spray.length) return;
-      s.spray.forEach(sp => {
-        const [x, y, bbt, ev, stand] = sp;
-        if (locationHand === 'all' || stand === locationHand) {
-          allSpray.push({ x, y, bbt, ev, pt });
-        }
-      });
+  // ---- Combined pitch location chart ----
+  const W = 280, H = 320, PAD = 24;
+  const xMin=-1.75, xMax=1.75, zMin=0.5, zMax=5.0;
+  const toSvgX = x => PAD + (x - xMin) / (xMax - xMin) * (W - PAD*2);
+  const toSvgZ = z => H - PAD - (z - zMin) / (zMax - zMin) * (H - PAD*2);
+  const szX1 = toSvgX(-0.71), szX2 = toSvgX(0.71);
+  const szZ1 = toSvgZ(3.5),   szZ2 = toSvgZ(1.5);
+
+  // Collect all dots — draw balls first, then strikes, then whiffs on top
+  const allDots = [];
+  Object.entries(pitchLocs).forEach(([pt, locs]) => {
+    locs.forEach(({ x, z, outcome }) => {
+      const cx = toSvgX(x), cy = toSvgZ(z);
+      if (cx < PAD-10 || cy < PAD-10 || cx > W+10 || cy > H+10) return;
+      const color = locationColor === 'pitch' ? pc(pt) : (OUTCOME_COLORS[outcome] || '#444');
+      const priority = outcome === 'W' ? 3 : outcome === 'CS' ? 2 : outcome === 'HIP' ? 1 : 0;
+      allDots.push({ cx, cy, color, priority, pt, outcome });
     });
   });
+  allDots.sort((a,b) => a.priority - b.priority);
 
-  const sprayChart = allSpray.length ? buildSprayChart(allSpray) : '';
+  const dots = allDots.map(({ cx, cy, color, outcome }) =>
+    `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${outcome==='W'?5:4}" fill="${color}" fill-opacity="0.75" stroke="${color}" stroke-width="0.5"/>`
+  ).join('');
 
-  container.innerHTML = (sprayChart ? `<div>${sprayChart}</div>` : '') +
-    sorted.map(([pt, locs]) => {
-    // Strike zone: x from -1.5 to 1.5 ft, z from 1.0 to 4.5 ft
-    const W = 220, H = 260;
-    const PAD = 20;
-    const xMin=-1.7, xMax=1.7, zMin=0.8, zMax=4.8;
-    const toSvgX = x => PAD + (x - xMin) / (xMax - xMin) * (W - PAD*2);
-    const toSvgZ = z => H - PAD - (z - zMin) / (zMax - zMin) * (H - PAD*2);
+  // Pitch type legend
+  const pitchLegend = Object.entries(pitchLocs).filter(([,l])=>l.length>0).sort((a,b)=>b[1].length-a[1].length)
+    .map(([pt, locs]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${pc(pt)};display:inline-block"></span>${pn(pt)} <span style="color:var(--muted2)">${locs.length}</span></span>`).join('');
 
-    // Strike zone box (approx 17 inches wide = ~0.71 ft each side, height varies)
-    const szX1 = toSvgX(-0.71), szX2 = toSvgX(0.71);
-    const szZ1 = toSvgZ(3.5),   szZ2 = toSvgZ(1.5);
+  const outcomeLegend = Object.entries(OUTCOME_COLORS).map(([k,c]) =>
+    `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${c};display:inline-block"></span>${OUTCOME_LABELS[k]}</span>`
+  ).join('');
 
-    const dots = locs.map(({ x, z, outcome }) => {
-      const cx = toSvgX(x), cy = toSvgZ(z);
-      if (cx < 0 || cy < 0 || cx > W || cy > H) return '';
-      const color = locationColor === 'pitch' ? pc(pt) : (OUTCOME_COLORS[outcome] || '#444');
-      const r = locationColor === 'outcome' ? 5 : 4;
-      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" fill-opacity="0.65" stroke="${color}" stroke-width="0.5"/>`;
-    }).join('');
+  const totalLocs = Object.values(pitchLocs).reduce((a,l)=>a+l.length, 0);
 
-    const legend = locationColor === 'outcome'
-      ? Object.entries(OUTCOME_COLORS).map(([k,c]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:10px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block"></span>${OUTCOME_LABELS[k]}</span>`).join('')
-      : '';
+  const locationChart = `<div class="loc-zone-card">
+    <div class="loc-zone-title">Pitch Locations <span style="font-size:11px;color:var(--muted);font-weight:400">${totalLocs} pitches</span></div>
+    <svg width="${W}" height="${H}" style="display:block">
+      <!-- background -->
+      <rect x="${PAD}" y="${PAD}" width="${W-PAD*2}" height="${H-PAD*2}" fill="rgba(255,255,255,0.02)" rx="2"/>
+      <!-- strike zone -->
+      <rect x="${szX1}" y="${szZ1}" width="${szX2-szX1}" height="${szZ2-szZ1}" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" rx="1"/>
+      <!-- 9-zone grid -->
+      ${[1,2].map(i=>`<line x1="${szX1+(szX2-szX1)/3*i}" y1="${szZ1}" x2="${szX1+(szX2-szX1)/3*i}" y2="${szZ2}" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>`).join('')}
+      ${[1,2].map(i=>`<line x1="${szX1}" y1="${szZ1+(szZ2-szZ1)/3*i}" x2="${szX2}" y2="${szZ1+(szZ2-szZ1)/3*i}" stroke="rgba(255,255,255,0.12)" stroke-width="0.75"/>`).join('')}
+      <!-- shadow zone (chase zone) dashed border -->
+      <rect x="${toSvgX(-1.05)}" y="${toSvgZ(4.0)}" width="${toSvgX(1.05)-toSvgX(-1.05)}" height="${toSvgZ(1.0)-toSvgZ(4.0)}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1" stroke-dasharray="4,3" rx="2"/>
+      <!-- home plate -->
+      <polygon points="${toSvgX(0)},${H-PAD+4} ${toSvgX(-0.28)},${H-PAD-4} ${toSvgX(-0.28)},${H-PAD} ${toSvgX(0.28)},${H-PAD} ${toSvgX(0.28)},${H-PAD-4}" fill="rgba(255,255,255,0.25)"/>
+      <!-- axis labels -->
+      <text x="${W/2}" y="${H-2}" text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.25)">← Inside · Outside →</text>
+      ${dots}
+    </svg>
+    <div style="margin-top:8px;line-height:2">${locationColor==='pitch' ? pitchLegend : outcomeLegend}</div>
+  </div>`;
 
-    return `<div class="loc-zone-card">
-      <div class="loc-zone-title">
-        <span class="pitch-dot" style="background:${pc(pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px"></span>
-        ${pn(pt)} <span style="font-size:11px;color:var(--muted);font-weight:400">${locs.length} pitches</span>
-      </div>
-      <svg width="${W}" height="${H}" style="display:block">
-        <!-- outer border -->
-        <rect x="${PAD}" y="${PAD}" width="${W-PAD*2}" height="${H-PAD*2}" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
-        <!-- strike zone -->
-        <rect x="${szX1}" y="${szZ1}" width="${szX2-szX1}" height="${szZ2-szZ1}" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" rx="1"/>
-        <!-- inner 9-zone grid -->
-        ${[1,2].map(i => `<line x1="${szX1+(szX2-szX1)/3*i}" y1="${szZ1}" x2="${szX1+(szX2-szX1)/3*i}" y2="${szZ2}" stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/>`).join('')}
-        ${[1,2].map(i => `<line x1="${szX1}" y1="${szZ1+(szZ2-szZ1)/3*i}" x2="${szX2}" y2="${szZ1+(szZ2-szZ1)/3*i}" stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/>`).join('')}
-        <!-- home plate indicator -->
-        <rect x="${toSvgX(-0.35)}" y="${H-PAD-6}" width="${toSvgX(0.35)-toSvgX(-0.35)}" height="6" fill="rgba(255,255,255,0.15)" rx="1"/>
-        ${dots}
-      </svg>
-      ${legend ? `<div style="margin-top:4px;line-height:1.8">${legend}</div>` : ''}
-    </div>`;
-  }).join('');
+  // ---- Spray chart ----
+  const sprayChart = hasSpray ? buildSprayChart(allSpray) : '';
+
+  container.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:1.5rem">${locationChart}${sprayChart}</div>`;
 }
 
 function buildSprayChart(sprayData) {
-  // Statcast hc_x: 0=left, 250=center, 500=right (in pixels on a 250x250 field image)
-  // hc_y: 0=bottom (home), 250=top (CF)
-  // We normalize to SVG coordinates
-  const W = 300, H = 290;
-  const BB_COLORS = { ground_ball:'#BA7517', line_drive:'#00d4ff', fly_ball:'#e91e8c', popup:'#888' };
-  const BB_LABELS  = { ground_ball:'Grounder', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup' };
+  const W = 320, H = 300;
+  const BB_COLORS = { ground_ball:'#BA7517', line_drive:'#00d4ff', fly_ball:'#e91e8c', popup:'#888780' };
+  const BB_LABELS  = { ground_ball:'Ground Ball', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup' };
 
-  // Convert Statcast hc coords to SVG
-  // hc_x: 0-250 maps left-right, center=125
-  // hc_y: 0-250 maps top-bottom (y=0 is home plate area ~200, y=250 is outfield)
-  const toX = hcx => (hcx / 250) * W;
-  const toY = hcy => H - (hcy / 250) * H;
+  // Statcast hc_x range ~0–250, hc_y range ~0–250
+  // Center field is roughly hc_x=125, hc_y=25 (top of chart)
+  // Home plate is roughly hc_x=125, hc_y=205
+  const HX_CENTER = 125, HY_HOME = 205;
+  const SCALE = 1.1;
 
-  // Draw field outline (simple arc)
-  const cx = W/2, cy = H + 20;
-  const r1 = 95, r2 = H + 20; // infield/outfield arcs
+  const toX = hcx => W/2 + (hcx - HX_CENTER) * SCALE;
+  const toY = hcy => H - 20 - (HY_HOME - hcy) * SCALE;
+
+  const cx = W/2, homY = H - 20;
+
+  // Field geometry
+  const lfX = 28, lfY = 55;     // left field corner
+  const rfX = W-28, rfY = 55;   // right field corner
+  const cfX = cx, cfY = 8;      // center field
 
   const dots = sprayData.map(({ x, y, bbt, ev, pt }) => {
     const svgX = toX(x), svgY = toY(y);
-    if (svgX < 0 || svgY < 0 || svgX > W || svgY > H) return '';
+    if (svgX < 0 || svgY < -10 || svgX > W || svgY > H) return '';
     const color = locationColor === 'pitch' ? pc(pt) : (BB_COLORS[bbt] || '#888');
-    const hard  = ev && ev >= 95;
-    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6:4}" fill="${color}" fill-opacity="0.7" stroke="${hard?'#fff':'none'}" stroke-width="${hard?0.8:0}"/>`;
+    const hard = ev && ev >= 95;
+    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6.5:4.5}" fill="${color}" fill-opacity="0.75" stroke="${hard?'rgba(255,255,255,0.8)':'none'}" stroke-width="${hard?1:0}"/>`;
   }).join('');
 
+  // Legend
   const legend = locationColor === 'pitch'
-    ? '' // pitch colors shown in pitch zone cards
+    ? Object.entries(pitchLocs||{}).filter(([,l])=>l&&l.length>0).map(([pt])=>
+        `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${pc(pt)};display:inline-block"></span>${pn(pt)}</span>`
+      ).join('')
     : Object.entries(BB_COLORS).map(([k,c])=>
-        `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:10px;color:var(--muted)"><span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block"></span>${BB_LABELS[k]}</span>`
+        `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${c};display:inline-block"></span>${BB_LABELS[k]}</span>`
       ).join('');
 
-  return `<div class="loc-zone-card" style="width:${W+20}px">
+  return `<div class="loc-zone-card">
     <div class="loc-zone-title">Spray Chart <span style="font-size:11px;color:var(--muted);font-weight:400">${sprayData.length} batted balls</span></div>
-    <svg width="${W}" height="${H}" style="display:block;background:rgba(255,255,255,0.02);border-radius:4px;overflow:hidden">
-      <!-- outfield fence arc -->
-      <path d="M 20 ${H} A ${H-10} ${H-10} 0 0 1 ${W-20} ${H}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
-      <!-- infield arc -->
-      <path d="M ${cx-r1} ${cy} A ${r1} ${r1} 0 0 1 ${cx+r1} ${cy}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
-      <!-- baselines -->
-      <line x1="${cx}" y1="${H}" x2="20" y2="${H-200}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
-      <line x1="${cx}" y1="${H}" x2="${W-20}" y2="${H-200}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+    <svg width="${W}" height="${H}" style="display:block">
+      <!-- grass background -->
+      <path d="M ${cx} ${homY} L ${lfX} ${lfY} Q ${cfX} ${cfY} ${rfX} ${rfY} Z" fill="rgba(255,255,255,0.025)" stroke="none"/>
+      <!-- outfield fence -->
+      <path d="M ${lfX} ${lfY} Q ${cfX} ${cfY-5} ${rfX} ${rfY}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+      <!-- foul lines -->
+      <line x1="${cx}" y1="${homY}" x2="${lfX-10}" y2="${lfY-15}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+      <line x1="${cx}" y1="${homY}" x2="${rfX+10}" y2="${rfY-15}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+      <!-- infield dirt circle -->
+      <circle cx="${cx}" cy="${homY-65}" r="52" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-dasharray="3,3"/>
+      <!-- bases -->
+      <rect x="${cx-6}" y="${homY-130-6}" width="12" height="12" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx},${homY-130})" rx="1"/>
+      <rect x="${cx-65-6}" y="${homY-65-6}" width="12" height="12" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx-65},${homY-65})" rx="1"/>
+      <rect x="${cx+65-6}" y="${homY-65-6}" width="12" height="12" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx+65},${homY-65})" rx="1"/>
       <!-- home plate -->
-      <polygon points="${cx},${H-5} ${cx-8},${H-12} ${cx-8},${H} ${cx+8},${H} ${cx+8},${H-12}" fill="rgba(255,255,255,0.2)"/>
+      <polygon points="${cx},${homY-4} ${cx-8},${homY-10} ${cx-8},${homY+2} ${cx+8},${homY+2} ${cx+8},${homY-10}" fill="rgba(255,255,255,0.3)"/>
       ${dots}
     </svg>
-    <div style="margin-top:6px;font-size:10px;color:var(--muted2)">⬤ Hard hit (95+ mph EV)</div>
-    ${legend ? `<div style="margin-top:4px">${legend}</div>` : ''}
+    <div style="margin-top:8px;line-height:2">${legend}</div>
+    <div style="font-size:10px;color:var(--muted2);margin-top:2px">White outline = hard hit (95+ mph EV)</div>
   </div>`;
 }
 
