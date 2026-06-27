@@ -720,3 +720,45 @@
   margin-bottom:.5rem;
   display:flex; align-items:center;
 }
+
+/* ---- PITCH BLURBS ---- */
+.pitch-blurbs-wrap {
+  display: flex; flex-direction: column; gap: .625rem; margin-bottom: .5rem;
+}
+.pitch-blurb-row {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 7px; padding: .75rem 1.125rem;
+}
+.pitch-blurb-header {
+  display: flex; align-items: center; gap: 4px;
+  margin-bottom: 4px;
+}
+.pitch-blurb-name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 15px; font-weight: 700;
+}
+.pitch-blurb-grade {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; font-weight: 500;
+  padding: 2px 7px; border-radius: 3px;
+  margin-left: 6px; text-transform: uppercase; letter-spacing: .05em;
+}
+.pitch-blurb-grade.elite   { background: rgba(233,30,140,0.15); color: #e91e8c; border: 1px solid rgba(233,30,140,0.3); }
+.pitch-blurb-grade.plus    { background: rgba(29,158,117,0.15); color: var(--good); border: 1px solid rgba(29,158,117,0.3); }
+.pitch-blurb-grade.average { background: rgba(114,116,124,0.15); color: var(--muted); border: 1px solid var(--border); }
+.pitch-blurb-grade.below_average { background: rgba(186,117,23,0.15); color: var(--warn); border: 1px solid rgba(186,117,23,0.3); }
+.pitch-blurb-grade.poor    { background: rgba(226,75,74,0.15); color: var(--danger); border: 1px solid rgba(226,75,74,0.3); }
+.pitch-blurb-text { font-size: 13px; color: var(--muted); line-height: 1.65; }
+
+/* ---- MLB COMP ---- */
+.mlb-comp-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--cyan);
+  border-radius: 8px; padding: .875rem 1.25rem;
+}
+.mlb-comp-name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 18px; font-weight: 800;
+  color: var(--cyan); margin-bottom: 4px;
+}
+.mlb-comp-reason { font-size: 13px; color: var(--muted); line-height: 1.65; }
