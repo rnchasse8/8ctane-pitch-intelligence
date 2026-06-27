@@ -434,17 +434,8 @@ function parseStatcastBulk(rows) {
       const hb = parseFloat(r.pfx_x); if (!isNaN(hb)) s.pfx_xs.push(-hb*12);
       const ivb = parseFloat(r.pfx_z); if (!isNaN(ivb)) s.pfx_zs.push(ivb*12);
 
-      // Spin rate and efficiency
+      // Spin rate
       const spin = parseFloat(r.release_spin_rate); if (!isNaN(spin)) s.spins.push(spin);
-      const spinEff = parseFloat(r.spin_axis); // stored as axis, efficiency derived separately
-      // Plate location — store as [x, z, outcome] for scatter plot
-      const px = parseFloat(r.plate_x); const pz = parseFloat(r.plate_z);
-      if (!isNaN(px) && !isNaN(pz)) {
-        const outcome = desc.includes('swinging_strike') ? 'W' : desc.includes('called_strike') ? 'CS' : desc==='hit_into_play' ? 'HIP' : desc.includes('foul') ? 'F' : 'B';
-        const loc = [+px.toFixed(2), +pz.toFixed(2), outcome, stand];
-        s.locations.push(loc);
-        if (side) side.locations.push(loc);
-      }
 
       const desc = r.description||'';
       const zone = (r.zone||'').trim();
@@ -453,6 +444,15 @@ function parseStatcastBulk(rows) {
       const isSwing = desc.includes('swinging_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
       const isContact = desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
       const isStrikeResult = desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
+
+      // Plate location — store as [x, z, outcome, stand] for scatter plot
+      const px = parseFloat(r.plate_x); const pz = parseFloat(r.plate_z);
+      if (!isNaN(px) && !isNaN(pz)) {
+        const outcome = desc.includes('swinging_strike') ? 'W' : desc.includes('called_strike') ? 'CS' : desc==='hit_into_play' ? 'HIP' : desc.includes('foul') ? 'F' : 'B';
+        const loc = [+px.toFixed(2), +pz.toFixed(2), outcome, stand];
+        s.locations.push(loc);
+        if (side) side.locations.push(loc);
+      }
       if (isSwing) { totalSwings++; if(inSZ){swingInZone++;if(isContact)contactInZone++;} else if(zone)swingOutZone++; }
       if (desc.includes('swinging_strike')) {
         s.whiffs++;
