@@ -2201,63 +2201,54 @@ function buildSprayChart(sprayData) {
   const BB_COLORS = { ground_ball:'#BA7517', line_drive:'#00d4ff', fly_ball:'#e91e8c', popup:'#888780' };
   const BB_LABELS  = { ground_ball:'Ground Ball', line_drive:'Line Drive', fly_ball:'Fly Ball', popup:'Popup' };
 
-  // Statcast hc_x range ~0–250, hc_y range ~0–250
-  // Center field is roughly hc_x=125, hc_y=25 (top of chart)
-  // Home plate is roughly hc_x=125, hc_y=205
-  const HX_CENTER = 125, HY_HOME = 205;
-  const SCALE = 1.1;
+  // Statcast hc_x: ~25-205, center~125
+  // Statcast hc_y: LOW=outfield, HIGH=home plate (inverted — small y = deep)
+  const HX_CENTER = 125, HY_MIN = 30, HY_MAX = 215;
+  const cx = W/2, homY = H - 18;
 
-  const toX = hcx => W/2 + (hcx - HX_CENTER) * SCALE;
-  const toY = hcy => H - 20 - (HY_HOME - hcy) * SCALE;
+  const toX = hcx => W/2 + (hcx - HX_CENTER) / ((HX_MAX - HX_MIN)/2) * (W/2 - 18);
+  const toY = hcy => 10 + (hcy - HY_MIN) / (HY_MAX - HY_MIN) * (H - 32);
 
-  const cx = W/2, homY = H - 20;
-
-  // Field geometry
-  const lfX = 28, lfY = 55;     // left field corner
-  const rfX = W-28, rfY = 55;   // right field corner
-  const cfX = cx, cfY = 8;      // center field
+  const HX_MAX = 205, HX_MIN = 45;
+  const lfX = toX(HX_MIN), lfY = toY(HY_MIN + 15);
+  const rfX = toX(HX_MAX), rfY = toY(HY_MIN + 15);
+  const hpX = toX(HX_CENTER), hpY = toY(HY_MAX - 10);
 
   const dots = sprayData.map(({ x, y, bbt, ev, pt }) => {
     const svgX = toX(x), svgY = toY(y);
-    if (svgX < 0 || svgY < -10 || svgX > W || svgY > H) return '';
+    if (svgX < -10 || svgY < -10 || svgX > W+10 || svgY > H+10) return '';
     const color = locationColor === 'pitch' ? pc(pt) : (BB_COLORS[bbt] || '#888');
     const hard = ev && ev >= 95;
-    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6.5:4.5}" fill="${color}" fill-opacity="0.75" stroke="${hard?'rgba(255,255,255,0.8)':'none'}" stroke-width="${hard?1:0}"/>`;
+    return `<circle cx="${svgX.toFixed(1)}" cy="${svgY.toFixed(1)}" r="${hard?6.5:4.5}" fill="${color}" fill-opacity="0.78" stroke="${hard?'rgba(255,255,255,0.85)':'none'}" stroke-width="${hard?1.2:0}"/>`;
   }).join('');
 
-  // Legend
-  const legend = locationColor === 'pitch'
-    ? Object.entries(pitchLocs||{}).filter(([,l])=>l&&l.length>0).map(([pt])=>
-        `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${pc(pt)};display:inline-block"></span>${pn(pt)}</span>`
-      ).join('')
-    : Object.entries(BB_COLORS).map(([k,c])=>
-        `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${c};display:inline-block"></span>${BB_LABELS[k]}</span>`
-      ).join('');
+  const ptCounts = {};
+  sprayData.forEach(({pt}) => ptCounts[pt] = (ptCounts[pt]||0)+1);
+  const pitchLegend = Object.entries(ptCounts).sort((a,b)=>b[1]-a[1])
+    .map(([pt])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${pc(pt)};display:inline-block"></span>${pn(pt)}</span>`).join('');
+  const outcomeLegend = Object.entries(BB_COLORS)
+    .map(([k,c])=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px;color:var(--muted)"><span style="width:9px;height:9px;border-radius:50%;background:${c};display:inline-block"></span>${BB_LABELS[k]}</span>`).join('');
+  const legend = locationColor === 'pitch' ? pitchLegend : outcomeLegend;
 
   return `<div class="loc-zone-card">
     <div class="loc-zone-title">Spray Chart <span style="font-size:11px;color:var(--muted);font-weight:400">${sprayData.length} batted balls</span></div>
     <svg width="${W}" height="${H}" style="display:block">
-      <!-- grass background -->
-      <path d="M ${cx} ${homY} L ${lfX} ${lfY} Q ${cfX} ${cfY} ${rfX} ${rfY} Z" fill="rgba(255,255,255,0.025)" stroke="none"/>
-      <!-- outfield fence -->
-      <path d="M ${lfX} ${lfY} Q ${cfX} ${cfY-5} ${rfX} ${rfY}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-      <!-- foul lines -->
-      <line x1="${cx}" y1="${homY}" x2="${lfX-10}" y2="${lfY-15}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
-      <line x1="${cx}" y1="${homY}" x2="${rfX+10}" y2="${rfY-15}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
-      <!-- infield dirt circle -->
-      <circle cx="${cx}" cy="${homY-65}" r="52" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-dasharray="3,3"/>
-      <!-- bases -->
-      <rect x="${cx-6}" y="${homY-130-6}" width="12" height="12" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx},${homY-130})" rx="1"/>
-      <rect x="${cx-65-6}" y="${homY-65-6}" width="12" height="12" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx-65},${homY-65})" rx="1"/>
-      <rect x="${cx+65-6}" y="${homY-65-6}" width="12" height="12" fill="rgba(255,255,255,0.2)" transform="rotate(45,${cx+65},${homY-65})" rx="1"/>
-      <!-- home plate -->
-      <polygon points="${cx},${homY-4} ${cx-8},${homY-10} ${cx-8},${homY+2} ${cx+8},${homY+2} ${cx+8},${homY-10}" fill="rgba(255,255,255,0.3)"/>
+      <path d="M ${hpX} ${hpY} L ${lfX} ${lfY} Q ${toX(HX_CENTER)} 8 ${rfX} ${rfY} Z" fill="rgba(255,255,255,0.015)"/>
+      <path d="M ${lfX} ${lfY} Q ${toX(HX_CENTER)} 8 ${rfX} ${rfY}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+      <line x1="${hpX}" y1="${hpY}" x2="${lfX-8}" y2="${lfY}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+      <line x1="${hpX}" y1="${hpY}" x2="${rfX+8}" y2="${rfY}" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+      <circle cx="${hpX}" cy="${toY(HY_MAX - 65)}" r="50" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-dasharray="3,3"/>
+      <rect x="${hpX-5}" y="${toY(HY_MAX-115)-5}" width="10" height="10" fill="rgba(255,255,255,0.25)" transform="rotate(45,${hpX},${toY(HY_MAX-115)})" rx="1"/>
+      <rect x="${hpX+60-5}" y="${toY(HY_MAX-62)-5}" width="10" height="10" fill="rgba(255,255,255,0.25)" transform="rotate(45,${hpX+60},${toY(HY_MAX-62)})" rx="1"/>
+      <rect x="${hpX-60-5}" y="${toY(HY_MAX-62)-5}" width="10" height="10" fill="rgba(255,255,255,0.25)" transform="rotate(45,${hpX-60},${toY(HY_MAX-62)})" rx="1"/>
+      <polygon points="${hpX},${hpY-4} ${hpX-8},${hpY-11} ${hpX-8},${hpY+3} ${hpX+8},${hpY+3} ${hpX+8},${hpY-11}" fill="rgba(255,255,255,0.3)"/>
       ${dots}
     </svg>
     <div style="margin-top:8px;line-height:2">${legend}</div>
     <div style="font-size:10px;color:var(--muted2);margin-top:2px">White outline = hard hit (95+ mph EV)</div>
   </div>`;
 }
+
 
 /* ==================== SPLITS ==================== */
 function renderSplits() {
