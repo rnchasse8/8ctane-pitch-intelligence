@@ -376,25 +376,25 @@ function buildSingleReport(rawRows) {
 
 /* ---- Player Header ---- */
 function renderPlayerHeader() {
-  const { pitcherName, gameDate, hand, opp, total, avgVelo, peakVelo, totalWhiffs, totalCS, walks, ks, fip, whip, race2kPct, putawayPct, fpStrikePct, oonStrikePct } = singleData;
+  const { pitcherName, gameDate, hand, opp, total, walks, ks, rows } = singleData;
   document.getElementById('ph-name').textContent = pitcherName;
   document.getElementById('ph-meta').innerHTML =
     `<span class="player-meta-item">${gameDate}</span>
      <span class="player-meta-item">vs. ${opp}</span>
      <span class="player-meta-item">${hand}HP</span>`;
-  const whiffRate = total ? (totalWhiffs/total*100).toFixed(1) : '—';
-  const cswRate   = total ? ((totalWhiffs+totalCS)/total*100).toFixed(1) : '—';
+
+  // RA = runs allowed (from post_bat_score changes)
+  const ra = rows.reduce((a, r, i) => {
+    const before = +(r.bat_score||0);
+    const after  = +(r.post_bat_score||0);
+    return a + Math.max(0, after - before);
+  }, 0);
+
   document.getElementById('ph-kpis').innerHTML = [
-    { v: total,              l: 'Pitches'     },
-    { v: fip,                l: 'FIP'         },
-    { v: whip,               l: 'WHIP'        },
-    { v: whiffRate+'%',    l: 'Whiff%'      },
-    { v: cswRate+'%',      l: 'CSW%'        },
-    { v: ks,                 l: 'K'           },
-    { v: walks,              l: 'BB'          },
-    { v: fpStrikePct+'%',  l: 'F-Strike%'   },
-    { v: race2kPct+'%',    l: 'Race to 2K'  },
-    { v: putawayPct+'%',   l: 'Putaway%'    },
+    { v: total,  l: 'Pitches' },
+    { v: ks,     l: 'K'       },
+    { v: walks,  l: 'BB'      },
+    { v: ra,     l: 'RA'      },
   ].map(k => `<div class="kpi"><div class="kpi-val mono">${k.v}</div><div class="kpi-lbl">${k.l}</div></div>`).join('');
 }
 

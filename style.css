@@ -449,7 +449,7 @@ header {
 }
 .mov-stat-group {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   flex: 1;
   gap: 0;
 }
@@ -494,7 +494,7 @@ header {
 }
 .mov-header-stats {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   flex: 1;
 }
 .mov-header-stat {
