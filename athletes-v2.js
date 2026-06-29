@@ -469,6 +469,18 @@ function parseStatcastBulk(rows) {
       const hb = parseFloat(r.pfx_x); if (!isNaN(hb)) s.pfx_xs.push(-hb*12);
       const ivb = parseFloat(r.pfx_z); if (!isNaN(ivb)) s.pfx_zs.push(ivb*12);
 
+      // VAA / HAA from pitch physics
+      const vx0=parseFloat(r.vx0),vy0=parseFloat(r.vy0),vz0=parseFloat(r.vz0);
+      const ax=parseFloat(r.ax),ay=parseFloat(r.ay),az=parseFloat(r.az);
+      const ext=parseFloat(r.release_extension)||6.0;
+      if(!isNaN(vx0)&&!isNaN(vy0)&&!isNaN(vz0)&&!isNaN(ax)&&!isNaN(ay)&&!isNaN(az)){
+        const t=(60.5-ext)/Math.abs(vy0);
+        const vxf=vx0+ax*t, vyf=vy0+ay*t, vzf=vz0+az*t;
+        const vaa=+(Math.atan(vzf/Math.abs(vyf))*(180/Math.PI)).toFixed(1);
+        const haa=+(Math.atan(vxf/Math.abs(vyf))*(180/Math.PI)).toFixed(1);
+        s.vaas.push(vaa); s.haas.push(haa);
+      }
+
       // Spin rate
       const spin = parseFloat(r.release_spin_rate); if (!isNaN(spin)) s.spins.push(spin);
 
@@ -579,8 +591,11 @@ function parseStatcastBulk(rows) {
         avgXba:   xbas_all.length  ? +avgg(xbas_all).toFixed(3)  : null,
         avgXslg:  xslgs_all.length ? +avgg(xslgs_all).toFixed(3) : null,
         avgEV:    s.launch_speeds.length ? +avgg(s.launch_speeds).toFixed(1) : null,
+        hardHitPct: s.launch_speeds.length ? +(s.hard_hits/s.launch_speeds.length*100).toFixed(1) : null,
         avgIVB:   s.pfx_zs.length ? +avgg(s.pfx_zs).toFixed(1) : null,
         avgHB:    s.pfx_xs.length ? +avgg(s.pfx_xs).toFixed(1) : null,
+        avgVAA:   s.vaas.length   ? +avgg(s.vaas).toFixed(1)   : null,
+        avgHAA:   s.haas.length   ? +avgg(s.haas).toFixed(1)   : null,
         avgSpin:  s.spins.length  ? +avgg(s.spins).toFixed(0)  : null,
         locations: s.locations || [],
         spray: s.spray || [],
@@ -806,12 +821,21 @@ function renderProfileHero() {
     ? `${(parseFloat(kPct)-parseFloat(bbPct)).toFixed(1)}%`
     : '—';
 
+  // Use org stats if available
+  const heroKey = (currentAthlete.name||'').toLowerCase();
+  const orgHero = (typeof SEASON_STATS !== 'undefined') ? SEASON_STATS?.[heroKey] : null;
+  const displayERA  = orgHero ? orgHero.era.toFixed(2)  : '—';
+  const displayFIP  = orgHero ? orgHero.fip.toFixed(2)  : fip;
+  const displayWHIP = orgHero ? orgHero.whip.toFixed(2) : whip;
+  const displayKBB  = orgHero ? `${orgHero.kMinusBB}%`  : kMinusBB;
+
   document.getElementById('profile-kpis').innerHTML = [
     { v: athleteOutings.length, l: 'Outings' },
-    { v: fip,                   l: 'FIP' },
-    { v: whip,                  l: 'WHIP' },
-    { v: whiffRate+'%',         l: 'Whiff%' },
-    { v: kMinusBB,              l: 'K%-BB%' },
+    { v: displayERA,            l: 'ERA'     },
+    { v: displayFIP,            l: 'FIP'     },
+    { v: displayWHIP,           l: 'WHIP'    },
+    { v: whiffRate+'%',         l: 'Whiff%'  },
+    { v: displayKBB,            l: 'K%-BB%'  },
   ].map(k => `<div class="kpi"><div class="kpi-val mono">${k.v}</div><div class="kpi-lbl">${k.l}</div></div>`).join('');
 }
 
@@ -1420,11 +1444,29 @@ async function renderSeasonInsight() {
     return pm;
   })();
 
+  // Supplemental org stats if available
+  const seasonKey = (currentAthlete.name || '').toLowerCase();
+  const orgStats = SEASON_STATS?.[seasonKey] || null;
+  const orgStatsLine = orgStats ? `
+ORG REPORT STATS (source of truth — use these over Statcast estimates):
+ERA:${orgStats.era} | FIP:${orgStats.fip} | WHIP:${orgStats.whip} | IP:${orgStats.ip}
+K%:${orgStats.kPct}% | BB%:${orgStats.bbPct}% | K%-BB%:${orgStats.kMinusBB}% | SwStr%:${orgStats.swingWhiffPct}%
+Total K:${orgStats.totalK} | Total BB:${orgStats.totalBB} | HR allowed:${orgStats.totalHR}
+
+ORG PITCH DATA (use these numbers — more accurate than Statcast):
+${Object.entries(orgStats.pitchData).map(([pt, p]) =>
+  `${pn(pt)}: ${p.total} pitches | ${p.avgVelo}mph | Strike%:${p.strikePct}% | Whiff%:${p.whiffPct}% | xBA:${p.xba} xSLG:${p.xslg} xOPS:${p.xops} | GB%:${p.gbPct}% FB%:${p.fbPct}% LD%:${p.ldPct}%` +
+  (p.rhh?.total ? `\n  vs RHH: ${p.rhh.total}p | Whiff%:${p.rhh.whiffPct}% | xBA:${p.rhh.xba} xOPS:${p.rhh.xops} | GB%:${p.rhh.gbPct}%` : '') +
+  (p.lhh?.total ? `\n  vs LHH: ${p.lhh.total}p | Whiff%:${p.lhh.whiffPct}% | xBA:${p.lhh.xba} xOPS:${p.lhh.xops} | GB%:${p.lhh.gbPct}%` : '')
+).join('\n')}` : '';
+
   const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Your tone is direct, encouraging, and specific - like a coach who knows this pitcher well. Use "you" and "your" throughout. Frame weaknesses constructively. Speak plainly - no stat abbreviations in narrative text. NEVER mention psStuff+ or any stuff grade unless explicitly provided in the data.
 
 PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.team||'unknown team'}, ${currentAthlete.level||''})
 SEASON: ${athleteOutings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
 ZONE%: ${zonePct?.toFixed(1)||'N/A'}% | O-Swing%: ${oSwingPct?.toFixed(1)||'N/A'}% | Z-Contact%: ${zContactPct?.toFixed(1)||'N/A'}% | GB%: ${gbPct?.toFixed(1)||'N/A'}% | F-Strike%: ${fpStrikePct?.toFixed(1)||'N/A'}% | 1-1 Strike%: ${oonStrikePct?.toFixed(1)||'N/A'}% | Race to 2K: ${race2kPct?.toFixed(1)||'N/A'}% | Putaway%: ${putawayPct?.toFixed(1)||'N/A'}%
+
+${orgStatsLine}
 
 NOTE: Pitches with 10 or fewer samples have been excluded as likely mistagged. Only analyze the pitches listed below.
 
@@ -1867,15 +1909,21 @@ function renderReport() {
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
       if (!s.count) return;
-      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, velos:[] };
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, velos:[], ivbs:[], hbs:[] };
       const c = combined[pt];
       c.count    += s.count    || 0;
       c.whiffs   += s.whiffs   || 0;
       c.cstrikes += s.cstrikes || 0;
       c.hip      += s.hip      || 0;
-      if (s.avgVelo)   c.velos.push(pf(s.avgVelo));
-      if (s.avgXwoba)  c.xwobas.push(pf(s.avgXwoba));
-      if (s.avgEV)     c.evs.push(pf(s.avgEV));
+      if (s.avgVelo)      c.velos.push(pf(s.avgVelo));
+      if (s.avgXwoba)     c.xwobas.push(pf(s.avgXwoba));
+      if (s.avgEV)        c.evs.push(pf(s.avgEV));
+      if (s.avgIVB)       c.ivbs.push(pf(s.avgIVB));
+      if (s.avgHB)        c.hbs.push(pf(s.avgHB));
+      // Reconstruct hard hits from stored hardHitPct and hip count
+      if (s.hardHitPct != null && s.hip) {
+        c.hardHits += Math.round(pf(s.hardHitPct) / 100 * s.hip);
+      }
     });
   });
 
@@ -1895,7 +1943,7 @@ function renderReport() {
   const bbPct      = totalHIP+totalK+totalBB > 0 ? totalBB/(totalHIP+totalK+totalBB)*100 : 0;
   const avgXwoba   = allXwobas.length ? avg(allXwobas) : null;
   const avgEV      = allEVs.length ? avg(allEVs) : null;
-  const hardHitPct = allEVs.length ? allHardHits/allEVs.length*100 : 0;
+  const hardHitPct = totalHIP ? allHardHits/totalHIP*100 : 0;
   const ffMap      = combined['FF'] || combined['FA'];
   const avgVelo    = ffMap?.velos.length ? avg(ffMap.velos) : null;
   const swStrPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
@@ -2433,6 +2481,32 @@ const PSSTUFF_DATA = {
       SL: { spinRate:2346, armSide:5.8,  vertical:-2.2, whiffPct:31.8 },
       SW: { spinRate:2087, armSide:-11.7,vertical:-9.5, whiffPct:33.3 },
       CH: { spinRate:1564, armSide:11.9, vertical:10.7, whiffPct:30.8 },
+    }
+  }
+};
+
+// Supplemental season stats from internal/org reports (not available in Statcast)
+const SEASON_STATS = {
+  'ryan chasse': {
+    lastUpdated: 'June 2026',
+    ip: 29.3, era: 2.45, fip: 2.21, whip: 1.12,
+    totalK: 37, totalBB: 12, totalHBP: 4, totalHR: 0, earnedRuns: 8,
+    kPct: 31.4, bbPct: 10.2, kMinusBB: 21.2,
+    whiffPct: 10.9, swingWhiffPct: 27.3,
+    // Pitch performance from org report
+    pitchData: {
+      FF: { total:208, avgVelo:92.2, strikePct:61.1, whiffPct:27.1, xba:.225, xslg:.275, xops:.642, gbPct:22.2, fbPct:25.9, ldPct:14.8,
+            rhh:{ total:136, avgVelo:92.3, strikePct:60.3, whiffPct:25.4, xba:.179, xslg:.214, xops:.517, gbPct:22.2, fbPct:22.2, ldPct:16.7 },
+            lhh:{ total:72,  avgVelo:91.9, strikePct:62.5, whiffPct:30.3, xba:.333, xslg:.417, xops:.917, gbPct:22.2, fbPct:33.3, ldPct:11.1 } },
+      CU: { total:87,  avgVelo:79.3, strikePct:60.9, whiffPct:40.0, xba:.278, xslg:.333, xops:.649, gbPct:72.7, fbPct:18.2, ldPct:0,
+            rhh:{ total:59, avgVelo:79.6, strikePct:62.7, whiffPct:30.0, xba:.267, xslg:.333, xops:.646, gbPct:77.8, fbPct:11.1, ldPct:0 },
+            lhh:{ total:28, avgVelo:78.7, strikePct:57.1, whiffPct:60.0, xba:.333, xslg:.333, xops:.667, gbPct:50.0, fbPct:50.0, ldPct:0 } },
+      SL: { total:143, avgVelo:84.5, strikePct:67.1, whiffPct:48.1, xba:.184, xslg:.211, xops:.436, gbPct:57.9, fbPct:21.1, ldPct:10.5,
+            rhh:{ total:83, avgVelo:84.7, strikePct:68.7, whiffPct:48.0, xba:.217, xslg:.261, xops:.541, gbPct:55.6, fbPct:22.2, ldPct:11.1 },
+            lhh:{ total:60, avgVelo:84.2, strikePct:65.0, whiffPct:48.3, xba:.133, xslg:.133, xops:.267, gbPct:60.0, fbPct:20.0, ldPct:10.0 } },
+      CH: { total:50,  avgVelo:82.8, strikePct:60.0, whiffPct:29.4, xba:.000, xslg:.000, xops:.000, gbPct:100, fbPct:0, ldPct:0,
+            rhh:{ total:50, avgVelo:82.8, strikePct:60.0, whiffPct:29.4, xba:.000, xslg:.000, xops:.000, gbPct:100, fbPct:0, ldPct:0 },
+            lhh:{ total:0,  avgVelo:0,    strikePct:0,    whiffPct:0,    xba:.000, xslg:.000, xops:.000, gbPct:0,   fbPct:0, ldPct:0 } },
     }
   }
 };
