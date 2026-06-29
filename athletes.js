@@ -1920,10 +1920,6 @@ function renderReport() {
       if (s.avgEV)        c.evs.push(pf(s.avgEV));
       if (s.avgIVB)       c.ivbs.push(pf(s.avgIVB));
       if (s.avgHB)        c.hbs.push(pf(s.avgHB));
-      // Reconstruct hard hits from stored hardHitPct and hip count
-      if (s.hardHitPct != null && s.hip) {
-        c.hardHits += Math.round(pf(s.hardHitPct) / 100 * s.hip);
-      }
     });
   });
 
@@ -1933,9 +1929,12 @@ function renderReport() {
   const totalHIP     = Object.values(combined).reduce((a,s)=>a+s.hip,0);
   const allXwobas    = Object.values(combined).flatMap(s=>s.xwobas);
   const allEVs       = Object.values(combined).flatMap(s=>s.evs);
-  const allHardHits  = Object.values(combined).reduce((a,s)=>a+s.hardHits,0);
   const totalBB      = athleteOutings.reduce((a,o)=>a+(+o.walks||0),0);
   const totalK       = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0),0);
+
+  // Use outing-level hard_hit_pct — per-pitch is too noisy with small samples
+  const outingHHPs = athleteOutings.map(o=>pf(o.hard_hit_pct)).filter(v=>v>0);
+  const hardHitPctSeason = outingHHPs.length ? avg(outingHHPs) : 0;
 
   const whiffPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
   const cswPct     = totalPitches ? (totalWhiffs+totalCS)/totalPitches*100 : 0;
@@ -1943,7 +1942,7 @@ function renderReport() {
   const bbPct      = totalHIP+totalK+totalBB > 0 ? totalBB/(totalHIP+totalK+totalBB)*100 : 0;
   const avgXwoba   = allXwobas.length ? avg(allXwobas) : null;
   const avgEV      = allEVs.length ? avg(allEVs) : null;
-  const hardHitPct = totalHIP ? allHardHits/totalHIP*100 : 0;
+  const hardHitPct = hardHitPctSeason;
   const ffMap      = combined['FF'] || combined['FA'];
   const avgVelo    = ffMap?.velos.length ? avg(ffMap.velos) : null;
   const swStrPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
