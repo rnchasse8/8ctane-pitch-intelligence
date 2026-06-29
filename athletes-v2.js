@@ -540,7 +540,8 @@ function parseStatcastBulk(rows) {
     const hardHits = Object.values(pm).reduce((a,s)=>a+s.hard_hits,0);
     const zonedP = inZone+outZone;
     const ks = pitches.filter(r=>r.events==='strikeout').length;
-    const walks = pitches.filter(r=>r.events==='walk'||r.events==='hit_by_pitch').length;
+    const walks = pitches.filter(r=>r.events==='walk').length;
+    const hbp   = pitches.filter(r=>r.events==='hit_by_pitch').length;
     const hrs   = pitches.filter(r=>r.events==='home_run').length;
     const hits  = pitches.filter(r=>['single','double','triple','home_run'].includes(r.events||'')).length;
     const outEvents = new Set(['field_out','strikeout','force_out','grounded_into_double_play','sac_fly','sac_bunt','fielders_choice_out','double_play','triple_play']);
