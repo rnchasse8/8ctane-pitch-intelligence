@@ -1681,7 +1681,7 @@ Respond with JSON only (no markdown):
     const analysis = await callClaudeProxy(prompt);
     renderOutingInsightHTML(analysis, outing, pm, total);
   } catch(e) {
-    container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}</div>`;
+    container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}<br><button class="btn-primary" style="margin-top:12px" onclick="renderOutingInsightForSelected()">Regenerate</button></div>`;
   }
 }
 
