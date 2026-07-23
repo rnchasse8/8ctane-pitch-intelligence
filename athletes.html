@@ -126,6 +126,7 @@
       <div>
         <div class="athlete-hero-name" id="profile-name"></div>
         <div class="athlete-hero-meta" id="profile-meta"></div>
+        <div class="athlete-hero-updated" id="profile-last-updated" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
       </div>
     </div>
     <div class="kpi-strip" id="profile-kpis"></div>
@@ -144,6 +145,7 @@
       <button class="tab" data-ptab="outing-insight">Outing Insight</button>
       <button class="tab" data-ptab="outings">Outings</button>
       <button class="tab" data-ptab="compare">Compare</button>
+      <button class="tab" data-ptab="history">Year-over-Year</button>
     </nav>
   </div>
 
@@ -327,6 +329,16 @@
           </div>
         </div>
         <div id="compare-result" style="margin-top:1.5rem"></div>
+      </div>
+    </div>
+
+    <!-- YEAR OVER YEAR -->
+    <div class="ptab-panel" id="ptab-history">
+      <div class="section">
+        <div class="section-hd">Season-over-season</div>
+        <div id="history-content">
+          <div class="empty-state">Loading...</div>
+        </div>
       </div>
     </div>
 

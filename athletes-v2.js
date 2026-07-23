@@ -54,6 +54,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (name === 'season-insight') renderSeasonInsight();
       if (name === 'outing-insight') initOutingInsight();
       if (name === 'compare') populateCompareSelectors();
+      if (name === 'history') renderYearOverYear();
     });
   });
 });
@@ -788,6 +789,14 @@ function renderProfileHero() {
      <span class="hero-meta-item">${a.team || '—'}</span>
      <span class="hero-meta-item">${a.level || '—'}</span>`;
   document.getElementById('profile-hero').style.opacity = '1';
+
+  // Last CSV updated — most recent outing import timestamp
+  const lastUpdatedEl = document.getElementById('profile-last-updated');
+  if (lastUpdatedEl) {
+    const createdDates = athleteOutings.map(o => o.createdAt).filter(Boolean).sort();
+    const latest = createdDates.length ? createdDates[createdDates.length-1] : null;
+    lastUpdatedEl.textContent = latest ? `Last CSV updated: ${formatDate(latest)}` : 'No outings imported yet';
+  }
 
   const totalPitches = athleteOutings.reduce((a,o)=>a+(+o.total_pitches||0), 0);
   const totalK  = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0), 0);
@@ -1536,7 +1545,7 @@ Respond with JSON only (no markdown):
     const analysis = await callClaudeProxy(prompt);
     renderSeasonInsightHTML(analysis, pitchSummary, total);
   } catch(e) {
-    container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}<br><button class="btn-primary" style="margin-top:12px" onclick="renderSeasonInsight()">Regenerate</button></div>`;
+    container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}</div>`;
   }
 }
 
@@ -1681,7 +1690,7 @@ Respond with JSON only (no markdown):
     const analysis = await callClaudeProxy(prompt);
     renderOutingInsightHTML(analysis, outing, pm, total);
   } catch(e) {
-    container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}<br><button class="btn-primary" style="margin-top:12px" onclick="renderOutingInsightForSelected()">Regenerate</button></div>`;
+    container.innerHTML = `<div class="empty-state">Could not generate insights: ${e.message}</div>`;
   }
 }
 
@@ -1889,8 +1898,7 @@ async function callClaudeProxy(prompt) {
     messages: [{ role: 'user', content: prompt }]
   });
   if (res.error) throw new Error(res.error);
-  const cleaned = res.text.trim().replace(/^```json\s*|^```\s*|```$/g, '');
-  return JSON.parse(cleaned);
+  return JSON.parse(res.text);
 }
 function renderReport() {
   const container = document.getElementById('report-content');
@@ -2768,6 +2776,181 @@ function renderYoY() {
 }
 
 /* ==================== COMPARE ==================== */
+/* ==================== YEAR OVER YEAR ==================== */
+function stripYearSuffix(name) {
+  return (name || '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
+}
+
+function computeSeasonAggregate(outings) {
+  const totalPitches = outings.reduce((a,o)=>a+(+o.total_pitches||0), 0);
+  const totalK   = outings.reduce((a,o)=>a+(+o.strikeouts||0), 0);
+  const totalBB  = outings.reduce((a,o)=>a+(+o.walks||0), 0);
+  const totalHR  = outings.reduce((a,o)=>a+(+o.hrs||0), 0);
+  const totalH   = outings.reduce((a,o)=>a+(+o.hits||0), 0);
+  const totalWhiffs = outings.reduce((a,o)=>a+(+o.whiffs||0), 0);
+  const totalIP  = outings.reduce((a,o)=>a+(+o.ip||0), 0);
+
+  const whiffPct = totalPitches ? +(totalWhiffs/totalPitches*100).toFixed(1) : null;
+  const fip = totalIP > 0 ? +(((13*totalHR + 3*totalBB - 2*totalK) / totalIP) + 3.10).toFixed(2) : null;
+  const whip = totalIP > 0 ? +((totalBB + totalH) / totalIP).toFixed(2) : null;
+
+  const totalBIP = outings.reduce((a,o) => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    return a + Object.values(pm).reduce((s,p)=>s+(p.hip||0), 0);
+  }, 0);
+  const totalPA = totalK + totalBB + totalBIP;
+  const kPct  = totalPA ? +(totalK/totalPA*100).toFixed(1) : null;
+  const bbPct = totalPA ? +(totalBB/totalPA*100).toFixed(1) : null;
+  const kMinusBB = (kPct !== null && bbPct !== null) ? +(kPct - bbPct).toFixed(1) : null;
+
+  // Per-pitch-type aggregation
+  const combined = {};
+  outings.forEach(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    Object.entries(pm).forEach(([pt, s]) => {
+      if (!s.count) return;
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, velos:[], xwobas:[] };
+      const c = combined[pt];
+      c.count += s.count || 0;
+      c.whiffs += s.whiffs || 0;
+      if (s.avgVelo)  c.velos.push(pf(s.avgVelo));
+      if (s.avgXwoba) c.xwobas.push(pf(s.avgXwoba));
+    });
+  });
+  const pitchStats = {};
+  Object.entries(combined).forEach(([pt, s]) => {
+    pitchStats[pt] = {
+      count: s.count,
+      usagePct: totalPitches ? +(s.count/totalPitches*100).toFixed(1) : 0,
+      whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : null,
+      avgVelo: s.velos.length ? +avg(s.velos).toFixed(1) : null,
+      avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
+    };
+  });
+
+  return { outingCount: outings.length, totalIP, totalK, totalBB, totalHR, totalH, whiffPct, fip, whip, kMinusBB, pitchStats };
+}
+
+function yoyDeltaHTML(first, last, higherBetter=true) {
+  if (first === null || last === null || first === undefined || last === undefined) return '';
+  const d = +(last - first).toFixed(2);
+  if (Math.abs(d) < 0.05) return '<span style="color:var(--muted);font-size:11px"> —</span>';
+  const better = higherBetter ? d > 0 : d < 0;
+  const cls = better ? 'delta-good' : 'delta-bad';
+  const arrow = d > 0 ? '▲' : '▼';
+  return ` <span class="${cls}" style="font-size:11px">${arrow}${Math.abs(d)}</span>`;
+}
+
+async function renderYearOverYear() {
+  const container = document.getElementById('history-content');
+  container.innerHTML = '<div class="ai-loading"><div class="loading-spinner"></div><p>Loading season history...</p></div>';
+
+  const baseName = stripYearSuffix(currentAthlete.name).toLowerCase();
+
+  let allAthletes;
+  try {
+    const res = await api('getAthletes');
+    allAthletes = res.athletes;
+  } catch(e) {
+    container.innerHTML = `<div class="empty-state">Could not load athlete history: ${e.message}</div>`;
+    return;
+  }
+
+  const matches = allAthletes.filter(a => stripYearSuffix(a.name).toLowerCase() === baseName);
+
+  if (matches.length < 2) {
+    container.innerHTML = `<div class="empty-state">No other season records found for ${stripYearSuffix(currentAthlete.name)}.<br><small>Add a record named "${stripYearSuffix(currentAthlete.name)} (YYYY)" for a prior season, import its outings, and it'll show up here automatically.</small></div>`;
+    return;
+  }
+
+  const seasons = await Promise.all(matches.map(async a => {
+    let outings;
+    if (a.id === currentAthlete.id) {
+      outings = athleteOutings;
+    } else {
+      try { const r = await api('getOutings', { athleteId: a.id }); outings = r.outings; } catch(e) { outings = []; }
+    }
+    return { athlete: a, outings };
+  }));
+
+  seasons.forEach(s => {
+    const suffixMatch = s.athlete.name.match(/\((\d{4})\)\s*$/);
+    if (suffixMatch) {
+      s.year = suffixMatch[1];
+    } else {
+      const years = s.outings.map(o => (o.date||'').slice(0,4)).filter(Boolean);
+      const counts = {};
+      years.forEach(y => counts[y] = (counts[y]||0)+1);
+      s.year = Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0] || '—';
+    }
+    s.agg = computeSeasonAggregate(s.outings);
+    const key = s.athlete.name.toLowerCase();
+    s.orgStats = (typeof SEASON_STATS !== 'undefined') ? SEASON_STATS[key] : null;
+  });
+
+  seasons.sort((a,b) => (a.year||'').localeCompare(b.year||''));
+  renderYearOverYearHTML(seasons);
+}
+
+function renderYearOverYearHTML(seasons) {
+  const container = document.getElementById('history-content');
+  const first = seasons[0];
+  const last = seasons[seasons.length-1];
+
+  const headerRow = seasons.map(s => `<th class="v-num">${s.year}</th>`).join('');
+
+  function statRow(label, getVal, higherBetter=true, suffix='') {
+    const cells = seasons.map(s => {
+      const v = getVal(s);
+      return `<td class="v-num">${v === null || v === undefined ? '—' : v + suffix}</td>`;
+    }).join('');
+    const delta = yoyDeltaHTML(getVal(first), getVal(last), higherBetter);
+    return `<tr><td>${label}</td>${cells}<td style="min-width:60px">${seasons.length>1?delta:''}</td></tr>`;
+  }
+
+  const summaryTable = `
+    <table class="data-table" style="margin-bottom:1.5rem">
+      <thead><tr><th>Stat</th>${headerRow}<th>Trend</th></tr></thead>
+      <tbody>
+        ${statRow('Outings', s=>s.agg.outingCount, true)}
+        ${statRow('IP', s=>s.agg.totalIP || null, true)}
+        ${statRow('ERA', s=>s.orgStats ? s.orgStats.era.toFixed(2) : null, false)}
+        ${statRow('FIP', s=>s.orgStats ? s.orgStats.fip.toFixed(2) : s.agg.fip, false)}
+        ${statRow('WHIP', s=>s.orgStats ? s.orgStats.whip.toFixed(2) : s.agg.whip, false)}
+        ${statRow('K%-BB%', s=>s.orgStats ? s.orgStats.kMinusBB : s.agg.kMinusBB, true, '%')}
+        ${statRow('Whiff%', s=>s.orgStats ? s.orgStats.swingWhiffPct : s.agg.whiffPct, true, '%')}
+      </tbody>
+    </table>`;
+
+  // Arsenal comparison — union of pitch types across all seasons
+  const allPT = [...new Set(seasons.flatMap(s => Object.keys(s.agg.pitchStats)))];
+  const arsenalRows = allPT.map(pt => {
+    const veloDelta = yoyDeltaHTML(first.agg.pitchStats[pt]?.avgVelo ?? null, last.agg.pitchStats[pt]?.avgVelo ?? null, true);
+    const whiffDelta = yoyDeltaHTML(first.agg.pitchStats[pt]?.whiffPct ?? null, last.agg.pitchStats[pt]?.whiffPct ?? null, true);
+    const cells = seasons.map(s => {
+      const p = s.agg.pitchStats[pt];
+      if (!p) return `<td class="v-num" colspan="1">—</td>`;
+      return `<td class="v-num">${p.avgVelo ?? '—'}mph · ${p.whiffPct ?? '—'}% whiff · ${p.usagePct}% usage</td>`;
+    }).join('');
+    return `<tr>
+      <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
+      ${cells}
+      <td style="min-width:90px;font-size:11px">velo${veloDelta}<br>whiff${whiffDelta}</td>
+    </tr>`;
+  }).join('');
+
+  const arsenalTable = `
+    <div class="section-hd" style="margin-bottom:.75rem">Arsenal by season</div>
+    <table class="data-table">
+      <thead><tr><th>Pitch</th>${headerRow}<th>Trend</th></tr></thead>
+      <tbody>${arsenalRows}</tbody>
+    </table>`;
+
+  container.innerHTML = summaryTable + arsenalTable;
+}
+
 function populateCompareSelectors() {
   const sorted = [...athleteOutings].sort((a,b)=>b.date.localeCompare(a.date));
   const options = sorted.map(o => `<option value="${o.id}">${formatDate(o.date)} vs. ${o.opponent||'Unknown'}</option>`).join('');
