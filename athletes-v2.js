@@ -1889,7 +1889,8 @@ async function callClaudeProxy(prompt) {
     messages: [{ role: 'user', content: prompt }]
   });
   if (res.error) throw new Error(res.error);
-  return JSON.parse(res.text);
+  const cleaned = res.text.trim().replace(/^```json\s*|^```\s*|```$/g, '');
+  return JSON.parse(cleaned);
 }
 function renderReport() {
   const container = document.getElementById('report-content');
