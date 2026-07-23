@@ -834,14 +834,12 @@ function renderProfileHero() {
   // Use org stats if available
   const heroKey = (currentAthlete.name||'').toLowerCase();
   const orgHero = (typeof SEASON_STATS !== 'undefined') ? SEASON_STATS?.[heroKey] : null;
-  const displayERA  = orgHero ? orgHero.era.toFixed(2)  : '—';
   const displayFIP  = orgHero ? orgHero.fip.toFixed(2)  : fip;
   const displayWHIP = orgHero ? orgHero.whip.toFixed(2) : whip;
   const displayKBB  = orgHero ? `${orgHero.kMinusBB}%`  : kMinusBB;
 
   document.getElementById('profile-kpis').innerHTML = [
     { v: athleteOutings.length, l: 'Outings' },
-    { v: displayERA,            l: 'ERA'     },
     { v: displayFIP,            l: 'FIP'     },
     { v: displayWHIP,           l: 'WHIP'    },
     { v: whiffRate+'%',         l: 'Whiff%'  },
@@ -1459,7 +1457,7 @@ async function renderSeasonInsight() {
   const orgStats = SEASON_STATS?.[seasonKey] || null;
   const orgStatsLine = orgStats ? `
 ORG REPORT STATS (source of truth — use these over Statcast estimates):
-ERA:${orgStats.era} | FIP:${orgStats.fip} | WHIP:${orgStats.whip} | IP:${orgStats.ip}
+FIP:${orgStats.fip} | WHIP:${orgStats.whip} | IP:${orgStats.ip}
 K%:${orgStats.kPct}% | BB%:${orgStats.bbPct}% | K%-BB%:${orgStats.kMinusBB}% | SwStr%:${orgStats.swingWhiffPct}%
 Total K:${orgStats.totalK} | Total BB:${orgStats.totalBB} | HR allowed:${orgStats.totalHR}
 
@@ -2916,7 +2914,6 @@ function renderYearOverYearHTML(seasons) {
       <tbody>
         ${statRow('Outings', s=>s.agg.outingCount, true)}
         ${statRow('IP', s=>s.agg.totalIP || null, true)}
-        ${statRow('ERA', s=>s.orgStats ? s.orgStats.era.toFixed(2) : null, false)}
         ${statRow('FIP', s=>s.orgStats ? s.orgStats.fip.toFixed(2) : s.agg.fip, false)}
         ${statRow('WHIP', s=>s.orgStats ? s.orgStats.whip.toFixed(2) : s.agg.whip, false)}
         ${statRow('K%-BB%', s=>s.orgStats ? s.orgStats.kMinusBB : s.agg.kMinusBB, true, '%')}
