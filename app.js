@@ -15,6 +15,8 @@ function getBaseline(pt, metric) {
   const b = MLB_BASELINES[pt] || MLB_BASELINES[pt === 'FA' ? 'FF' : null];
   return b ? b[metric] : null;
 }
+// matchShapeCluster(), findPitchComps(), findArsenalComps() now live in
+// mlb-shape-match.js (shared with athletes-v2.js) — loaded via <script> tag.
 
 function deltaTag(val, baseline, higherIsBetter) {
   if (baseline === null || val === null || isNaN(val) || isNaN(baseline)) return '';
@@ -105,6 +107,7 @@ function buildPitchMap(rows) {
       count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0,
       launch_speeds:[], xwobas:[], xbas:[], xslgs:[], events:[],
       pfx_xs:[], pfx_zs:[], spins:[], locations:[], spray:[],
+      pfx_x_raw:[], pfx_z_raw:[], rel_xs:[], rel_zs:[], exts:[], throws:[],
       lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
       rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
     };
@@ -115,6 +118,13 @@ function buildPitchMap(rows) {
     if (r.pfx_x)            s.pfx_xs.push(-pf(r.pfx_x)*12);
     if (r.pfx_z)            s.pfx_zs.push(pf(r.pfx_z)*12);
     if (r.release_spin_rate) s.spins.push(pf(r.release_spin_rate));
+    // Raw (unscaled, feet) shape/release values for MLB shape-matched comparison
+    if (r.pfx_x)              s.pfx_x_raw.push(pf(r.pfx_x));
+    if (r.pfx_z)              s.pfx_z_raw.push(pf(r.pfx_z));
+    if (r.release_pos_x)      s.rel_xs.push(pf(r.release_pos_x));
+    if (r.release_pos_z)      s.rel_zs.push(pf(r.release_pos_z));
+    if (r.release_extension)  s.exts.push(pf(r.release_extension));
+    if (r.p_throws)           s.throws.push(r.p_throws);
 
     const stand = (r.stand||'').toUpperCase();
     const side  = stand==='L' ? s.lhh : stand==='R' ? s.rhh : null;
@@ -425,14 +435,42 @@ function renderArsenal() {
     const cC  = csw >= 30 ? 'v-good' : csw >= 20 ? 'v-warn' : 'v-bad';
     const xwC = xwoba !== '—' ? (parseFloat(xwoba) <= .250 ? 'v-good' : parseFloat(xwoba) <= .350 ? 'v-warn' : 'v-bad') : 'v-num';
 
-    const mlbWhiff   = getBaseline(pt, 'whiff_pct');
-    const mlbCsw     = getBaseline(pt, 'csw_pct');
-    const mlbXwoba   = getBaseline(pt, 'avg_xwoba');
-    const mlbVelo    = getBaseline(pt, 'avg_velo');
+    // Shape-matched cluster (velo/movement/release-point aware) — falls back
+    // to the flat pitch-type average if there isn't enough shape data yet.
+    const throwsMode = s.throws.length ? (s.throws.filter(t=>t==='L').length > s.throws.length/2 ? 'L' : 'R') : null;
+    const shapeMatch = throwsMode ? matchShapeCluster(
+      pt, throwsMode,
+      s.velos.length ? avg(s.velos) : null,
+      s.pfx_x_raw.length ? avg(s.pfx_x_raw) : null,
+      s.pfx_z_raw.length ? avg(s.pfx_z_raw) : null,
+      s.rel_xs.length ? avg(s.rel_xs) : null,
+      s.rel_zs.length ? avg(s.rel_zs) : null,
+      s.exts.length ? avg(s.exts) : null
+    ) : null;
+
+    const mlbWhiff   = shapeMatch ? shapeMatch.metrics.whiff_pct   : getBaseline(pt, 'whiff_pct');
+    const mlbCsw     = shapeMatch ? shapeMatch.metrics.csw_pct     : getBaseline(pt, 'csw_pct');
+    const mlbXwoba   = shapeMatch ? shapeMatch.metrics.xwoba       : getBaseline(pt, 'avg_xwoba');
+    const mlbVelo    = shapeMatch ? shapeMatch.centroid.velo       : getBaseline(pt, 'avg_velo');
+    const shapeNote  = shapeMatch ? `<span class="shape-match-tag" title="Compared to ${shapeMatch.n.toLocaleString()} MLB pitches with a similar velo/shape/release, not the full pitch-type average">shape-matched (n=${shapeMatch.n.toLocaleString()})</span>` : '';
+
+    const pitchComps = throwsMode ? findPitchComps(
+      pt, throwsMode,
+      s.velos.length ? avg(s.velos) : null,
+      s.pfx_x_raw.length ? avg(s.pfx_x_raw) : null,
+      s.pfx_z_raw.length ? avg(s.pfx_z_raw) : null,
+      s.rel_xs.length ? avg(s.rel_xs) : null,
+      s.rel_zs.length ? avg(s.rel_zs) : null,
+      s.exts.length ? avg(s.exts) : null,
+      3
+    ) : [];
+    const compsNote = pitchComps.length
+      ? `<div class="mlb-comp-tag" title="MLB pitchers with the closest matching velo/shape/release for this pitch">Comps: ${pitchComps.map(c=>c.name.split(', ').reverse().join(' ')).join(' · ')}</div>`
+      : '';
 
     if (hasBaselines) {
       return `<tr>
-        <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
+        <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span>${shapeNote ? `<div style="margin-top:2px">${shapeNote}</div>` : ''}${compsNote}</td>
         <td class="v-num">${s.count}</td>
         <td><div class="usage-bar-wrap">
           <div class="usage-bar-bg"><div class="usage-bar-fill" style="width:${usagePct}%;background:${pc(pt)}"></div></div>
@@ -465,6 +503,33 @@ function renderArsenal() {
       </tr>`;
     }
   }).join('');
+
+  // Whole-arsenal MLB comp — "you pitch like..." banner
+  const banner = document.getElementById('arsenal-comp-banner');
+  if (banner) {
+    const athleteArsenal = {};
+    sorted.forEach(([pt, s]) => {
+      const throwsMode = s.throws.length ? (s.throws.filter(t=>t==='L').length > s.throws.length/2 ? 'L' : 'R') : null;
+      if (!throwsMode || !s.velos.length || !s.pfx_x_raw.length || !s.pfx_z_raw.length || !s.rel_xs.length || !s.rel_zs.length || !s.exts.length) return;
+      const sign = throwsMode === 'L' ? -1 : 1;
+      athleteArsenal[pt === 'FA' ? 'FF' : pt] = {
+        usage_pct: s.count/total*100,
+        velo: avg(s.velos),
+        hb_norm: avg(s.pfx_x_raw) * sign,
+        vb: avg(s.pfx_z_raw),
+        side_norm: avg(s.rel_xs) * sign,
+        height: avg(s.rel_zs),
+        ext: avg(s.exts),
+      };
+    });
+    const arsenalComps = Object.keys(athleteArsenal).length ? findArsenalComps(athleteArsenal, 3) : [];
+    banner.innerHTML = arsenalComps.length
+      ? `<div class="arsenal-comp-banner">
+           <span class="arsenal-comp-lbl">Arsenal comps (velo, shape &amp; release across the whole mix):</span>
+           ${arsenalComps.map(c => `<span class="arsenal-comp-chip">${c.name.split(', ').reverse().join(' ')}</span>`).join('')}
+         </div>`
+      : '';
+  }
 
   // Donut
   destroyChart('mix-chart');

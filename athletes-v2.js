@@ -455,6 +455,7 @@ function parseStatcastBulk(rows) {
       if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
       if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
         spins:[],locations:[],spray:[],
+        pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],throws:[],
         lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]},
         rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]}};
       const s = pm[pt];
@@ -469,11 +470,18 @@ function parseStatcastBulk(rows) {
       const v = parseFloat(r.release_speed); if (!isNaN(v)) s.velos.push(v);
       const hb = parseFloat(r.pfx_x); if (!isNaN(hb)) s.pfx_xs.push(-hb*12);
       const ivb = parseFloat(r.pfx_z); if (!isNaN(ivb)) s.pfx_zs.push(ivb*12);
+      // Raw (unscaled, feet) shape/release values for MLB shape-matched comparison
+      if (!isNaN(hb))  s.pfx_x_raw.push(hb);
+      if (!isNaN(ivb)) s.pfx_z_raw.push(ivb);
+      const rpx = parseFloat(r.release_pos_x); if (!isNaN(rpx)) s.rel_xs.push(rpx);
+      const rpz = parseFloat(r.release_pos_z); if (!isNaN(rpz)) s.rel_zs.push(rpz);
+      if (r.p_throws) s.throws.push(r.p_throws);
 
       // VAA / HAA from pitch physics
       const vx0=parseFloat(r.vx0),vy0=parseFloat(r.vy0),vz0=parseFloat(r.vz0);
       const ax=parseFloat(r.ax),ay=parseFloat(r.ay),az=parseFloat(r.az);
       const ext=parseFloat(r.release_extension)||6.0;
+      s.exts.push(ext);
       if(!isNaN(vx0)&&!isNaN(vy0)&&!isNaN(vz0)&&!isNaN(ax)&&!isNaN(ay)&&!isNaN(az)){
         const t=(60.5-ext)/Math.abs(vy0);
         const vxf=vx0+ax*t, vyf=vy0+ay*t, vzf=vz0+az*t;
@@ -1932,6 +1940,28 @@ function renderReport() {
   });
 
   const totalPitches = Object.values(combined).reduce((a,s)=>a+s.count,0);
+
+  // MLB comps — uses velo + movement only (reduced feature set), since that's
+  // already saved for every historical outing. Release point isn't saved per
+  // outing yet, so comps here are slightly less precise than the single-CSV
+  // tool's, but work without re-importing anything.
+  const throwsHand = (currentAthlete.throws || 'R').toUpperCase().charAt(0);
+  const athleteArsenal = {};
+  const pitchComps = {};
+  Object.entries(combined).forEach(([pt, c]) => {
+    if (!c.velos.length || !c.hbs.length || !c.ivbs.length) return;
+    const norm = pt === 'FA' ? 'FF' : pt;
+    const velo = avg(c.velos);
+    const hbFeet = -avg(c.hbs)/12; // stored avgHB is inches, sign-flipped for display — back to raw feet
+    const vbFeet = avg(c.ivbs)/12;
+    athleteArsenal[norm] = {
+      usage_pct: c.count/totalPitches*100,
+      velo, hb_norm: hbFeet*(throwsHand==='L'?-1:1), vb: vbFeet,
+    };
+    pitchComps[norm] = findPitchComps(norm, throwsHand, velo, hbFeet, vbFeet, null, null, null, 3, REDUCED_FEATURES);
+  });
+  const arsenalComps = Object.keys(athleteArsenal).length ? findArsenalComps(athleteArsenal, 3, 150, REDUCED_FEATURES) : [];
+  const compName = c => c.name.split(', ').reverse().join(' ');
   const totalWhiffs  = Object.values(combined).reduce((a,s)=>a+s.whiffs,0);
   const totalCS      = Object.values(combined).reduce((a,s)=>a+s.cstrikes,0);
   const totalHIP     = Object.values(combined).reduce((a,s)=>a+s.hip,0);
@@ -2095,6 +2125,11 @@ function renderReport() {
 
       ${levelBadge}
 
+      ${arsenalComps.length ? `<div class="arsenal-comp-banner">
+        <span class="arsenal-comp-lbl">Arsenal comps (velo &amp; shape across the whole mix):</span>
+        ${arsenalComps.map(c => `<span class="arsenal-comp-chip">${compName(c)}</span>`).join('')}
+      </div>` : ''}
+
       <div class="report-section-hd">Season Percentiles${!hasBaselines?' (raw values)':' vs. MLB'}</div>
       <div class="pct-axis-labels"><span>Poor</span><span>Average</span><span>Great</span></div>
 
@@ -2128,6 +2163,13 @@ function renderReport() {
       <div class="pct-group-hd">Stuff</div>
       ${avgVelo     !== null     ? pctBar('FB Avg Velo', avgVelo,     r(avgVelo),     DIST.avgVelo,    ' mph') : ''}
       ${peakVelo    !== null     ? pctBar('FB Peak Velo',peakVelo,    r(peakVelo),    DIST.avgVelo,    ' mph') : ''}
+
+      ${Object.keys(pitchComps).length ? `<div class="pct-group-hd">MLB Comps by Pitch</div>
+        ${Object.entries(pitchComps).filter(([,c])=>c.length).map(([pt,c]) =>
+          `<div class="mlb-comp-tag" style="margin-bottom:6px" title="MLB pitchers with the closest matching velo/movement for this pitch">
+            <strong style="color:var(--text)">${pn(pt)}:</strong> ${c.map(compName).join(' · ')}
+          </div>`
+        ).join('')}` : ''}
 
     </div>`;
 }
