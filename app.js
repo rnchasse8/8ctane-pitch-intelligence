@@ -76,6 +76,18 @@ function destroyChart(id) {
   if (charts[id]) { charts[id].destroy(); delete charts[id]; }
 }
 
+/* ==================== PRINT FIX ====================
+   Chart.js sizes each canvas off its container at creation time. Tabs other
+   than the active one are display:none when their charts are built, so those
+   canvases get a 0x0 size and never repaint on their own. The print stylesheet
+   forces every .tab-panel visible, but that alone doesn't tell Chart.js to
+   redraw. `beforeprint` fires after the browser has already switched to the
+   print stylesheet/layout, so this is the right moment to force every chart
+   to resize (and therefore redraw) at its new, visible size. */
+window.addEventListener('beforeprint', () => {
+  Object.values(charts).forEach(chart => { if (chart) chart.resize(); });
+});
+
 /* ==================== PITCH INFERENCE ==================== */
 function inferPitchType(r) {
   const v = pf(r.release_speed), hb = pf(r.pfx_x), vb = pf(r.pfx_z);

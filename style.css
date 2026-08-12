@@ -540,13 +540,26 @@ header {
   color: var(--muted); font-size: 13px;
 }
 
+/* ---- PRINT HEADER (logo, print-only) ---- */
+.print-header { display: none; }
+
 /* ---- PRINT ---- */
 @media print {
   header, .report-toolbar, .tabs-wrap, .site-footer { display: none !important; }
+  .print-header {
+    display: flex !important;
+    align-items: center;
+    gap: .75rem;
+    padding: 0 0 1rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .print-header img { height: 32px; }
+  .print-header span { font-family: 'DM Mono', monospace; font-size: 13px; color: var(--muted); letter-spacing: .02em; }
   .tab-panel { display: block !important; page-break-inside: avoid; }
-  body { background: #fff; color: #000; }
-  .player-header, .chart-card, .count-cell, .insight-card { border-color: #ddd !important; background: #f9f9f9 !important; }
-  .section-hd { color: #1680aa !important; }
+  body { background: var(--black) !important; color: var(--text) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .player-header, .chart-card, .count-cell, .insight-card { border-color: var(--border) !important; background: var(--surface) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .section-hd { color: var(--cyan) !important; }
 }
 
 /* ---- RESPONSIVE ---- */
