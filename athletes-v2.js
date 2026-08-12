@@ -203,9 +203,20 @@ function showAddAthlete() {
   setTimeout(() => document.getElementById('f-name').focus(), 50);
 }
 
+let addAthleteSubmitting = false;
 async function submitAddAthlete() {
+  // FIX (bug #2): no guard existed here at all — a double-click on
+  // "Add Athlete" fired this twice before the first request returned,
+  // creating two identical athlete records. Guard + disable the button
+  // synchronously, before any await, so a second click can't get in.
+  if (addAthleteSubmitting) return;
   const name = document.getElementById('f-name').value.trim();
   if (!name) { toast('Name is required', 'error'); return; }
+
+  addAthleteSubmitting = true;
+  const btn = document.querySelector('#modal-body .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding...'; }
+
   try {
     await api('addAthlete', {
       name,
@@ -220,6 +231,8 @@ async function submitAddAthlete() {
     loadRoster();
   } catch(e) {
     toast('Error: ' + e.message, 'error');
+  } finally {
+    addAthleteSubmitting = false;
   }
 }
 
@@ -706,17 +719,29 @@ function parseTrackmanBulk(rows) {
   return { pitcher, outings };
 }
 
+let bulkImportRunning = false;
 async function runBulkImport() {
+  // FIX (bug #2): the button disable used to happen AFTER the
+  // `await api('getOutings', ...)` call below. That left a window where
+  // a double-click (or any duplicate trigger) fired this function twice
+  // before either call had disabled the button. Each of those two
+  // concurrent runs fetched its own "existing outings" snapshot before
+  // the other had written anything, so neither saw the other's rows as
+  // duplicates — and the entire batch got imported twice (10 outings
+  // recorded as 20). Guard + disable now happen synchronously, first
+  // thing, before any await.
+  if (bulkImportRunning) return;
   const athleteId = document.getElementById('bulk-athlete-select').value;
   if (!athleteId || !bulkOutings.length) return;
+
+  bulkImportRunning = true;
+  document.getElementById('bulk-import-btn').disabled = true;
+  document.getElementById('bulk-import-btn').textContent = 'Importing...';
+  document.getElementById('bulk-progress-wrap').style.display = '';
 
   // Check for duplicates against existing outings
   const existingRes = await api('getOutings', { athleteId });
   const existingDates = new Set((existingRes.outings||[]).map(o => o.date?.toString().split('T')[0]));
-
-  document.getElementById('bulk-import-btn').disabled = true;
-  document.getElementById('bulk-import-btn').textContent = 'Importing...';
-  document.getElementById('bulk-progress-wrap').style.display = '';
 
   let done=0, skipped=0, errors=0;
 
@@ -763,6 +788,10 @@ async function runBulkImport() {
       status.style.color = 'var(--good)';
       status.textContent = '✓ Saved';
       done++;
+      // Also record this date as now-existing so a duplicate date
+      // later in the SAME csv/run gets skipped too, not just re-checked
+      // against the pre-import snapshot.
+      existingDates.add(dateKey);
     } catch(e) {
       row.className = 'bulk-outing-row error';
       status.style.color = 'var(--danger)';
@@ -784,6 +813,10 @@ async function runBulkImport() {
   document.getElementById('bulk-result-title').textContent = title;
   document.getElementById('bulk-result-body').textContent = body;
   document.getElementById('bulk-result').style.display = '';
+
+  bulkImportRunning = false;
+  document.getElementById('bulk-import-btn').disabled = false;
+  document.getElementById('bulk-import-btn').textContent = 'Import All Outings';
 }
 
 function renderProfileHero() {

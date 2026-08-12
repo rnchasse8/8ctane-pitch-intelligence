@@ -218,7 +218,18 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 
 <script src="baselines-ref.js"></script>
 <script>
-const SCRIPT_URL = localStorage.getItem('8ctane_script_url')||'';
+// FIX (bug #3): this used to be `localStorage.getItem('8ctane_script_url')`
+// only. That works fine on YOUR browser because you already pasted the
+// Apps Script URL in once via athletes.html. But a shared link is, by
+// definition, opened by someone whose browser has never done that — a
+// coach, a parent, the athlete themselves. For them, localStorage is
+// empty, SCRIPT_URL comes back '', and init() below immediately shows
+// "Dashboard unavailable" regardless of whether the athlete ID in the
+// link is valid. Hardcoding the URL here (it's a public, key-less
+// endpoint — the Anthropic key lives server-side in Code.gs, never
+// exposed to the client) makes the link work for anyone, on any device.
+// PASTE YOUR APPS SCRIPT WEB APP URL BELOW:
+const SCRIPT_URL = 'PASTE_YOUR_APPS_SCRIPT_URL_HERE' || localStorage.getItem('8ctane_script_url') || '';
 const PITCH_COLORS={FF:'#378ADD',FA:'#378ADD',SI:'#888780',FC:'#534AB7',SL:'#E24B4A',ST:'#D85A30',CU:'#1D9E75',KC:'#1D9E75',FS:'#BA7517',CH:'#BA7517',OTHER:'#555566'};
 const PITCH_NAMES={FF:'4-Seam',FA:'4-Seam',SI:'Sinker',FC:'Cutter',SL:'Slider',ST:'Sweeper',CU:'Curveball',KC:'K-Curve',FS:'Splitter',CH:'Changeup',OTHER:'Other'};
 const pc=pt=>PITCH_COLORS[pt]||'#555566';
