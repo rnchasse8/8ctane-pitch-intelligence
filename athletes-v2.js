@@ -896,7 +896,7 @@ function renderSeasonOverview() {
     let pm = {};
     try { pm = typeof o.pitch_stats === 'object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json || '{}'); } catch(e) {}
     Object.entries(pm).forEach(([pt, s]) => {
-      if (!combined[pt]) combined[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[] };
+      if (!combined[pt]) combined[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], ivbs:[], hbs:[] };
       const c = combined[pt];
       c.count += (s.count||0);
       c.whiffs += (s.whiffs||0);
@@ -904,6 +904,8 @@ function renderSeasonOverview() {
       c.hip += (s.hip||0);
       if (s.avgVelo) c.velos.push(pf(s.avgVelo));
       if (s.avgXwoba) c.xwobas.push(pf(s.avgXwoba));
+      if (s.avgIVB != null && s.avgIVB !== '') c.ivbs.push(pf(s.avgIVB));
+      if (s.avgHB != null && s.avgHB !== '') c.hbs.push(pf(s.avgHB));
     });
   });
 
@@ -922,17 +924,47 @@ function renderSeasonOverview() {
       const d = parseFloat(whiff) - mlbW;
       return `${mlbW}% <span class="${d>=0?'delta-good':'delta-bad'}">${d>=0?'▲':'▼'}${Math.abs(d).toFixed(1)}</span>`;
     })() : '—';
+
+    // 8-Grade — 100-scale, 100 = MLB average. Season-level outings
+    // only store avgVelo/avgIVB/avgHB (no release point), so this matches
+    // on REDUCED_FEATURES (velo + movement only, no release slot).
+    //
+    // IMPORTANT — two things have to be undone here, not just units:
+    // 1) avgIVB/avgHB are stored in INCHES, but shape_baselines.json was
+    //    built from raw Statcast pfx_x/pfx_z in FEET (app.js feeds it
+    //    unconverted) — so divide by 12.
+    // 2) avgHB specifically is ALSO pre-negated at storage time
+    //    (`-hb*12`, applied the same way regardless of throwing hand —
+    //    see the CSV-import parser), whereas matchShapeCluster() expects
+    //    the raw, un-negated Statcast sign and does its own hand-flip
+    //    internally. So avgHB needs an extra sign flip on top of the
+    //    unit conversion, or every pitch gets matched to a mirror-image
+    //    shape cluster. avgIVB has no such pre-negation, so it only
+    //    needs the /12.
+    let grade8 = null, gradeN = null;
+    if (currentAthlete?.throws && s.velos.length && s.ivbs.length && s.hbs.length) {
+      const result = compute8Grade(
+        pt, currentAthlete.throws.toUpperCase().charAt(0),
+        avg(s.velos), -avg(s.hbs) / 12, avg(s.ivbs) / 12,
+        null, null, null, REDUCED_FEATURES
+      );
+      if (result) { grade8 = result.grade; gradeN = result.n; }
+    }
+    const gradeClass = grade8 == null ? 'v-num' : grade8 >= 115 ? 'v-good' : grade8 >= 105 ? 'v-warn' : grade8 >= 90 ? 'v-num' : 'v-bad';
+    const gradeTitle = gradeN ? `8-Grade: 100 = MLB average · shape-matched vs ${gradeN.toLocaleString()} similar MLB pitches` : '8-Grade: 100 = MLB average';
+
     return `<tr>
       <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
       <td class="v-num">${s.count}</td>
       <td class="v-num">${usagePct}%</td>
       <td class="v-num">${avgV}</td>
+      <td class="${gradeClass}" title="${gradeTitle}">${grade8 ?? '—'}</td>
       <td class="${wC}">${whiff}%</td>
       <td class="v-num">${csw}%</td>
       <td class="v-num">${xwoba}</td>
       <td class="mlb-avg">${mlbTag}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="8" class="empty-state">No outing data yet.</td></tr>';
+  }).join('') || '<tr><td colspan="9" class="empty-state">No outing data yet.</td></tr>';
 
   // Charts
   if (profileCharts['season-mix']) { profileCharts['season-mix'].destroy(); }

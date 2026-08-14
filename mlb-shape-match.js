@@ -105,3 +105,54 @@ function findArsenalComps(athleteArsenal, topN = 3, minPitcherSample = 150, feat
   results.sort((a, b) => a.score - b.score);
   return results.slice(0, topN);
 }
+
+/* ==================== 8-GRADE ====================
+   A 100-scale grade (100 = MLB average, ~10 pts per standard deviation —
+   same convention as Stuff+/Pitching+) built from the SAME shape-matched
+   cluster outcome data as the rest of this file. No new data pull needed:
+   shape_baselines.json already carries whiff%/CSW%/xwOBA/hard-hit% for
+   every cluster across all 9 pitch types.
+
+   Population stats below were computed by pooling all 53 clusters
+   (~1.08M pitches total) weighted by cluster sample size — so a grade
+   on a splitter and a grade on a fastball sit on the same scale and are
+   directly comparable. Re-derive these if shape_baselines.json is
+   regenerated from a materially different Statcast pull.
+*/
+const GRADE_POP_STATS = {
+  whiff_pct:    { mean: 22.820, sd: 7.436 },
+  csw_pct:      { mean: 27.194, sd: 2.383 },
+  xwoba:        { mean: 0.317,  sd: 0.035 },
+  hard_hit_pct: { mean: 40.156, sd: 5.575 }
+};
+// Sign baked into the weight: positive = higher is better, negative = lower is better.
+const GRADE_WEIGHTS = { whiff_pct: 0.35, csw_pct: 0.20, xwoba: -0.35, hard_hit_pct: -0.10 };
+
+// Grades any {whiff_pct, csw_pct, xwoba, hard_hit_pct} outcome bundle —
+// works with a shape-matched cluster's `.metrics`, OR a flat MLB_BASELINE_REF
+// entry reshaped to { whiff_pct, csw_pct, xwoba: avg_xwoba, hard_hit_pct }.
+// Returns a number, or null if inputs are incomplete.
+function gradeFromMetrics(metrics) {
+  if (!metrics) return null;
+  const vals = { whiff_pct: metrics.whiff_pct, csw_pct: metrics.csw_pct, xwoba: metrics.xwoba, hard_hit_pct: metrics.hard_hit_pct };
+  if (Object.values(vals).some(v => v == null || isNaN(v))) return null;
+  let z = 0;
+  for (const [key, weight] of Object.entries(GRADE_WEIGHTS)) {
+    const { mean, sd } = GRADE_POP_STATS[key];
+    z += weight * ((vals[key] - mean) / sd);
+  }
+  return Math.round((100 + z * 10) * 10) / 10;
+}
+
+// Convenience: grade a single pitch straight from its raw shape inputs.
+// Finds the nearest MLB cluster via matchShapeCluster() and grades that
+// cluster's real outcome data. Pass REDUCED_FEATURES for `features` when
+// release point (relX/relZ/ext) isn't available (e.g. older imported
+// outings that predate release-point tracking).
+// Returns { grade, n } or null if there isn't enough shape data to match.
+function compute8Grade(pt, throws, velo, hb, vb, relX = null, relZ = null, ext = null, features = SHAPE_FEATURES) {
+  const cluster = matchShapeCluster(pt, throws, velo, hb, vb, relX, relZ, ext, features);
+  if (!cluster) return null;
+  const grade = gradeFromMetrics(cluster.metrics);
+  return grade == null ? null : { grade, n: cluster.n };
+}

@@ -429,7 +429,7 @@ function renderArsenal() {
 
   // Update table headers to include MLB avg columns if baselines loaded
   document.querySelector('#arsenal-table thead tr').innerHTML = hasBaselines
-    ? `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th>
+    ? `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th><th>8-Grade</th>
        <th>Whiff%</th><th>MLB avg</th><th>CSW%</th><th>MLB avg</th>
        <th>xwOBA</th><th>MLB avg</th><th>Avg EV</th>`
     : `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th>
@@ -466,6 +466,19 @@ function renderArsenal() {
     const mlbVelo    = shapeMatch ? shapeMatch.centroid.velo       : getBaseline(pt, 'avg_velo');
     const shapeNote  = shapeMatch ? `<span class="shape-match-tag" title="Compared to ${shapeMatch.n.toLocaleString()} MLB pitches with a similar velo/shape/release, not the full pitch-type average">shape-matched (n=${shapeMatch.n.toLocaleString()})</span>` : '';
 
+    // 8-Grade — 100-scale, 100 = MLB average, ~10 pts/SD. Grades the
+    // shape-matched cluster's real outcome data (or the flat pitch-type
+    // baseline as a fallback when there isn't enough shape data to match).
+    const gradeMetrics = shapeMatch ? shapeMatch.metrics : {
+      whiff_pct: getBaseline(pt, 'whiff_pct'),
+      csw_pct: getBaseline(pt, 'csw_pct'),
+      xwoba: getBaseline(pt, 'avg_xwoba'),
+      hard_hit_pct: getBaseline(pt, 'hard_hit_pct')
+    };
+    const grade8 = gradeFromMetrics(gradeMetrics);
+    const gradeClass = grade8 == null ? 'v-num' : grade8 >= 115 ? 'v-good' : grade8 >= 105 ? 'v-warn' : grade8 >= 90 ? 'v-num' : 'v-bad';
+    const gradeCell = `<td class="${gradeClass}" title="8-Grade: 100 = MLB average, ~10 pts per SD">${grade8 ?? '—'}</td>`;
+
     const pitchComps = throwsMode ? findPitchComps(
       pt, throwsMode,
       s.velos.length ? avg(s.velos) : null,
@@ -489,6 +502,7 @@ function renderArsenal() {
           <span class="v-num" style="font-size:11px">${usagePct}%</span>
         </div></td>
         <td class="v-num">${avgV} ${veloDelta(avgV, mlbVelo)}</td>
+        ${gradeCell}
         <td class="${wC}">${whiff}%</td>
         <td class="mlb-avg">${mlbWhiff !== null ? mlbWhiff+'%' : '—'} ${deltaTag(parseFloat(whiff), mlbWhiff, true)}</td>
         <td class="${cC}">${csw}%</td>
