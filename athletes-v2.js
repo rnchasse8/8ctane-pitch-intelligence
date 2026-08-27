@@ -84,6 +84,7 @@ async function api(action, body = {}) {
   const url = `${SCRIPT_URL}?action=${action}`;
 const res = await fetch(url, {
   method: 'POST',
+       cache: 'no-store',
   cache: 'no-store',
   body: JSON.stringify({ action, ...body }),
 });
