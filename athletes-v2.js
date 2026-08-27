@@ -82,9 +82,11 @@ function saveScriptUrl() {
 async function api(action, body = {}) {
   if (!SCRIPT_URL) { showConfigBanner(); throw new Error('No script URL configured'); }
   const url = `${SCRIPT_URL}?action=${action}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    body: JSON.stringify({ action, ...body }),
+const res = await fetch(url, {
+  method: 'POST',
+  cache: 'no-store',
+  body: JSON.stringify({ action, ...body }),
+});
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error);
