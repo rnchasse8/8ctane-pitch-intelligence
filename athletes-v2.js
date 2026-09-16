@@ -90,6 +90,9 @@ const res = await fetch(url, {
 });
   });
   const data = await res.json();
+});
+  });
+  const data = await res.json();
   if (data.error) throw new Error(data.error);
   return data;
 }
