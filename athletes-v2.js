@@ -79,17 +79,38 @@ function saveScriptUrl() {
 }
 
 /* ==================== API ==================== */
-async function api(action, body = {}) {
-  if (!SCRIPT_URL) { showConfigBanner(); throw new Error('No script URL configured'); }
-  const url = `${SCRIPT_URL}?action=${action}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    cache: 'no-store',
-    body: JSON.stringify({ action, ...body }),
+// Uses XMLHttpRequest instead of fetch(). Apps Script web apps respond via a
+// 302 redirect to a script.googleusercontent.com/macros/echo?... URL, and
+// Safari's fetch() intermittently fails to follow that cross-origin redirect
+// on POST requests (surfaces in the console as a 404 on the echo URL even
+// though the Apps Script execution completed fine). XHR follows redirects
+// more reliably in Safari, so this sidesteps the issue without needing a
+// proxy in front of Apps Script.
+function api(action, body = {}) {
+  return new Promise((resolve, reject) => {
+    if (!SCRIPT_URL) { showConfigBanner(); reject(new Error('No script URL configured')); return; }
+    const url = `${SCRIPT_URL}?action=${action}`;
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Request failed with status ${xhr.status}`));
+        return;
+      }
+      let data;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch (e) {
+        reject(new Error('Invalid JSON response from server'));
+        return;
+      }
+      if (data.error) { reject(new Error(data.error)); return; }
+      resolve(data);
+    };
+    xhr.onerror = () => reject(new Error('Network error contacting Apps Script'));
+    xhr.send(JSON.stringify({ action, ...body }));
   });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  return data;
 }
 
 /* ==================== ROSTER ==================== */
