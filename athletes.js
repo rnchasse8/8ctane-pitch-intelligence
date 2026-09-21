@@ -54,6 +54,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (name === 'season-insight') renderSeasonInsight();
       if (name === 'outing-insight') initOutingInsight();
       if (name === 'compare') populateCompareSelectors();
+      if (name === 'history') renderYearOverYear();
     });
   });
 });
@@ -78,16 +79,38 @@ function saveScriptUrl() {
 }
 
 /* ==================== API ==================== */
-async function api(action, body = {}) {
-  if (!SCRIPT_URL) { showConfigBanner(); throw new Error('No script URL configured'); }
-  const url = `${SCRIPT_URL}?action=${action}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    body: JSON.stringify({ action, ...body }),
+// Uses XMLHttpRequest instead of fetch(). Apps Script web apps respond via a
+// 302 redirect to a script.googleusercontent.com/macros/echo?... URL, and
+// Safari's fetch() intermittently fails to follow that cross-origin redirect
+// on POST requests (surfaces in the console as a 404 on the echo URL even
+// though the Apps Script execution completed fine). XHR follows redirects
+// more reliably in Safari, so this sidesteps the issue without needing a
+// proxy in front of Apps Script.
+function api(action, body = {}) {
+  return new Promise((resolve, reject) => {
+    if (!SCRIPT_URL) { showConfigBanner(); reject(new Error('No script URL configured')); return; }
+    const url = `${SCRIPT_URL}?action=${action}`;
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Request failed with status ${xhr.status}`));
+        return;
+      }
+      let data;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch (e) {
+        reject(new Error('Invalid JSON response from server'));
+        return;
+      }
+      if (data.error) { reject(new Error(data.error)); return; }
+      resolve(data);
+    };
+    xhr.onerror = () => reject(new Error('Network error contacting Apps Script'));
+    xhr.send(JSON.stringify({ action, ...body }));
   });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  return data;
 }
 
 /* ==================== ROSTER ==================== */
@@ -202,9 +225,20 @@ function showAddAthlete() {
   setTimeout(() => document.getElementById('f-name').focus(), 50);
 }
 
+let addAthleteSubmitting = false;
 async function submitAddAthlete() {
+  // FIX (bug #2): no guard existed here at all — a double-click on
+  // "Add Athlete" fired this twice before the first request returned,
+  // creating two identical athlete records. Guard + disable the button
+  // synchronously, before any await, so a second click can't get in.
+  if (addAthleteSubmitting) return;
   const name = document.getElementById('f-name').value.trim();
   if (!name) { toast('Name is required', 'error'); return; }
+
+  addAthleteSubmitting = true;
+  const btn = document.querySelector('#modal-body .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding...'; }
+
   try {
     await api('addAthlete', {
       name,
@@ -219,6 +253,8 @@ async function submitAddAthlete() {
     loadRoster();
   } catch(e) {
     toast('Error: ' + e.message, 'error');
+  } finally {
+    addAthleteSubmitting = false;
   }
 }
 
@@ -454,6 +490,7 @@ function parseStatcastBulk(rows) {
       if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
       if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
         spins:[],locations:[],spray:[],
+        pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],throws:[],
         lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]},
         rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]}};
       const s = pm[pt];
@@ -468,11 +505,18 @@ function parseStatcastBulk(rows) {
       const v = parseFloat(r.release_speed); if (!isNaN(v)) s.velos.push(v);
       const hb = parseFloat(r.pfx_x); if (!isNaN(hb)) s.pfx_xs.push(-hb*12);
       const ivb = parseFloat(r.pfx_z); if (!isNaN(ivb)) s.pfx_zs.push(ivb*12);
+      // Raw (unscaled, feet) shape/release values for MLB shape-matched comparison
+      if (!isNaN(hb))  s.pfx_x_raw.push(hb);
+      if (!isNaN(ivb)) s.pfx_z_raw.push(ivb);
+      const rpx = parseFloat(r.release_pos_x); if (!isNaN(rpx)) s.rel_xs.push(rpx);
+      const rpz = parseFloat(r.release_pos_z); if (!isNaN(rpz)) s.rel_zs.push(rpz);
+      if (r.p_throws) s.throws.push(r.p_throws);
 
       // VAA / HAA from pitch physics
       const vx0=parseFloat(r.vx0),vy0=parseFloat(r.vy0),vz0=parseFloat(r.vz0);
       const ax=parseFloat(r.ax),ay=parseFloat(r.ay),az=parseFloat(r.az);
       const ext=parseFloat(r.release_extension)||6.0;
+      s.exts.push(ext);
       if(!isNaN(vx0)&&!isNaN(vy0)&&!isNaN(vz0)&&!isNaN(ax)&&!isNaN(ay)&&!isNaN(az)){
         const t=(60.5-ext)/Math.abs(vy0);
         const vxf=vx0+ax*t, vyf=vy0+ay*t, vzf=vz0+az*t;
@@ -540,7 +584,8 @@ function parseStatcastBulk(rows) {
     const hardHits = Object.values(pm).reduce((a,s)=>a+s.hard_hits,0);
     const zonedP = inZone+outZone;
     const ks = pitches.filter(r=>r.events==='strikeout').length;
-    const walks = pitches.filter(r=>r.events==='walk'||r.events==='hit_by_pitch').length;
+    const walks = pitches.filter(r=>r.events==='walk').length;
+    const hbp   = pitches.filter(r=>r.events==='hit_by_pitch').length;
     const hrs   = pitches.filter(r=>r.events==='home_run').length;
     const hits  = pitches.filter(r=>['single','double','triple','home_run'].includes(r.events||'')).length;
     const outEvents = new Set(['field_out','strikeout','force_out','grounded_into_double_play','sac_fly','sac_bunt','fielders_choice_out','double_play','triple_play']);
@@ -597,6 +642,12 @@ function parseStatcastBulk(rows) {
         avgVAA:   s.vaas.length   ? +avgg(s.vaas).toFixed(1)   : null,
         avgHAA:   s.haas.length   ? +avgg(s.haas).toFixed(1)   : null,
         avgSpin:  s.spins.length  ? +avgg(s.spins).toFixed(0)  : null,
+        // Release point — release_pos_z (height, ft off the ground) and
+        // release_pos_x (side, ft from the center of the rubber; sign
+        // follows Statcast's raw convention, catcher's-view, NOT
+        // hand-flipped like avgHB is).
+        avgRelHeight: s.rel_zs.length ? +avgg(s.rel_zs).toFixed(2) : null,
+        avgRelSide:   s.rel_xs.length ? +avgg(s.rel_xs).toFixed(2) : null,
         locations: s.locations || [],
         spray: s.spray || [],
         lhh: makeSplitStats(s.lhh),
@@ -652,7 +703,7 @@ function parseTrackmanBulk(rows) {
       const tagged = r.taggedpitchtype || r.TaggedPitchType || '';
       const auto   = r.autopitchtype   || r.AutoPitchType   || '';
       const pt = PT_MAP[tagged] || PT_MAP[auto] || 'OTHER';
-      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,launch_speeds:[],ivbs:[],hbs:[],lhh:{count:0,whiffs:0,cstrikes:0},rhh:{count:0,whiffs:0,cstrikes:0}};
+      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,launch_speeds:[],ivbs:[],hbs:[],rel_xs:[],rel_zs:[],lhh:{count:0,whiffs:0,cstrikes:0},rhh:{count:0,whiffs:0,cstrikes:0}};
       const s = pm[pt]; s.count++;
       const stand = (r.batterside||r.BatterSide||'').toUpperCase();
       const side = stand==='L'?s.lhh:stand==='R'?s.rhh:null;
@@ -660,6 +711,9 @@ function parseTrackmanBulk(rows) {
       const v = parseFloat(r.relspeed||r.RelSpeed); if(!isNaN(v))s.velos.push(v);
       const ivb=parseFloat(r.inducedvertbreak||r.InducedVertBreak); if(!isNaN(ivb))s.ivbs.push(ivb);
       const hb=parseFloat(r.horzbreak||r.HorzBreak); if(!isNaN(hb))s.hbs.push(hb);
+      // Trackman release point — RelHeight/RelSide (feet)
+      const rh=parseFloat(r.relheight||r.RelHeight); if(!isNaN(rh))s.rel_zs.push(rh);
+      const rs=parseFloat(r.relside||r.RelSide); if(!isNaN(rs))s.rel_xs.push(rs);
       const call = r.pitchcall||r.PitchCall||'';
       if(call.includes('SwingingStrike')||call==='StrikeSwinging'){s.whiffs++;if(side)side.whiffs++;}
       else if(call.includes('CalledStrike')||call==='StrikeCalled'){s.cstrikes++;if(side)side.cstrikes++;}
@@ -684,6 +738,8 @@ function parseTrackmanBulk(rows) {
         avgHB:s.hbs.length?+avgg(s.hbs).toFixed(1):null,
         avgEV:s.launch_speeds.length?+avgg(s.launch_speeds).toFixed(1):null,
         avgXwoba:null,
+        avgRelHeight:s.rel_zs.length?+avgg(s.rel_zs).toFixed(2):null,
+        avgRelSide:s.rel_xs.length?+avgg(s.rel_xs).toFixed(2):null,
         lhh:{count:s.lhh.count,whiffs:s.lhh.whiffs,cstrikes:s.lhh.cstrikes,whiffPct:s.lhh.count?+(s.lhh.whiffs/s.lhh.count*100).toFixed(1):0,cswPct:s.lhh.count?+((s.lhh.whiffs+s.lhh.cstrikes)/s.lhh.count*100).toFixed(1):0},
         rhh:{count:s.rhh.count,whiffs:s.rhh.whiffs,cstrikes:s.rhh.cstrikes,whiffPct:s.rhh.count?+(s.rhh.whiffs/s.rhh.count*100).toFixed(1):0,cswPct:s.rhh.count?+((s.rhh.whiffs+s.rhh.cstrikes)/s.rhh.count*100).toFixed(1):0},
       };
@@ -696,17 +752,29 @@ function parseTrackmanBulk(rows) {
   return { pitcher, outings };
 }
 
+let bulkImportRunning = false;
 async function runBulkImport() {
+  // FIX (bug #2): the button disable used to happen AFTER the
+  // `await api('getOutings', ...)` call below. That left a window where
+  // a double-click (or any duplicate trigger) fired this function twice
+  // before either call had disabled the button. Each of those two
+  // concurrent runs fetched its own "existing outings" snapshot before
+  // the other had written anything, so neither saw the other's rows as
+  // duplicates — and the entire batch got imported twice (10 outings
+  // recorded as 20). Guard + disable now happen synchronously, first
+  // thing, before any await.
+  if (bulkImportRunning) return;
   const athleteId = document.getElementById('bulk-athlete-select').value;
   if (!athleteId || !bulkOutings.length) return;
+
+  bulkImportRunning = true;
+  document.getElementById('bulk-import-btn').disabled = true;
+  document.getElementById('bulk-import-btn').textContent = 'Importing...';
+  document.getElementById('bulk-progress-wrap').style.display = '';
 
   // Check for duplicates against existing outings
   const existingRes = await api('getOutings', { athleteId });
   const existingDates = new Set((existingRes.outings||[]).map(o => o.date?.toString().split('T')[0]));
-
-  document.getElementById('bulk-import-btn').disabled = true;
-  document.getElementById('bulk-import-btn').textContent = 'Importing...';
-  document.getElementById('bulk-progress-wrap').style.display = '';
 
   let done=0, skipped=0, errors=0;
 
@@ -753,6 +821,10 @@ async function runBulkImport() {
       status.style.color = 'var(--good)';
       status.textContent = '✓ Saved';
       done++;
+      // Also record this date as now-existing so a duplicate date
+      // later in the SAME csv/run gets skipped too, not just re-checked
+      // against the pre-import snapshot.
+      existingDates.add(dateKey);
     } catch(e) {
       row.className = 'bulk-outing-row error';
       status.style.color = 'var(--danger)';
@@ -774,6 +846,10 @@ async function runBulkImport() {
   document.getElementById('bulk-result-title').textContent = title;
   document.getElementById('bulk-result-body').textContent = body;
   document.getElementById('bulk-result').style.display = '';
+
+  bulkImportRunning = false;
+  document.getElementById('bulk-import-btn').disabled = false;
+  document.getElementById('bulk-import-btn').textContent = 'Import All Outings';
 }
 
 function renderProfileHero() {
@@ -787,6 +863,14 @@ function renderProfileHero() {
      <span class="hero-meta-item">${a.team || '—'}</span>
      <span class="hero-meta-item">${a.level || '—'}</span>`;
   document.getElementById('profile-hero').style.opacity = '1';
+
+  // Last CSV updated — most recent outing import timestamp
+  const lastUpdatedEl = document.getElementById('profile-last-updated');
+  if (lastUpdatedEl) {
+    const createdDates = athleteOutings.map(o => o.createdAt).filter(Boolean).sort();
+    const latest = createdDates.length ? createdDates[createdDates.length-1] : null;
+    lastUpdatedEl.textContent = latest ? `Last CSV updated: ${formatDate(latest)}` : 'No outings imported yet';
+  }
 
   const totalPitches = athleteOutings.reduce((a,o)=>a+(+o.total_pitches||0), 0);
   const totalK  = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0), 0);
@@ -824,14 +908,12 @@ function renderProfileHero() {
   // Use org stats if available
   const heroKey = (currentAthlete.name||'').toLowerCase();
   const orgHero = (typeof SEASON_STATS !== 'undefined') ? SEASON_STATS?.[heroKey] : null;
-  const displayERA  = orgHero ? orgHero.era.toFixed(2)  : '—';
   const displayFIP  = orgHero ? orgHero.fip.toFixed(2)  : fip;
   const displayWHIP = orgHero ? orgHero.whip.toFixed(2) : whip;
   const displayKBB  = orgHero ? `${orgHero.kMinusBB}%`  : kMinusBB;
 
   document.getElementById('profile-kpis').innerHTML = [
     { v: athleteOutings.length, l: 'Outings' },
-    { v: displayERA,            l: 'ERA'     },
     { v: displayFIP,            l: 'FIP'     },
     { v: displayWHIP,           l: 'WHIP'    },
     { v: whiffRate+'%',         l: 'Whiff%'  },
@@ -847,7 +929,7 @@ function renderSeasonOverview() {
     let pm = {};
     try { pm = typeof o.pitch_stats === 'object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json || '{}'); } catch(e) {}
     Object.entries(pm).forEach(([pt, s]) => {
-      if (!combined[pt]) combined[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[] };
+      if (!combined[pt]) combined[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], ivbs:[], hbs:[] };
       const c = combined[pt];
       c.count += (s.count||0);
       c.whiffs += (s.whiffs||0);
@@ -855,6 +937,8 @@ function renderSeasonOverview() {
       c.hip += (s.hip||0);
       if (s.avgVelo) c.velos.push(pf(s.avgVelo));
       if (s.avgXwoba) c.xwobas.push(pf(s.avgXwoba));
+      if (s.avgIVB != null && s.avgIVB !== '') c.ivbs.push(pf(s.avgIVB));
+      if (s.avgHB != null && s.avgHB !== '') c.hbs.push(pf(s.avgHB));
     });
   });
 
@@ -873,17 +957,47 @@ function renderSeasonOverview() {
       const d = parseFloat(whiff) - mlbW;
       return `${mlbW}% <span class="${d>=0?'delta-good':'delta-bad'}">${d>=0?'▲':'▼'}${Math.abs(d).toFixed(1)}</span>`;
     })() : '—';
+
+    // 8-Grade — 100-scale, 100 = MLB average. Season-level outings
+    // only store avgVelo/avgIVB/avgHB (no release point), so this matches
+    // on REDUCED_FEATURES (velo + movement only, no release slot).
+    //
+    // IMPORTANT — two things have to be undone here, not just units:
+    // 1) avgIVB/avgHB are stored in INCHES, but shape_baselines.json was
+    //    built from raw Statcast pfx_x/pfx_z in FEET (app.js feeds it
+    //    unconverted) — so divide by 12.
+    // 2) avgHB specifically is ALSO pre-negated at storage time
+    //    (`-hb*12`, applied the same way regardless of throwing hand —
+    //    see the CSV-import parser), whereas matchShapeCluster() expects
+    //    the raw, un-negated Statcast sign and does its own hand-flip
+    //    internally. So avgHB needs an extra sign flip on top of the
+    //    unit conversion, or every pitch gets matched to a mirror-image
+    //    shape cluster. avgIVB has no such pre-negation, so it only
+    //    needs the /12.
+    let grade8 = null, gradeN = null;
+    if (currentAthlete?.throws && s.velos.length && s.ivbs.length && s.hbs.length) {
+      const result = compute8Grade(
+        pt, currentAthlete.throws.toUpperCase().charAt(0),
+        avg(s.velos), -avg(s.hbs) / 12, avg(s.ivbs) / 12,
+        null, null, null, REDUCED_FEATURES
+      );
+      if (result) { grade8 = result.grade; gradeN = result.n; }
+    }
+    const gradeClass = grade8 == null ? 'v-num' : grade8 >= 115 ? 'v-good' : grade8 >= 105 ? 'v-warn' : grade8 >= 90 ? 'v-num' : 'v-bad';
+    const gradeTitle = gradeN ? `8-Grade: 100 = MLB average · shape-matched vs ${gradeN.toLocaleString()} similar MLB pitches` : '8-Grade: 100 = MLB average';
+
     return `<tr>
       <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
       <td class="v-num">${s.count}</td>
       <td class="v-num">${usagePct}%</td>
       <td class="v-num">${avgV}</td>
+      <td class="${gradeClass}" title="${gradeTitle}">${grade8 ?? '—'}</td>
       <td class="${wC}">${whiff}%</td>
       <td class="v-num">${csw}%</td>
       <td class="v-num">${xwoba}</td>
       <td class="mlb-avg">${mlbTag}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="8" class="empty-state">No outing data yet.</td></tr>';
+  }).join('') || '<tr><td colspan="9" class="empty-state">No outing data yet.</td></tr>';
 
   // Charts
   if (profileCharts['season-mix']) { profileCharts['season-mix'].destroy(); }
@@ -1113,13 +1227,16 @@ function processOutingRows(rows) {
 
   rows.forEach(r => {
     const pt = r._pt;
-    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rawRows:[] };
+    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], rawRows:[] };
     const s = pitchMap[pt];
     s.count++;
     s.rawRows.push(r);
     if (r.release_speed) s.velos.push(pf(r.release_speed));
     if (r.pfx_x) s.pfx_xs.push(pf(r.pfx_x));
     if (r.pfx_z) s.pfx_zs.push(pf(r.pfx_z));
+    // Release point — release_pos_z (height, ft) / release_pos_x (side, ft)
+    if (r.release_pos_z) s.rel_zs.push(pf(r.release_pos_z));
+    if (r.release_pos_x) s.rel_xs.push(pf(r.release_pos_x));
 
     const desc = r.description||'';
     const zone = (r.zone||'').toString().trim();
@@ -1190,6 +1307,10 @@ function processOutingRows(rows) {
       avgHB:    s.pfx_xs.length ? +(-avg(s.pfx_xs)*12).toFixed(1) : null,
       avgVAA:   angles.length   ? +avg(angles.map(a=>a.vaa)).toFixed(1) : null,
       avgHAA:   angles.length   ? +avg(angles.map(a=>a.haa)).toFixed(1) : null,
+      // Release point — height (ft off ground) and side (ft from rubber
+      // center, catcher's-view sign — matches Statcast's raw convention).
+      avgRelHeight: s.rel_zs.length ? +avg(s.rel_zs).toFixed(2) : null,
+      avgRelSide:   s.rel_xs.length ? +avg(s.rel_xs).toFixed(2) : null,
     };
   });
 
@@ -1449,7 +1570,7 @@ async function renderSeasonInsight() {
   const orgStats = SEASON_STATS?.[seasonKey] || null;
   const orgStatsLine = orgStats ? `
 ORG REPORT STATS (source of truth — use these over Statcast estimates):
-ERA:${orgStats.era} | FIP:${orgStats.fip} | WHIP:${orgStats.whip} | IP:${orgStats.ip}
+FIP:${orgStats.fip} | WHIP:${orgStats.whip} | IP:${orgStats.ip}
 K%:${orgStats.kPct}% | BB%:${orgStats.bbPct}% | K%-BB%:${orgStats.kMinusBB}% | SwStr%:${orgStats.swingWhiffPct}%
 Total K:${orgStats.totalK} | Total BB:${orgStats.totalBB} | HR allowed:${orgStats.totalHR}
 
@@ -1924,6 +2045,28 @@ function renderReport() {
   });
 
   const totalPitches = Object.values(combined).reduce((a,s)=>a+s.count,0);
+
+  // MLB comps — uses velo + movement only (reduced feature set), since that's
+  // already saved for every historical outing. Release point isn't saved per
+  // outing yet, so comps here are slightly less precise than the single-CSV
+  // tool's, but work without re-importing anything.
+  const throwsHand = (currentAthlete.throws || 'R').toUpperCase().charAt(0);
+  const athleteArsenal = {};
+  const pitchComps = {};
+  Object.entries(combined).forEach(([pt, c]) => {
+    if (!c.velos.length || !c.hbs.length || !c.ivbs.length) return;
+    const norm = pt === 'FA' ? 'FF' : pt;
+    const velo = avg(c.velos);
+    const hbFeet = -avg(c.hbs)/12; // stored avgHB is inches, sign-flipped for display — back to raw feet
+    const vbFeet = avg(c.ivbs)/12;
+    athleteArsenal[norm] = {
+      usage_pct: c.count/totalPitches*100,
+      velo, hb_norm: hbFeet*(throwsHand==='L'?-1:1), vb: vbFeet,
+    };
+    pitchComps[norm] = findPitchComps(norm, throwsHand, velo, hbFeet, vbFeet, null, null, null, 3, REDUCED_FEATURES);
+  });
+  const arsenalComps = Object.keys(athleteArsenal).length ? findArsenalComps(athleteArsenal, 3, 150, REDUCED_FEATURES) : [];
+  const compName = c => c.name.split(', ').reverse().join(' ');
   const totalWhiffs  = Object.values(combined).reduce((a,s)=>a+s.whiffs,0);
   const totalCS      = Object.values(combined).reduce((a,s)=>a+s.cstrikes,0);
   const totalHIP     = Object.values(combined).reduce((a,s)=>a+s.hip,0);
@@ -2087,6 +2230,11 @@ function renderReport() {
 
       ${levelBadge}
 
+      ${arsenalComps.length ? `<div class="arsenal-comp-banner">
+        <span class="arsenal-comp-lbl">Arsenal comps (velo &amp; shape across the whole mix):</span>
+        ${arsenalComps.map(c => `<span class="arsenal-comp-chip">${compName(c)}</span>`).join('')}
+      </div>` : ''}
+
       <div class="report-section-hd">Season Percentiles${!hasBaselines?' (raw values)':' vs. MLB'}</div>
       <div class="pct-axis-labels"><span>Poor</span><span>Average</span><span>Great</span></div>
 
@@ -2120,6 +2268,13 @@ function renderReport() {
       <div class="pct-group-hd">Stuff</div>
       ${avgVelo     !== null     ? pctBar('FB Avg Velo', avgVelo,     r(avgVelo),     DIST.avgVelo,    ' mph') : ''}
       ${peakVelo    !== null     ? pctBar('FB Peak Velo',peakVelo,    r(peakVelo),    DIST.avgVelo,    ' mph') : ''}
+
+      ${Object.keys(pitchComps).length ? `<div class="pct-group-hd">MLB Comps by Pitch</div>
+        ${Object.entries(pitchComps).filter(([,c])=>c.length).map(([pt,c]) =>
+          `<div class="mlb-comp-tag" style="margin-bottom:6px" title="MLB pitchers with the closest matching velo/movement for this pitch">
+            <strong style="color:var(--text)">${pn(pt)}:</strong> ${c.map(compName).join(' · ')}
+          </div>`
+        ).join('')}` : ''}
 
     </div>`;
 }
@@ -2602,7 +2757,7 @@ function renderYoY() {
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
       if (!s.count || s.count === 0) return;
-      if (!combined[pt]) combined[pt] = { count:0, velos:[], peakVelos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, ivbs:[], hbs:[], vaas:[], haas:[] };
+      if (!combined[pt]) combined[pt] = { count:0, velos:[], peakVelos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, ivbs:[], hbs:[], vaas:[], haas:[], relHeights:[], relSides:[] };
       const c = combined[pt];
       c.count    += s.count   || 0;
       c.whiffs   += s.whiffs  || 0;
@@ -2616,6 +2771,8 @@ function renderYoY() {
       if (s.avgHB)     c.hbs.push(pf(s.avgHB));
       if (s.avgVAA)    c.vaas.push(pf(s.avgVAA));
       if (s.avgHAA)    c.haas.push(pf(s.avgHAA));
+      if (s.avgRelHeight != null && s.avgRelHeight !== '') c.relHeights.push(pf(s.avgRelHeight));
+      if (s.avgRelSide   != null && s.avgRelSide   !== '') c.relSides.push(pf(s.avgRelSide));
     });
   });
 
@@ -2633,6 +2790,8 @@ function renderYoY() {
       <div class="mov-header-stat">HB</div>
       <div class="mov-header-stat">VAA</div>
       <div class="mov-header-stat">HAA</div>
+      <div class="mov-header-stat">Rel Height</div>
+      <div class="mov-header-stat">Rel Side</div>
     </div>
   </div>`;
 
@@ -2650,6 +2809,8 @@ function renderYoY() {
     const hb    = s.hbs.length      ? avg(s.hbs).toFixed(1)+'"'  : '—';
     const vaa   = s.vaas.length     ? avg(s.vaas).toFixed(1)+'°' : '—';
     const haa   = s.haas.length     ? avg(s.haas).toFixed(1)+'°' : '—';
+    const relH  = s.relHeights.length ? avg(s.relHeights).toFixed(2)+"'" : '—';
+    const relS  = s.relSides.length   ? avg(s.relSides).toFixed(2)+"'"   : '—';
     return `<div class="mov-pitch-row">
       <div class="mov-pitch-label">
         <span class="pitch-dot" style="background:${pc(pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex-shrink:0"></span>
@@ -2663,6 +2824,8 @@ function renderYoY() {
         <div class="mov-stat"><div class="mov-stat-val">${hb}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${vaa}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${haa}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${relH}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${relS}</div></div>
       </div>
     </div>`;
   }).join('');
@@ -2766,6 +2929,180 @@ function renderYoY() {
 }
 
 /* ==================== COMPARE ==================== */
+/* ==================== YEAR OVER YEAR ==================== */
+function stripYearSuffix(name) {
+  return (name || '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
+}
+
+function computeSeasonAggregate(outings) {
+  const totalPitches = outings.reduce((a,o)=>a+(+o.total_pitches||0), 0);
+  const totalK   = outings.reduce((a,o)=>a+(+o.strikeouts||0), 0);
+  const totalBB  = outings.reduce((a,o)=>a+(+o.walks||0), 0);
+  const totalHR  = outings.reduce((a,o)=>a+(+o.hrs||0), 0);
+  const totalH   = outings.reduce((a,o)=>a+(+o.hits||0), 0);
+  const totalWhiffs = outings.reduce((a,o)=>a+(+o.whiffs||0), 0);
+  const totalIP  = outings.reduce((a,o)=>a+(+o.ip||0), 0);
+
+  const whiffPct = totalPitches ? +(totalWhiffs/totalPitches*100).toFixed(1) : null;
+  const fip = totalIP > 0 ? +(((13*totalHR + 3*totalBB - 2*totalK) / totalIP) + 3.10).toFixed(2) : null;
+  const whip = totalIP > 0 ? +((totalBB + totalH) / totalIP).toFixed(2) : null;
+
+  const totalBIP = outings.reduce((a,o) => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    return a + Object.values(pm).reduce((s,p)=>s+(p.hip||0), 0);
+  }, 0);
+  const totalPA = totalK + totalBB + totalBIP;
+  const kPct  = totalPA ? +(totalK/totalPA*100).toFixed(1) : null;
+  const bbPct = totalPA ? +(totalBB/totalPA*100).toFixed(1) : null;
+  const kMinusBB = (kPct !== null && bbPct !== null) ? +(kPct - bbPct).toFixed(1) : null;
+
+  // Per-pitch-type aggregation
+  const combined = {};
+  outings.forEach(o => {
+    let pm = {};
+    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
+    Object.entries(pm).forEach(([pt, s]) => {
+      if (!s.count) return;
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, velos:[], xwobas:[] };
+      const c = combined[pt];
+      c.count += s.count || 0;
+      c.whiffs += s.whiffs || 0;
+      if (s.avgVelo)  c.velos.push(pf(s.avgVelo));
+      if (s.avgXwoba) c.xwobas.push(pf(s.avgXwoba));
+    });
+  });
+  const pitchStats = {};
+  Object.entries(combined).forEach(([pt, s]) => {
+    pitchStats[pt] = {
+      count: s.count,
+      usagePct: totalPitches ? +(s.count/totalPitches*100).toFixed(1) : 0,
+      whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : null,
+      avgVelo: s.velos.length ? +avg(s.velos).toFixed(1) : null,
+      avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
+    };
+  });
+
+  return { outingCount: outings.length, totalIP, totalK, totalBB, totalHR, totalH, whiffPct, fip, whip, kMinusBB, pitchStats };
+}
+
+function yoyDeltaHTML(first, last, higherBetter=true) {
+  if (first === null || last === null || first === undefined || last === undefined) return '';
+  const d = +(last - first).toFixed(2);
+  if (Math.abs(d) < 0.05) return '<span style="color:var(--muted);font-size:11px"> —</span>';
+  const better = higherBetter ? d > 0 : d < 0;
+  const cls = better ? 'delta-good' : 'delta-bad';
+  const arrow = d > 0 ? '▲' : '▼';
+  return ` <span class="${cls}" style="font-size:11px">${arrow}${Math.abs(d)}</span>`;
+}
+
+async function renderYearOverYear() {
+  const container = document.getElementById('history-content');
+  container.innerHTML = '<div class="ai-loading"><div class="loading-spinner"></div><p>Loading season history...</p></div>';
+
+  const baseName = stripYearSuffix(currentAthlete.name).toLowerCase();
+
+  let allAthletes;
+  try {
+    const res = await api('getAthletes');
+    allAthletes = res.athletes;
+  } catch(e) {
+    container.innerHTML = `<div class="empty-state">Could not load athlete history: ${e.message}</div>`;
+    return;
+  }
+
+  const matches = allAthletes.filter(a => stripYearSuffix(a.name).toLowerCase() === baseName);
+
+  if (matches.length < 2) {
+    container.innerHTML = `<div class="empty-state">No other season records found for ${stripYearSuffix(currentAthlete.name)}.<br><small>Add a record named "${stripYearSuffix(currentAthlete.name)} (YYYY)" for a prior season, import its outings, and it'll show up here automatically.</small></div>`;
+    return;
+  }
+
+  const seasons = await Promise.all(matches.map(async a => {
+    let outings;
+    if (a.id === currentAthlete.id) {
+      outings = athleteOutings;
+    } else {
+      try { const r = await api('getOutings', { athleteId: a.id }); outings = r.outings; } catch(e) { outings = []; }
+    }
+    return { athlete: a, outings };
+  }));
+
+  seasons.forEach(s => {
+    const suffixMatch = s.athlete.name.match(/\((\d{4})\)\s*$/);
+    if (suffixMatch) {
+      s.year = suffixMatch[1];
+    } else {
+      const years = s.outings.map(o => (o.date||'').slice(0,4)).filter(Boolean);
+      const counts = {};
+      years.forEach(y => counts[y] = (counts[y]||0)+1);
+      s.year = Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0] || '—';
+    }
+    s.agg = computeSeasonAggregate(s.outings);
+    const key = s.athlete.name.toLowerCase();
+    s.orgStats = (typeof SEASON_STATS !== 'undefined') ? SEASON_STATS[key] : null;
+  });
+
+  seasons.sort((a,b) => (a.year||'').localeCompare(b.year||''));
+  renderYearOverYearHTML(seasons);
+}
+
+function renderYearOverYearHTML(seasons) {
+  const container = document.getElementById('history-content');
+  const first = seasons[0];
+  const last = seasons[seasons.length-1];
+
+  const headerRow = seasons.map(s => `<th class="v-num">${s.year}</th>`).join('');
+
+  function statRow(label, getVal, higherBetter=true, suffix='') {
+    const cells = seasons.map(s => {
+      const v = getVal(s);
+      return `<td class="v-num">${v === null || v === undefined ? '—' : v + suffix}</td>`;
+    }).join('');
+    const delta = yoyDeltaHTML(getVal(first), getVal(last), higherBetter);
+    return `<tr><td>${label}</td>${cells}<td style="min-width:60px">${seasons.length>1?delta:''}</td></tr>`;
+  }
+
+  const summaryTable = `
+    <table class="data-table" style="margin-bottom:1.5rem">
+      <thead><tr><th>Stat</th>${headerRow}<th>Trend</th></tr></thead>
+      <tbody>
+        ${statRow('Outings', s=>s.agg.outingCount, true)}
+        ${statRow('IP', s=>s.agg.totalIP || null, true)}
+        ${statRow('FIP', s=>s.orgStats ? s.orgStats.fip.toFixed(2) : s.agg.fip, false)}
+        ${statRow('WHIP', s=>s.orgStats ? s.orgStats.whip.toFixed(2) : s.agg.whip, false)}
+        ${statRow('K%-BB%', s=>s.orgStats ? s.orgStats.kMinusBB : s.agg.kMinusBB, true, '%')}
+        ${statRow('Whiff%', s=>s.orgStats ? s.orgStats.swingWhiffPct : s.agg.whiffPct, true, '%')}
+      </tbody>
+    </table>`;
+
+  // Arsenal comparison — union of pitch types across all seasons
+  const allPT = [...new Set(seasons.flatMap(s => Object.keys(s.agg.pitchStats)))];
+  const arsenalRows = allPT.map(pt => {
+    const veloDelta = yoyDeltaHTML(first.agg.pitchStats[pt]?.avgVelo ?? null, last.agg.pitchStats[pt]?.avgVelo ?? null, true);
+    const whiffDelta = yoyDeltaHTML(first.agg.pitchStats[pt]?.whiffPct ?? null, last.agg.pitchStats[pt]?.whiffPct ?? null, true);
+    const cells = seasons.map(s => {
+      const p = s.agg.pitchStats[pt];
+      if (!p) return `<td class="v-num" colspan="1">—</td>`;
+      return `<td class="v-num">${p.avgVelo ?? '—'}mph · ${p.whiffPct ?? '—'}% whiff · ${p.usagePct}% usage</td>`;
+    }).join('');
+    return `<tr>
+      <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
+      ${cells}
+      <td style="min-width:90px;font-size:11px">velo${veloDelta}<br>whiff${whiffDelta}</td>
+    </tr>`;
+  }).join('');
+
+  const arsenalTable = `
+    <div class="section-hd" style="margin-bottom:.75rem">Arsenal by season</div>
+    <table class="data-table">
+      <thead><tr><th>Pitch</th>${headerRow}<th>Trend</th></tr></thead>
+      <tbody>${arsenalRows}</tbody>
+    </table>`;
+
+  container.innerHTML = summaryTable + arsenalTable;
+}
+
 function populateCompareSelectors() {
   const sorted = [...athleteOutings].sort((a,b)=>b.date.localeCompare(a.date));
   const options = sorted.map(o => `<option value="${o.id}">${formatDate(o.date)} vs. ${o.opponent||'Unknown'}</option>`).join('');
