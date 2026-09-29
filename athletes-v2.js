@@ -652,7 +652,7 @@ function parseStatcastBulk(rows) {
       if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
       if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
         spins:[],locations:[],spray:[],
-        pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],realExts:[],effSpeeds:[],throws:[],
+        pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],realExts:[],effSpeeds:[],throws:[],mv:[],
         swings:0,zoneN:0,outN:0,zSw:0,oSw:0,zCon:0,
         lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]},
         rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]}};
@@ -668,6 +668,8 @@ function parseStatcastBulk(rows) {
       const v = parseFloat(r.release_speed); if (!isNaN(v)) s.velos.push(v);
       const hb = parseFloat(r.pfx_x); if (!isNaN(hb)) s.pfx_xs.push(-hb*12);
       const ivb = parseFloat(r.pfx_z); if (!isNaN(ivb)) s.pfx_zs.push(ivb*12);
+      // Per-pitch movement for the Movement Profile chart (inches, 1 decimal)
+      if (!isNaN(hb) && !isNaN(ivb)) s.mv.push([+(-hb*12).toFixed(1), +(ivb*12).toFixed(1)]);
       // Raw (unscaled, feet) shape/release values for MLB shape-matched comparison
       if (!isNaN(hb))  s.pfx_x_raw.push(hb);
       if (!isNaN(ivb)) s.pfx_z_raw.push(ivb);
@@ -823,6 +825,7 @@ function parseStatcastBulk(rows) {
         avgPercVelo:  s.effSpeeds.length ? +avgg(s.effSpeeds).toFixed(1) : null,
         swings:s.swings, zoneN:s.zoneN, outN:s.outN, zSw:s.zSw, oSw:s.oSw, zCon:s.zCon,
         bbe: s.launch_speeds.length,
+        mv: s.mv || [],
         locations: s.locations || [],
         spray: s.spray || [],
         lhh: makeSplitStats(s.lhh),
@@ -1428,13 +1431,14 @@ function processOutingRows(rows) {
 
   rows.forEach(r => {
     const pt = r._pt;
-    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[], swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0 };
+    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[], mv:[], swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0 };
     const s = pitchMap[pt];
     s.count++;
     s.rawRows.push(r);
     if (r.release_speed) s.velos.push(pf(r.release_speed));
     if (r.pfx_x) s.pfx_xs.push(pf(r.pfx_x));
     if (r.pfx_z) s.pfx_zs.push(pf(r.pfx_z));
+    if (r.pfx_x && r.pfx_z) s.mv.push([+(-pf(r.pfx_x)*12).toFixed(1), +(pf(r.pfx_z)*12).toFixed(1)]);
     // Release point — release_pos_z (height, ft) / release_pos_x (side, ft)
     if (r.release_pos_z) s.rel_zs.push(pf(r.release_pos_z));
     if (r.release_pos_x) s.rel_xs.push(pf(r.release_pos_x));
@@ -1522,6 +1526,7 @@ function processOutingRows(rows) {
       avgPercVelo:  s.effSpeeds.length ? +avg(s.effSpeeds).toFixed(1) : null,
       hardHitPct:   s.launch_speeds.length ? +(s.launch_speeds.filter(v=>v>=95).length/s.launch_speeds.length*100).toFixed(1) : null,
       bbe: s.launch_speeds.length,
+      mv: s.mv,
       swings:s.swings, zoneN:s.zoneN, outN:s.outN, zSw:s.zSw, oSw:s.oSw, zCon:s.zCon,
     };
   });
@@ -3127,29 +3132,127 @@ function renderYoY() {
       scales:{ y:{ beginAtZero:true, ticks:{callback:v=>v+'%',color:'#72747c',font:{size:10}}, grid:{color:'rgba(255,255,255,0.04)'}}, x:{ticks:{color:'#72747c',font:{size:11}},grid:{display:false}} } }
   });
 
-  // ---- Movement scatter — one point per outing per pitch ----
-  if (profileCharts['metrics-movement']) profileCharts['metrics-movement'].destroy();
-  const movDS = sorted.map(([pt]) => {
-    const points = athleteOutings.map(o => {
-      let pm = {};
-      try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
-      const s = pm[pt];
-      if (!s?.avgHB || !s?.avgIVB) return null;
-      return { x: pf(s.avgHB), y: pf(s.avgIVB) };
-    }).filter(Boolean);
-    return { label:pn(pt), data:points, backgroundColor:pc(pt)+'cc', pointRadius:6, pointHoverRadius:9 };
-  }).filter(ds => ds.data.length);
+  renderMovementProfile(sorted, total);
+}
 
-  profileCharts['metrics-movement'] = new Chart(document.getElementById('metrics-movement-chart'), {
-    type:'scatter', data:{ datasets:movDS },
-    options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ display:true, position:'right', labels:{ color:'#72747c', font:{size:11,family:'DM Mono'}, padding:10 } } },
-      scales:{
-        x:{ position:'center', title:{display:false}, ticks:{color:'#72747c',font:{size:10},stepSize:5}, grid:{color:'rgba(255,255,255,0.06)'}, min:-25, max:25 },
-        y:{ position:'center', title:{display:false}, ticks:{color:'#72747c',font:{size:10},stepSize:5}, grid:{color:'rgba(255,255,255,0.06)'}, min:-20, max:25 }
-      }
-    }
+/* ==================== MOVEMENT PROFILE (Savant-style) ==================== */
+// HB is stored as -pfx_x in inches: positive = toward 3B (catcher's view),
+// which is the orientation Savant uses — so no hand flip needed.
+// MLB average ellipses come from shape_baselines.json (pooled L+R, stored
+// arm-side-normalized in feet as if RHP; mirrored here for LHP).
+let movementMode = 'pitch';   // 'pitch' (individual pitches) | 'outing' (outing averages)
+let movementSample = true;    // 100-pitch sample when showing pitches
+
+function setMovementMode(m) { movementMode = m; renderYoY(); }
+function toggleMovementSample() { movementSample = !movementSample; renderYoY(); }
+
+function renderMovementProfile(sorted, total) {
+  const el = document.getElementById('metrics-movement-profile');
+  if (!el) return;
+  const lhp = (currentAthlete?.throws || '').toUpperCase() === 'L';
+  const pts = sorted.filter(([pt, s]) => pt !== 'OTHER' && s.count / (total||1) >= 0.02).map(([pt]) => pt);
+
+  // Collect dots per pitch type
+  const hasPitchData = athleteOutings.some(o => Object.values(o.pitch_stats || {}).some(s => s.mv && s.mv.length));
+  const mode = (movementMode === 'pitch' && hasPitchData) ? 'pitch' : 'outing';
+  const dots = {};
+  pts.forEach(pt => {
+    let arr = [];
+    athleteOutings.forEach(o => {
+      const s = o.pitch_stats?.[pt]; if (!s) return;
+      if (mode === 'pitch') { (s.mv || []).forEach(m => arr.push(m)); }
+      else if (s.avgHB != null && s.avgIVB != null && s.avgHB !== '' && s.avgIVB !== '') arr.push([pf(s.avgHB), pf(s.avgIVB)]);
+    });
+    dots[pt] = arr;
   });
+  // 100-pitch sample: split across pitch types by usage, evenly spaced (deterministic)
+  if (mode === 'pitch' && movementSample) {
+    const tot = pts.reduce((a, pt) => a + dots[pt].length, 0);
+    pts.forEach(pt => {
+      const a = dots[pt], n = Math.max(1, Math.round(100 * a.length / (tot || 1)));
+      if (a.length > n) { const step = a.length / n; dots[pt] = Array.from({length:n}, (_, i) => a[Math.floor(i * step)]); }
+    });
+  }
+
+  // Geometry: 24" = 250px, centered in a 620x620 box
+  const W = 620, C = 310, R = 250 / 24;
+  const X = hb => C + hb * R, Y = ivb => C - ivb * R;
+  const clamp = v => Math.max(-29, Math.min(29, v));
+
+  // MLB averages from shape baselines (feet, RHP-normalized)
+  const mlbFor = pt => {
+    const b = (typeof SHAPE_BASELINES !== 'undefined') ? SHAPE_BASELINES[pt === 'FA' ? 'FF' : pt] : null;
+    if (!b || !b.scaler_mean) return null;
+    const hbFeet = b.scaler_mean.hb_norm * (lhp ? -1 : 1);   // = pfx_x
+    return { hb: -hbFeet * 12, ivb: b.scaler_mean.vb * 12,
+             rx: (b.scaler_scale?.hb_norm || 0.3) * 12, ry: (b.scaler_scale?.vb || 0.35) * 12,
+             velo: b.scaler_mean.velo };
+  };
+
+  const rings = [6, 12, 18, 24].map(r => `<circle cx="${C}" cy="${C}" r="${r*R}" fill="none" stroke="var(--mp-line)" stroke-width="${r%12===0?1.4:1}" ${r%12===0?'':'stroke-dasharray="5 5"'}/>`).join('');
+  const ringLbl = [12, 24].map(r => `
+      <text x="${C+6}" y="${C - r*R + 16}" class="mp-tick">${r}"</text>
+      <text x="${C+6}" y="${C + r*R - 6}" class="mp-tick">${r}"</text>
+      <text x="${C - r*R + 4}" y="${C - 6}" class="mp-tick">${r}"</text>
+      <text x="${C + r*R - 26}" y="${C - 6}" class="mp-tick">${r}"</text>`).join('');
+  const patterns = pts.map(pt => `
+      <pattern id="mp-hatch-${pt}" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+        <rect width="8" height="8" fill="${pc(pt)}" fill-opacity="0.10"/>
+        <line x1="0" y1="0" x2="0" y2="8" stroke="${pc(pt)}" stroke-width="2" stroke-opacity="0.55"/>
+      </pattern>`).join('');
+  const mlbShapes = pts.map(pt => { const m = mlbFor(pt); if (!m) return '';
+    return `<ellipse cx="${X(clamp(m.hb))}" cy="${Y(clamp(m.ivb))}" rx="${Math.max(m.rx,4)*R}" ry="${Math.max(m.ry,4)*R}" fill="url(#mp-hatch-${pt})" stroke="${pc(pt)}" stroke-opacity=".5" stroke-dasharray="3 3"><title>MLB avg ${pn(pt)}: ${m.hb.toFixed(1)}" HB, ${m.ivb.toFixed(1)}" IVB</title></ellipse>`; }).join('');
+  const r = mode === 'pitch' ? 6.5 : 8;
+  const dotSvg = pts.map(pt => dots[pt].map(([hb, ivb]) =>
+    `<circle cx="${X(clamp(hb)).toFixed(1)}" cy="${Y(clamp(ivb)).toFixed(1)}" r="${r}" fill="${pc(pt)}" fill-opacity=".85" stroke="rgba(0,0,0,.45)" stroke-width="1"><title>${pn(pt)}: ${hb}" HB, ${ivb}" IVB</title></circle>`).join('')).join('');
+
+  const svg = `<svg viewBox="0 0 ${W} ${W}" class="mp-svg" role="img" aria-label="Movement profile">
+    <defs>${patterns}</defs>
+    <circle cx="${C}" cy="${C}" r="${30*R}" fill="var(--mp-band)"/>
+    <circle cx="${C}" cy="${C}" r="${24*R}" fill="var(--mp-fill)"/>
+    ${rings}
+    <line x1="${C-30*R}" y1="${C}" x2="${C+30*R}" y2="${C}" stroke="var(--mp-line)"/>
+    <line x1="${C}" y1="${C-30*R}" x2="${C}" y2="${C+30*R}" stroke="var(--mp-line)"/>
+    ${ringLbl}
+    ${mlbShapes}
+    ${dotSvg}
+    <text x="${C}" y="22" text-anchor="middle" class="mp-axis">1B ◀ MOVES TOWARD ▶ 3B</text>
+    <text x="14" y="${C-60}" class="mp-axis">MORE RISE ▲</text>
+    <text x="14" y="${C+70}" class="mp-axis">MORE DROP ▼</text>
+    <g transform="translate(${W-120},16)">
+      <ellipse cx="20" cy="14" rx="16" ry="12" fill="url(#mp-hatch-legend)" stroke="var(--muted)" stroke-dasharray="3 3"/>
+      <text x="42" y="19" class="mp-axis">MLB AVG</text>
+    </g>
+    <defs><pattern id="mp-hatch-legend" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="var(--muted)" stroke-width="1.5"/></pattern></defs>
+  </svg>`;
+
+  // Legend / table under the chart
+  const col = pts.map(pt => {
+    const s = sorted.find(([p]) => p === pt)[1];
+    const velo = s.velo && s.velo.w ? (s.velo.sum / s.velo.w).toFixed(1) : '—';
+    const m = mlbFor(pt);
+    return { pt, usage: (s.count / (total||1) * 100).toFixed(0) + '%', velo, mlbVelo: m ? m.velo.toFixed(1) : '—' };
+  });
+  const table = `<table class="mp-table">
+    <tr><td></td>${col.map(c => `<td><div class="mp-pname">${pn(c.pt)}</div><div class="mp-pill" style="background:${pc(c.pt)}"></div></td>`).join('')}</tr>
+    <tr><td class="mp-rlbl">Usage</td>${col.map(c => `<td>${c.usage}</td>`).join('')}</tr>
+    <tr><td class="mp-rlbl">MPH</td>${col.map(c => `<td>${c.velo}</td>`).join('')}</tr>
+    <tr><td class="mp-rlbl mp-it">MLB avg</td>${col.map(c => `<td class="mp-muted">${c.mlbVelo}</td>`).join('')}</tr>
+  </table>`;
+
+  const controls = `<div class="loc-filter-row mp-controls">
+      <button class="loc-filter-btn${mode==='pitch'?' active':''}" ${hasPitchData?'':'disabled title="Re-import outings to get per-pitch movement"'} onclick="setMovementMode('pitch')">Pitches</button>
+      <button class="loc-filter-btn${mode==='outing'?' active':''}" onclick="setMovementMode('outing')">Outing avgs</button>
+      ${mode==='pitch' ? `<button class="loc-filter-btn${movementSample?' active':''}" onclick="toggleMovementSample()">100-pitch sample</button>` : ''}
+    </div>`;
+
+  el.innerHTML = `<div class="mp-card">
+    <div class="mp-title"><span class="mp-year">${seasonLabel()}</span> Movement Profile (Induced Break)</div>
+    ${controls}
+    ${svg}
+    ${table}
+    <div class="chart-footnote">${mode==='pitch' ? 'Each dot = one pitch' : 'Each dot = one outing average'} · Catcher's view (arm side is right for RHP, left for LHP) · Hatched = MLB average shape for that pitch type</div>
+  </div>`;
 }
 
 /* ==================== COMPARE ==================== */
@@ -3158,57 +3261,63 @@ function stripYearSuffix(name) {
   return (name || '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
 }
 
+// IP is stored as outs/3 rounded to 2 decimals (e.g. 0.33, 0.67), so sums
+// drift (43.0100000005). Convert back to outs for all IP math.
+const ipToOuts = ip => Math.round((+ip || 0) * 3);
+const fmtIP = outs => outs ? `${Math.floor(outs/3)}.${outs%3}` : '—';
+
 function computeSeasonAggregate(outings) {
-  const totalPitches = outings.reduce((a,o)=>a+(+o.total_pitches||0), 0);
-  const totalK   = outings.reduce((a,o)=>a+(+o.strikeouts||0), 0);
-  const totalBB  = outings.reduce((a,o)=>a+(+o.walks||0), 0);
-  const totalHR  = outings.reduce((a,o)=>a+(+o.hrs||0), 0);
-  const totalH   = outings.reduce((a,o)=>a+(+o.hits||0), 0);
-  const totalWhiffs = outings.reduce((a,o)=>a+(+o.whiffs||0), 0);
-  const totalIP  = outings.reduce((a,o)=>a+(+o.ip||0), 0);
+  const sum = f => outings.reduce((a,o)=>a+(+o[f]||0), 0);
+  const totalPitches = sum('total_pitches');
+  const totalK = sum('strikeouts'), totalBB = sum('walks'), totalHR = sum('hrs'), totalH = sum('hits');
+  const outs = outings.reduce((a,o)=>a+ipToOuts(o.ip), 0);
+  const ip = outs / 3;
 
-  const whiffPct = outingsWhiffSw(outings);   // per swing
-  const fip = totalIP > 0 ? +(((13*totalHR + 3*totalBB - 2*totalK) / totalIP) + 3.10).toFixed(2) : null;
-  const whip = totalIP > 0 ? +((totalBB + totalH) / totalIP).toFixed(2) : null;
+  const fip  = ip > 0 ? +(((13*totalHR + 3*totalBB - 2*totalK) / ip) + 3.10).toFixed(2) : null;
+  const whip = ip > 0 ? +((totalBB + totalH) / ip).toFixed(2) : null;
 
-  const totalBIP = outings.reduce((a,o) => {
-    let pm = {};
-    try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
-    return a + Object.values(pm).reduce((s,p)=>s+(p.hip||0), 0);
-  }, 0);
-  const totalPA = totalK + totalBB + totalBIP;
-  const kPct  = totalPA ? +(totalK/totalPA*100).toFixed(1) : null;
-  const bbPct = totalPA ? +(totalBB/totalPA*100).toFixed(1) : null;
-  const kMinusBB = (kPct !== null && bbPct !== null) ? +(kPct - bbPct).toFixed(1) : null;
-
-  // Per-pitch-type aggregation
+  // Per-pitch-type aggregation (weighted by pitches / balls in play)
   const combined = {};
+  let totalBIP = 0, totW = 0, totCS = 0;
   outings.forEach(o => {
     let pm = {};
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
-      if (!s.count) return;
-      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, velos:[], xwobas:[], swings:0, swWhiffs:0 };
-      const c = combined[pt];
-      c.count += s.count || 0;
-      c.whiffs += s.whiffs || 0;
+      if (!s || !s.count) return;
+      totalBIP += s.hip || 0; totW += s.whiffs || 0; totCS += s.cstrikes || 0;
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, swings:0, swWhiffs:0, hip:0,
+        velo:[0,0], ivb:[0,0], hb:[0,0], spin:[0,0], xwoba:[0,0], hh:[0,0] };
+      const c = combined[pt], n = s.count;
+      const add = (acc, v, w) => { if (v === null || v === undefined || v === '' || isNaN(+v) || !w) return; acc[0] += (+v)*w; acc[1] += w; };
+      c.count += n; c.whiffs += s.whiffs||0; c.cstrikes += s.cstrikes||0; c.hip += s.hip||0;
       if (s.swings) { c.swings += s.swings; c.swWhiffs += s.swWhiffs||0; }
-      if (s.avgVelo)  c.velos.push(pf(s.avgVelo));
-      if (s.avgXwoba) c.xwobas.push(pf(s.avgXwoba));
+      add(c.velo, s.avgVelo, n); add(c.ivb, s.avgIVB, n); add(c.hb, s.avgHB, n); add(c.spin, s.avgSpin, n);
+      add(c.xwoba, s.avgXwoba, s.hip||0); add(c.hh, s.hardHitPct, s.bbe || s.hip || 0);
     });
   });
+  const totalPA = totalK + totalBB + totalBIP;
+  const kPct  = totalPA ? +(totalK/totalPA*100).toFixed(1) : null;
+  const bbPct = totalPA ? +(totalBB/totalPA*100).toFixed(1) : null;
+  const kMinusBB = (kPct !== null && bbPct !== null) ? +(kPct - bbPct).toFixed(1) : null;
+  const whiffPct = outingsWhiffSw(outings);   // per swing
+  const cswPct = totalPitches ? +((totW + totCS) / totalPitches * 100).toFixed(1) : null;
+
+  const wv = (acc, d) => acc[1] ? +(acc[0]/acc[1]).toFixed(d) : null;
   const pitchStats = {};
   Object.entries(combined).forEach(([pt, s]) => {
     pitchStats[pt] = {
       count: s.count,
       usagePct: totalPitches ? +(s.count/totalPitches*100).toFixed(1) : 0,
-      whiffPct: wps(s.swWhiffs, s.swings),   // per swing
-      avgVelo: s.velos.length ? +avg(s.velos).toFixed(1) : null,
-      avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
+      whiffPct: wps(s.swWhiffs, s.swings),
+      cswPct: s.count ? +((s.whiffs + s.cstrikes)/s.count*100).toFixed(1) : null,
+      avgVelo: wv(s.velo, 1), avgIVB: wv(s.ivb, 1), avgHB: wv(s.hb, 1), avgSpin: wv(s.spin, 0),
+      avgXwoba: wv(s.xwoba, 3), hardHitPct: wv(s.hh, 1),
     };
   });
+  const ff = pitchStats.FF || pitchStats.FA || pitchStats.SI;
 
-  return { outingCount: outings.length, totalIP, totalK, totalBB, totalHR, totalH, whiffPct, fip, whip, kMinusBB, pitchStats };
+  return { outingCount: outings.length, outs, totalIP: ip, totalPitches, totalK, totalBB, totalHR, totalH,
+           whiffPct, cswPct, fip, whip, kPct, bbPct, kMinusBB, fbVelo: ff ? ff.avgVelo : null, pitchStats };
 }
 
 function yoyDeltaHTML(first, last, higherBetter=true) {
@@ -3316,12 +3425,28 @@ function toggleYoYYear(year) {
   renderYearOverYearHTML();
 }
 
+function yoySparkline(vals, higherBetter) {
+  const pts = vals.map((v, i) => [i, v]).filter(([, v]) => v !== null && v !== undefined && !isNaN(v));
+  if (pts.length < 2) return '';
+  const W = 72, H = 22, P = 3;
+  const ys = pts.map(p => +p[1]), min = Math.min(...ys), max = Math.max(...ys);
+  const x = i => P + i * (W - 2*P) / Math.max(1, vals.length - 1);
+  const y = v => max === min ? H/2 : H - P - (v - min) * (H - 2*P) / (max - min);
+  const d = pts.map(([i, v]) => `${x(i).toFixed(1)},${y(+v).toFixed(1)}`).join(' ');
+  const first = +pts[0][1], last = +pts[pts.length-1][1];
+  const up = last > first;
+  const col = higherBetter === null ? 'var(--muted2)' : (up === higherBetter ? 'var(--good)' : 'var(--danger)');
+  const [li, lv] = pts[pts.length-1];
+  return `<svg class="yoy-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><polyline points="${d}" fill="none" stroke="${col}" stroke-width="1.6"/><circle cx="${x(li)}" cy="${y(+lv)}" r="2.4" fill="${col}"/></svg>`;
+}
+
 function renderYearOverYearHTML() {
   const container = document.getElementById('history-content');
   const seasons = yoySeasons.filter(s => yoySelectedYears.has(s.year));
   const first = seasons[0];
   const last = seasons[seasons.length-1];
   const allOn = seasons.length === yoySeasons.length;
+  const multi = seasons.length > 1;
 
   const yearButtons = `
     <div class="loc-filter-row" style="margin-bottom:1.25rem">
@@ -3330,58 +3455,93 @@ function renderYearOverYearHTML() {
       ${yoySeasons.map(s => `<button class="loc-filter-btn${yoySelectedYears.has(s.year)?' active':''}" onclick="toggleYoYYear('${s.year}')">${s.year}</button>`).join('')}
     </div>`;
 
-  const headerRow = seasons.map(s => `<th class="v-num">${s.year}</th>`).join('');
-  const trendHd = seasons.length > 1 ? `<th>Trend ${first.year}→${last.year}</th>` : '<th></th>';
+  const colgroup = `<colgroup><col class="yoy-c-label">${seasons.map(()=>'<col>').join('')}<col class="yoy-c-trend"></colgroup>`;
+  const yearHead = seasons.map(s => `<th class="yoy-year">${s.year}</th>`).join('');
+  const trendHead = `<th class="yoy-trend-hd">${multi ? `${first.year} → ${last.year}` : ''}</th>`;
 
-  function statRow(label, getVal, higherBetter=true, suffix='') {
-    const cells = seasons.map(s => {
-      const v = getVal(s);
-      return `<td class="v-num">${v === null || v === undefined ? '—' : v + suffix}</td>`;
-    }).join('');
-    const delta = seasons.length > 1 ? yoyDeltaHTML(getVal(first), getVal(last), higherBetter) : '';
-    return `<tr><td>${label}</td>${cells}<td style="min-width:60px">${delta}</td></tr>`;
+  // fmt: value -> display string. higherBetter: true / false / null (no judgement)
+  function row(label, getVal, fmt, higherBetter, d = 1) {
+    const vals = seasons.map(s => { const v = getVal(s); return (v === null || v === undefined || v === '' || isNaN(+v)) ? null : +v; });
+    const cells = vals.map(v => `<td class="v-num">${v === null ? '<span class="yoy-na">—</span>' : fmt(v)}</td>`).join('');
+    let trend = '';
+    if (multi) {
+      const a = vals[0], b = vals[vals.length-1];
+      let delta = '';
+      if (a !== null && b !== null && higherBetter !== null) {
+        const diff = b - a;
+        const tol = d >= 3 ? 0.005 : d === 2 ? 0.05 : 0.25;
+        if (Math.abs(diff) < tol) delta = '<span class="yoy-flat">—</span>';
+        else {
+          const cls = (diff > 0) === higherBetter ? 'delta-good' : 'delta-bad';
+          const txt = d >= 3 ? Math.abs(diff).toFixed(3).replace(/^0/, '') : Math.abs(diff).toFixed(d);
+          delta = `<span class="${cls}">${diff > 0 ? '▲' : '▼'}${txt}</span>`;
+        }
+      }
+      trend = `<div class="yoy-trend">${yoySparkline(vals, higherBetter)}${delta}</div>`;
+    }
+    return `<tr><td class="yoy-label">${label}</td>${cells}<td>${trend}</td></tr>`;
   }
+  const pct1 = v => v.toFixed(1) + '%';
+  const dec2 = v => v.toFixed(2);
+  const dec1 = v => v.toFixed(1);
+  const int  = v => String(Math.round(v));
+  const x3   = v => v.toFixed(3).replace(/^0/, '');
+  const org  = (s, k) => s.orgStats && s.orgStats[k] != null ? s.orgStats[k] : null;
 
   const summaryTable = `
+    <div class="section-hd" style="margin-bottom:.5rem">Season summary</div>
     <div class="table-scroll">
-    <table class="data-table" style="margin-bottom:1.5rem">
-      <thead><tr><th>Stat</th>${headerRow}${trendHd}</tr></thead>
+    <table class="data-table yoy-table">
+      ${colgroup}
+      <thead><tr><th>Stat</th>${yearHead}${trendHead}</tr></thead>
       <tbody>
-        ${statRow('Outings', s=>s.agg.outingCount, true)}
-        ${statRow('IP', s=>s.agg.totalIP || null, true)}
-        ${statRow('FIP', s=>s.orgStats ? s.orgStats.fip.toFixed(2) : s.agg.fip, false)}
-        ${statRow('WHIP', s=>s.orgStats ? s.orgStats.whip.toFixed(2) : s.agg.whip, false)}
-        ${statRow('K%-BB%', s=>s.orgStats ? s.orgStats.kMinusBB : s.agg.kMinusBB, true, '%')}
-        ${statRow('Whiff%', s=>s.orgStats ? s.orgStats.swingWhiffPct : s.agg.whiffPct, true, '%')}
+        <tr class="yoy-group"><td colspan="${seasons.length+2}">Workload</td></tr>
+        ${row('Outings', s=>s.agg.outingCount, int, null)}
+        ${row('IP', s=>s.agg.outs ? s.agg.outs/3 : null, v => fmtIP(Math.round(v*3)), null)}
+        ${row('Pitches', s=>s.agg.totalPitches || null, int, null)}
+        <tr class="yoy-group"><td colspan="${seasons.length+2}">Run prevention</td></tr>
+        ${row('FIP',  s=>org(s,'fip')  ?? s.agg.fip,  dec2, false, 2)}
+        ${row('WHIP', s=>org(s,'whip') ?? s.agg.whip, dec2, false, 2)}
+        <tr class="yoy-group"><td colspan="${seasons.length+2}">Strikeouts &amp; walks</td></tr>
+        ${row('K%',     s=>org(s,'kPct')  ?? s.agg.kPct,  pct1, true)}
+        ${row('BB%',    s=>org(s,'bbPct') ?? s.agg.bbPct, pct1, false)}
+        ${row('K%-BB%', s=>org(s,'kMinusBB') ?? s.agg.kMinusBB, pct1, true)}
+        <tr class="yoy-group"><td colspan="${seasons.length+2}">Stuff</td></tr>
+        ${row('Whiff%', s=>org(s,'swingWhiffPct') ?? s.agg.whiffPct, pct1, true)}
+        ${row('CSW%',   s=>s.agg.cswPct, pct1, true)}
+        ${row('FB velo', s=>s.agg.fbVelo, dec1, true)}
       </tbody>
     </table>
     </div>`;
 
-  // Arsenal comparison — union of pitch types across the selected seasons
-  const allPT = [...new Set(seasons.flatMap(s => Object.keys(s.agg.pitchStats)))];
-  const arsenalRows = allPT.map(pt => {
-    const veloDelta  = yoyDeltaHTML(first.agg.pitchStats[pt]?.avgVelo ?? null, last.agg.pitchStats[pt]?.avgVelo ?? null, true);
-    const whiffDelta = yoyDeltaHTML(first.agg.pitchStats[pt]?.whiffPct ?? null, last.agg.pitchStats[pt]?.whiffPct ?? null, true);
-    const cells = seasons.map(s => {
-      const p = s.agg.pitchStats[pt];
-      if (!p) return `<td class="v-num">—</td>`;
-      return `<td class="v-num">${p.avgVelo ?? '—'}mph · ${p.whiffPct ?? '—'}% whiff · ${p.usagePct}% usage</td>`;
-    }).join('');
-    return `<tr>
-      <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
-      ${cells}
-      <td style="min-width:90px;font-size:11px">${seasons.length > 1 ? `velo${veloDelta}<br>whiff${whiffDelta}` : ''}</td>
-    </tr>`;
-  }).join('');
+  // Arsenal — one block per pitch, one row per metric
+  const allPT = [...new Set(seasons.flatMap(s => Object.keys(s.agg.pitchStats)))]
+    .filter(pt => pt !== 'OTHER' && seasons.some(s => (s.agg.pitchStats[pt]?.usagePct || 0) >= 1))
+    .sort((a, b) => Math.max(...seasons.map(s => s.agg.pitchStats[b]?.count || 0)) - Math.max(...seasons.map(s => s.agg.pitchStats[a]?.count || 0)));
+  const P = (pt, k) => s => s.agg.pitchStats[pt]?.[k] ?? null;
+  const inch = v => v.toFixed(1) + '"';
+  const arsenalBody = allPT.map(pt => `
+      <tr class="yoy-pitch-hd"><td colspan="${seasons.length+2}"><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td></tr>
+      ${row('Usage',   P(pt,'usagePct'), pct1, null)}
+      ${row('Velo',    P(pt,'avgVelo'),  dec1, true)}
+      ${row('Spin',    P(pt,'avgSpin'),  int,  null)}
+      ${row('IVB',     P(pt,'avgIVB'),   inch, null)}
+      ${row('HB',      P(pt,'avgHB'),    inch, null)}
+      ${row('Whiff%',  P(pt,'whiffPct'), pct1, true)}
+      ${row('CSW%',    P(pt,'cswPct'),   pct1, true)}
+      ${row('xwOBA',   P(pt,'avgXwoba'), x3,   false, 3)}
+      ${row('Hard hit%', P(pt,'hardHitPct'), pct1, false)}`).join('');
 
   const arsenalTable = `
-    <div class="section-hd" style="margin-bottom:.75rem">Arsenal by season</div>
+    <div class="section-hd" style="margin:1.75rem 0 .5rem">Arsenal by season</div>
     <div class="table-scroll">
-    <table class="data-table">
-      <thead><tr><th>Pitch</th>${headerRow}${trendHd}</tr></thead>
-      <tbody>${arsenalRows}</tbody>
+    <table class="data-table yoy-table">
+      ${colgroup}
+      <thead><tr><th>Metric</th>${yearHead}${trendHead}</tr></thead>
+      <tbody>${arsenalBody}</tbody>
     </table>
-    </div>`;
+    </div>
+    <div class="chart-footnote">Whiff% = whiffs per swing · xwOBA on balls in play · Trend compares the first and last selected seasons (green = better)</div>`;
 
   container.innerHTML = yearButtons + summaryTable + arsenalTable;
 }

@@ -784,3 +784,39 @@
 .shape-group-stats { display:grid; grid-template-columns:repeat(3, 1fr); gap:.5rem; }
 .shape-stat-lbl { font-size:10px; color:var(--muted); margin-bottom:2px; }
 .shape-stat-val { font-family:'DM Mono',monospace; font-size:15px; color:var(--text); }
+
+/* ---- MOVEMENT PROFILE (Savant-style) ---- */
+:root { --mp-band: rgba(96,165,250,.06); --mp-fill: rgba(96,165,250,.04); --mp-line: rgba(255,255,255,.22); }
+.mp-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.25rem; max-width:680px; margin:0 auto; }
+.mp-title { font-family:'Barlow Condensed',sans-serif; font-size:24px; font-weight:600; text-align:center; margin-bottom:.5rem; }
+.mp-year { font-weight:800; border-bottom:3px dotted var(--cyan); }
+.mp-controls { justify-content:center; margin-bottom:.5rem; }
+.mp-controls .loc-filter-btn[disabled] { opacity:.4; cursor:not-allowed; }
+.mp-svg { width:100%; height:auto; display:block; }
+.mp-tick { font-family:'DM Mono',monospace; font-size:12px; fill:var(--muted); }
+.mp-axis { font-family:'DM Mono',monospace; font-size:11px; fill:var(--muted); letter-spacing:.05em; }
+.mp-table { margin:.75rem auto 0; border-collapse:collapse; font-family:'DM Mono',monospace; }
+.mp-table td { padding:.3rem 1.1rem; text-align:center; font-size:15px; }
+.mp-rlbl { text-align:right !important; color:var(--cyan); font-family:'Barlow Condensed',sans-serif; font-size:16px !important; text-transform:uppercase; }
+.mp-it { font-style:italic; }
+.mp-pname { font-family:'Barlow Condensed',sans-serif; font-size:17px; font-weight:600; }
+.mp-pill { height:12px; border-radius:6px; margin:4px auto 0; width:64px; }
+.mp-muted { color:var(--muted); }
+
+/* ---- YEAR OVER YEAR ---- */
+.yoy-table { table-layout:fixed; width:100%; min-width:560px; }
+.yoy-table col.yoy-c-label { width:130px; }
+.yoy-table col.yoy-c-trend { width:150px; }
+.yoy-table th.yoy-year, .yoy-table td.v-num { text-align:right; }
+.yoy-table th.yoy-trend-hd { text-align:left; padding-left:1.25rem; }
+.yoy-table td { padding-top:.45rem; padding-bottom:.45rem; }
+.yoy-table td:last-child { padding-left:1.25rem; }
+.yoy-label { color:var(--muted); }
+.yoy-na { color:var(--muted); opacity:.5; }
+.yoy-flat { color:var(--muted); }
+.yoy-trend { display:flex; align-items:center; gap:.5rem; font-size:11px; font-family:'DM Mono',monospace; }
+.yoy-spark { flex-shrink:0; }
+.yoy-group td { padding-top:1rem !important; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--cyan); border-bottom:none !important; }
+.yoy-pitch-hd td { padding-top:1.1rem !important; border-bottom:1px solid var(--border2) !important; }
+.yoy-pitch-hd .pitch-chip { font-family:'Barlow Condensed',sans-serif; font-size:17px; font-weight:700; }
+.yoy-pitch-hd .pitch-dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; }

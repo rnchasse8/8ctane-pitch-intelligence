@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>8ctane — Athletes</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="athletes.css?v=20260929i">
+<link rel="stylesheet" href="athletes.css?v=20260929j">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -240,6 +240,11 @@
       </div>
 
       <div class="section" style="margin-top:1.5rem">
+        <div class="section-hd">Movement profile — <span class="season-label"></span></div>
+        <div id="metrics-movement-profile"></div>
+      </div>
+
+      <div class="section" style="margin-top:1.5rem">
         <div class="section-hd">Swing &amp; miss — <span class="season-label"></span></div>
         <div class="table-scroll">
           <table class="data-table">
@@ -281,14 +286,6 @@
         <div class="chart-card">
           <div class="chart-card-title">Whiff% vs. MLB average</div>
           <div class="chart-wrap" style="height:220px"><canvas id="metrics-whiff-chart" role="img" aria-label="Whiff% vs MLB average"></canvas></div>
-        </div>
-      </div>
-
-      <div class="section" style="margin-top:1.5rem">
-        <div class="section-hd">Movement plot — <span class="season-label"></span> season</div>
-        <div class="chart-card" style="padding:1.25rem">
-          <div class="chart-wrap" style="height:380px"><canvas id="metrics-movement-chart" role="img" aria-label="Season movement plot"></canvas></div>
-          <div class="chart-footnote">Each dot = one outing avg · Arm-side = positive HB (right for RHP) · Rise = positive IVB</div>
         </div>
       </div>
 
@@ -378,6 +375,6 @@
 
 <script src="baselines-ref.js?v=20260527"></script>
 <script src="mlb-shape-match.js?v=20260725"></script>
-<script src="athletes-v2.js?v=20260929i"></script>
+<script src="athletes-v2.js?v=20260929j"></script>
 </body>
 </html>
