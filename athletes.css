@@ -762,3 +762,25 @@
   color: var(--cyan); margin-bottom: 4px;
 }
 .mlb-comp-reason { font-size: 13px; color: var(--muted); line-height: 1.65; }
+
+/* ---- SEASON SELECTOR (in athlete hero, under the name) ---- */
+.season-bar { margin-top: .6rem; }
+.season-bar .loc-filter-row { gap: .35rem; }
+.season-bar .loc-filter-label { min-width: 0; margin-right: .15rem; }
+.season-bar .loc-filter-btn { padding: 3px 10px; font-size: 11px; }
+
+/* ---- PITCH SHAPE CARDS (Pitch Metrics tab) ---- */
+.shape-cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:1rem; }
+.shape-card {
+  background:var(--surface); border:1px solid var(--border); border-top:3px solid var(--border2);
+  border-radius:8px; padding:1rem 1.1rem;
+}
+.shape-card-hd { display:flex; align-items:center; gap:.5rem; margin-bottom:.85rem; }
+.shape-card-hd .pitch-dot { width:10px; height:10px; border-radius:50%; display:inline-block; flex-shrink:0; }
+.shape-card-name { font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:18px; text-transform:uppercase; letter-spacing:.03em; }
+.shape-card-sub { margin-left:auto; font-size:11px; color:var(--muted); font-family:'DM Mono',monospace; }
+.shape-group { display:grid; grid-template-columns:80px 1fr; align-items:center; padding:.5rem 0; border-top:1px solid var(--border); }
+.shape-group-lbl { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-family:'DM Mono',monospace; }
+.shape-group-stats { display:grid; grid-template-columns:repeat(3, 1fr); gap:.5rem; }
+.shape-stat-lbl { font-size:10px; color:var(--muted); margin-bottom:2px; }
+.shape-stat-val { font-family:'DM Mono',monospace; font-size:15px; color:var(--text); }

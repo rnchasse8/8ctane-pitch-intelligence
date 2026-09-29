@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>8ctane — Athletes</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="athletes.css">
+<link rel="stylesheet" href="athletes.css?v=20260929h">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -127,6 +127,8 @@
         <div class="athlete-hero-name" id="profile-name"></div>
         <div class="athlete-hero-meta" id="profile-meta"></div>
         <div class="athlete-hero-updated" id="profile-last-updated" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
+        <!-- Season selector — filters every tab to one year; hidden for single-season athletes -->
+        <div id="season-bar" class="season-bar" style="display:none"></div>
       </div>
     </div>
     <div class="kpi-strip" id="profile-kpis"></div>
@@ -160,7 +162,7 @@
             <thead><tr>
               <th>Pitch</th><th>Total pitches</th><th>Usage</th>
               <th>Avg velo</th><th>8-Grade</th><th>Whiff%</th><th>CSW%</th><th>xwOBA</th>
-              <th>MLB avg whiff%</th>
+              <th>Whiff/Swing vs MLB</th>
             </tr></thead>
             <tbody id="season-arsenal-body"></tbody>
           </table>
@@ -233,30 +235,42 @@
           <div class="section-hd">8ctane psStuff+ metrics</div>
           <div id="metrics-psstuff-cards"></div>
         </div>
-        <div class="section-hd">Season pitch shapes — 2026</div>
-        <div id="metrics-shape-cards" class="mov-cards-wrap"></div>
+        <div class="section-hd">Season pitch shapes — <span class="season-label"></span></div>
+        <div id="metrics-shape-cards" class="shape-cards"></div>
       </div>
 
       <div class="section" style="margin-top:1.5rem">
-        <div class="section-hd">Season performance — 2026</div>
+        <div class="section-hd">Swing &amp; miss — <span class="season-label"></span></div>
         <div class="table-scroll">
           <table class="data-table">
             <thead><tr>
-              <th>Pitch</th>
-              <th>Pitches</th>
-              <th>Usage</th>
-              <th>Whiff%</th>
-              <th>MLB avg</th>
-              <th>CSW%</th>
-              <th>MLB avg</th>
-              <th>xwOBA</th>
-              <th>MLB avg</th>
-              <th>Avg EV</th>
-              <th>Hard hit%</th>
+              <th>Pitch</th><th>Pitches</th><th>Usage</th>
+              <th>Whiff/Swing</th><th>MLB avg</th>
+              <th>Whiff/Pitch</th><th>CSW%</th>
+              <th>Zone%</th><th>Chase%</th><th>Z-Contact%</th>
             </tr></thead>
-            <tbody id="metrics-perf-body"></tbody>
+            <tbody id="metrics-swing-body"></tbody>
           </table>
         </div>
+        <div id="metrics-swing-note" class="chart-footnote" style="display:none">Whiff/Swing, Zone%, Chase% and Z-Contact% need outings imported after Sept 29 2026. Delete and re-import older outings to fill them in.</div>
+      </div>
+
+      <div class="section" style="margin-top:1.5rem">
+        <div class="section-hd">Contact quality vs. MLB — <span class="season-label"></span></div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr>
+              <th>Pitch</th><th>BBE</th>
+              <th>xwOBA</th><th>MLB avg</th>
+              <th>xBA</th><th>xSLG</th>
+              <th>Avg EV</th><th>MLB avg</th>
+              <th>Hard hit%</th><th>MLB avg</th>
+              <th>GB%</th>
+            </tr></thead>
+            <tbody id="metrics-contact-body"></tbody>
+          </table>
+        </div>
+        <div class="chart-footnote">xwOBA, xBA and xSLG are on balls in play · Hard hit = 95+ mph EV · MLB whiff baseline is per swing</div>
       </div>
 
       <div class="chart-grid-2" style="margin-top:1.5rem">
@@ -265,13 +279,13 @@
           <div class="chart-wrap" style="height:220px"><canvas id="metrics-velo-chart" role="img" aria-label="Avg velocity by pitch"></canvas></div>
         </div>
         <div class="chart-card">
-          <div class="chart-card-title">Whiff% vs. MLB average</div>
+          <div class="chart-card-title">Whiff/Swing vs. MLB average</div>
           <div class="chart-wrap" style="height:220px"><canvas id="metrics-whiff-chart" role="img" aria-label="Whiff% vs MLB average"></canvas></div>
         </div>
       </div>
 
       <div class="section" style="margin-top:1.5rem">
-        <div class="section-hd">Movement plot — 2026 season</div>
+        <div class="section-hd">Movement plot — <span class="season-label"></span> season</div>
         <div class="chart-card" style="padding:1.25rem">
           <div class="chart-wrap" style="height:380px"><canvas id="metrics-movement-chart" role="img" aria-label="Season movement plot"></canvas></div>
           <div class="chart-footnote">Each dot = one outing avg · Arm-side = positive HB (right for RHP) · Rise = positive IVB</div>
@@ -364,6 +378,6 @@
 
 <script src="baselines-ref.js?v=20260527"></script>
 <script src="mlb-shape-match.js?v=20260725"></script>
-<script src="athletes-v2.js?v=20260929d"></script>
+<script src="athletes-v2.js?v=20260929h"></script>
 </body>
 </html>

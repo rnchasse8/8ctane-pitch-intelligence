@@ -28,7 +28,10 @@ function formatDate(dateStr) {
 
 let SCRIPT_URL = localStorage.getItem('8ctane_script_url') || '';
 let currentAthlete = null;
-let athleteOutings = [];
+let athleteOutings = [];     // outings for the selected season (what every tab renders)
+let athleteOutingsAll = [];  // every outing for this athlete, all seasons
+let profileSeason = 'all';   // 'all' or a 'YYYY' string
+const profileSeasonByAthlete = {}; // remembers the pick per athlete this session
 let profileCharts = {};
 let cachedAthletes = [];
 
@@ -46,18 +49,82 @@ window.addEventListener('DOMContentLoaded', () => {
       const name = tab.dataset.ptab;
       document.querySelectorAll('#profile-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.ptab === name));
       document.querySelectorAll('.ptab-panel').forEach(p => p.classList.toggle('active', p.id === `ptab-${name}`));
-      if (name === 'trends')    renderTrends();
-      if (name === 'splits')    renderSplits();
-      if (name === 'locations') renderLocations();
-      if (name === 'yoy')       renderYoY();
-      if (name === 'report') renderReport();
-      if (name === 'season-insight') renderSeasonInsight();
-      if (name === 'outing-insight') initOutingInsight();
-      if (name === 'compare') populateCompareSelectors();
-      if (name === 'history') renderYearOverYear();
+      renderTab(name);
     });
   });
 });
+
+function renderTab(name) {
+  if (name === 'trends')    renderTrends();
+  if (name === 'splits')    renderSplits();
+  if (name === 'locations') renderLocations();
+  if (name === 'yoy')       renderYoY();
+  if (name === 'report') renderReport();
+  if (name === 'season-insight') renderSeasonInsight();
+  if (name === 'outing-insight') initOutingInsight();
+  if (name === 'compare') populateCompareSelectors();
+  if (name === 'history') renderYearOverYear();
+}
+
+/* ==================== SEASON SELECTOR ==================== */
+// Season bar under the athlete hero. Filters athleteOutings to one year
+// (or All) and re-renders the hero, overview, outings list and whichever
+// tab is open. Hidden when the athlete only has one season.
+function outingYear(o) {
+  const y = (o.date || '').toString().slice(0, 4);
+  return /^\d{4}$/.test(y) ? y : null;
+}
+
+function profileYears() {
+  return [...new Set(athleteOutingsAll.map(outingYear).filter(Boolean))].sort();
+}
+
+function seasonLabel() {
+  if (profileSeason !== 'all') return profileSeason;
+  const ys = profileYears();
+  if (!ys.length) return '';
+  return ys.length === 1 ? ys[0] : `${ys[0]}–${ys[ys.length-1]}`;
+}
+
+function renderSeasonBar() {
+  const bar = document.getElementById('season-bar');
+  if (!bar) return;
+  const ys = profileYears();
+  if (ys.length < 2) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.style.display = '';
+  const btn = (val, label) => {
+    const n = val === 'all' ? athleteOutingsAll.length : athleteOutingsAll.filter(o => outingYear(o) === val).length;
+    return `<button class="loc-filter-btn${profileSeason === val ? ' active' : ''}" onclick="setProfileSeason('${val}')" title="${n} outing${n!==1?'s':''}">${label}</button>`;
+  };
+  bar.innerHTML = `
+    <div class="loc-filter-row">
+      <span class="loc-filter-label">Season:</span>
+      ${ys.slice().reverse().map(y => btn(y, y)).join('')}
+      ${btn('all', 'All')}
+    </div>`;
+}
+
+function applySeasonFilter() {
+  athleteOutings = profileSeason === 'all'
+    ? athleteOutingsAll.slice()
+    : athleteOutingsAll.filter(o => outingYear(o) === profileSeason);
+  const label = seasonLabel();
+  document.querySelectorAll('.season-label').forEach(el => el.textContent = label);
+  renderSeasonBar();
+}
+
+function setProfileSeason(val) {
+  if (val === profileSeason) return;
+  profileSeason = val;
+  if (currentAthlete) profileSeasonByAthlete[currentAthlete.id] = val;
+  applySeasonFilter();
+  renderProfileHero();
+  renderSeasonOverview();
+  renderOutingsList();
+  populateCompareSelectors();
+  const active = document.querySelector('#profile-tabs .tab.active');
+  if (active && active.dataset.ptab !== 'overview' && active.dataset.ptab !== 'compare') renderTab(active.dataset.ptab);
+}
 
 /* ==================== CONFIG ==================== */
 function showConfigBanner() {
@@ -68,8 +135,11 @@ function showConfigBanner() {
 
 function saveScriptUrl() {
   const url = document.getElementById('script-url-input').value.trim();
-  if (!url.startsWith('https://script.google.com')) {
-    toast('Please paste a valid Apps Script URL', 'error'); return;
+  // Accept the Apps Script URL directly, or the Cloudflare Worker proxy
+  // in front of it (*.workers.dev) — the proxy avoids Safari's echo 404s.
+  const ok = url.startsWith('https://script.google.com') || /^https:\/\/[^/]+\.workers\.dev\/?$/.test(url);
+  if (!ok) {
+    toast('Paste your Apps Script URL or your workers.dev proxy URL', 'error'); return;
   }
   SCRIPT_URL = url;
   localStorage.setItem('8ctane_script_url', url);
@@ -297,7 +367,13 @@ async function openProfile(athleteId) {
     if (!currentAthlete) { showRoster(); return; }
 
     const { outings } = await api('getOutings', { athleteId });
-    athleteOutings = outings;
+    athleteOutingsAll = outings || [];
+    // Default to the most recent season; keep the previous pick for this
+    // athlete if it still exists (e.g. after importing or deleting an outing)
+    const ys = profileYears();
+    const prev = profileSeasonByAthlete[athleteId];
+    profileSeason = (prev && (prev === 'all' || ys.includes(prev))) ? prev : (ys.length > 1 ? ys[ys.length-1] : 'all');
+    applySeasonFilter();
 
     renderProfileHero();
     renderSeasonOverview();
@@ -320,6 +396,7 @@ function showRoster() {
   document.getElementById('view-bulk-import').style.display = 'none';
   currentAthlete = null;
   athleteOutings = [];
+  athleteOutingsAll = [];
   Object.keys(profileCharts).forEach(id => { if(profileCharts[id]) { profileCharts[id].destroy(); delete profileCharts[id]; } });
   loadRoster();
 }
@@ -505,6 +582,7 @@ function parseStatcastBulk(rows) {
       if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
         spins:[],locations:[],spray:[],
         pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],realExts:[],effSpeeds:[],throws:[],
+        swings:0,zoneN:0,outN:0,zSw:0,oSw:0,zCon:0,
         lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]},
         rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]}};
       const s = pm[pt];
@@ -563,6 +641,9 @@ function parseStatcastBulk(rows) {
         if (side) side.locations.push(loc);
       }
       if (isSwing) { totalSwings++; if(inSZ){swingInZone++;if(isContact)contactInZone++;} else if(zone)swingOutZone++; }
+      // Per-pitch-type swing/zone counts (Whiff/Swing, Zone%, Chase%, Z-Contact%)
+      if (inSZ) s.zoneN++; else if (zone) s.outN++;
+      if (isSwing) { s.swings++; if (inSZ) { s.zSw++; if (isContact) s.zCon++; } else if (zone) s.oSw++; }
       if (desc.includes('swinging_strike')) {
         s.whiffs++;
         if(side) side.whiffs++;
@@ -668,6 +749,8 @@ function parseStatcastBulk(rows) {
         avgRelSide:   s.rel_xs.length ? +avgg(s.rel_xs).toFixed(2) : null,
         avgExt:       s.realExts.length ? +avgg(s.realExts).toFixed(2) : null,
         avgPercVelo:  s.effSpeeds.length ? +avgg(s.effSpeeds).toFixed(1) : null,
+        swings:s.swings, zoneN:s.zoneN, outN:s.outN, zSw:s.zSw, oSw:s.oSw, zCon:s.zCon,
+        bbe: s.launch_speeds.length,
         locations: s.locations || [],
         spray: s.spray || [],
         lhh: makeSplitStats(s.lhh),
@@ -723,7 +806,7 @@ function parseTrackmanBulk(rows) {
       const tagged = r.taggedpitchtype || r.TaggedPitchType || '';
       const auto   = r.autopitchtype   || r.AutoPitchType   || '';
       const pt = PT_MAP[tagged] || PT_MAP[auto] || 'OTHER';
-      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,launch_speeds:[],ivbs:[],hbs:[],rel_xs:[],rel_zs:[],exts:[],percVelos:[],lhh:{count:0,whiffs:0,cstrikes:0},rhh:{count:0,whiffs:0,cstrikes:0}};
+      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,launch_speeds:[],ivbs:[],hbs:[],rel_xs:[],rel_zs:[],exts:[],percVelos:[],swings:0,lhh:{count:0,whiffs:0,cstrikes:0},rhh:{count:0,whiffs:0,cstrikes:0}};
       const s = pm[pt]; s.count++;
       const stand = (r.batterside||r.BatterSide||'').toUpperCase();
       const side = stand==='L'?s.lhh:stand==='R'?s.rhh:null;
@@ -739,6 +822,7 @@ function parseTrackmanBulk(rows) {
       // (60.5 - 6.3 ft) over this pitch's actual release distance.
       const ex=parseFloat(r.extension||r.Extension); if(!isNaN(ex)){s.exts.push(ex); if(!isNaN(v)&&ex<60.5)s.percVelos.push(v*(60.5-6.3)/(60.5-ex));}
       const call = r.pitchcall||r.PitchCall||'';
+      if(call.includes('SwingingStrike')||call==='StrikeSwinging'||call.includes('Foul')||call==='InPlay')s.swings++;
       if(call.includes('SwingingStrike')||call==='StrikeSwinging'){s.whiffs++;if(side)side.whiffs++;}
       else if(call.includes('CalledStrike')||call==='StrikeCalled'){s.cstrikes++;if(side)side.cstrikes++;}
       else if(call==='InPlay'){s.hip++;const ev=parseFloat(r.exitspeed||r.ExitSpeed);if(!isNaN(ev))s.launch_speeds.push(ev);}
@@ -766,6 +850,9 @@ function parseTrackmanBulk(rows) {
         avgRelSide:s.rel_xs.length?+avgg(s.rel_xs).toFixed(2):null,
         avgExt:s.exts.length?+avgg(s.exts).toFixed(2):null,
         avgPercVelo:s.percVelos.length?+avgg(s.percVelos).toFixed(1):null,
+        hardHitPct:s.launch_speeds.length?+(s.launch_speeds.filter(v=>v>=95).length/s.launch_speeds.length*100).toFixed(1):null,
+        bbe:s.launch_speeds.length,
+        swings:s.swings,
         lhh:{count:s.lhh.count,whiffs:s.lhh.whiffs,cstrikes:s.lhh.cstrikes,whiffPct:s.lhh.count?+(s.lhh.whiffs/s.lhh.count*100).toFixed(1):0,cswPct:s.lhh.count?+((s.lhh.whiffs+s.lhh.cstrikes)/s.lhh.count*100).toFixed(1):0},
         rhh:{count:s.rhh.count,whiffs:s.rhh.whiffs,cstrikes:s.rhh.cstrikes,whiffPct:s.rhh.count?+(s.rhh.whiffs/s.rhh.count*100).toFixed(1):0,cswPct:s.rhh.count?+((s.rhh.whiffs+s.rhh.cstrikes)/s.rhh.count*100).toFixed(1):0},
       };
@@ -961,8 +1048,13 @@ function renderSeasonOverview() {
     let pm = {};
     try { pm = typeof o.pitch_stats === 'object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json || '{}'); } catch(e) {}
     Object.entries(pm).forEach(([pt, s]) => {
-      if (!combined[pt]) combined[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], ivbs:[], hbs:[] };
+      if (!combined[pt]) combined[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], ivbs:[], hbs:[], veloW:0, veloN:0, xwW:0, xwN:0, swings:0, swWhiffs:0 };
       const c = combined[pt];
+      // Weighted season averages (by pitches / balls in play)
+      if (s.avgVelo && s.count)  { c.veloW += pf(s.avgVelo)*s.count; c.veloN += s.count; }
+      if (s.avgXwoba && s.hip)   { c.xwW += pf(s.avgXwoba)*s.hip;    c.xwN += s.hip; }
+      // Whiff/Swing — only outings imported with per-pitch swing counts
+      if (s.swings !== undefined) { c.swings += s.swings||0; c.swWhiffs += s.whiffs||0; }
       c.count += (s.count||0);
       c.whiffs += (s.whiffs||0);
       c.cstrikes += (s.cstrikes||0);
@@ -981,14 +1073,17 @@ function renderSeasonOverview() {
     const usagePct = total ? (s.count/total*100).toFixed(1) : 0;
     const whiff = s.count ? (s.whiffs/s.count*100).toFixed(1) : '—';
     const csw   = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : '—';
-    const avgV  = s.velos.length ? avg(s.velos).toFixed(1) : '—';
-    const xwoba = s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—';
+    const avgV  = s.veloN ? (s.veloW/s.veloN).toFixed(1) : (s.velos.length ? avg(s.velos).toFixed(1) : '—');
+    const xwoba = s.xwN ? (s.xwW/s.xwN).toFixed(3) : (s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—');
     const mlbW  = MLB_BASELINE_REF[pt]?.whiff_pct;
-    const wC    = parseFloat(whiff) >= 30 ? 'v-good' : parseFloat(whiff) >= 15 ? 'v-warn' : 'v-bad';
-    const mlbTag = mlbW ? (() => {
-      const d = parseFloat(whiff) - mlbW;
-      return `${mlbW}% <span class="${d>=0?'delta-good':'delta-bad'}">${d>=0?'▲':'▼'}${Math.abs(d).toFixed(1)}</span>`;
-    })() : '—';
+    // Per-pitch whiff% color bands (MLB per-pitch whiff is roughly 10-17%)
+    const wC    = parseFloat(whiff) >= 15 ? 'v-good' : parseFloat(whiff) >= 10 ? 'v-warn' : 'v-bad';
+    // MLB baseline is whiffs per SWING, so compare Whiff/Swing to it, not per-pitch whiff%
+    const whiffSw = s.swings ? s.swWhiffs / s.swings * 100 : null;
+    const mlbTag = (mlbW && whiffSw !== null) ? (() => {
+      const d = whiffSw - mlbW;
+      return `${whiffSw.toFixed(1)}% <span class="v-num">vs ${mlbW}%</span> <span class="${d>=0?'delta-good':'delta-bad'}">${d>=0?'▲':'▼'}${Math.abs(d).toFixed(1)}</span>`;
+    })() : (mlbW ? `<span class="v-num" title="Re-import this season's outings to get Whiff/Swing">— vs ${mlbW}%</span>` : '—');
 
     // 8-Grade — 100-scale, 100 = MLB average. Season-level outings
     // only store avgVelo/avgIVB/avgHB (no release point), so this matches
@@ -1259,7 +1354,7 @@ function processOutingRows(rows) {
 
   rows.forEach(r => {
     const pt = r._pt;
-    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[] };
+    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[], swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0 };
     const s = pitchMap[pt];
     s.count++;
     s.rawRows.push(r);
@@ -1286,6 +1381,9 @@ function processOutingRows(rows) {
       if (inStrikeZone) { swingInZone++; if(isContact) contactInZone++; }
       else if (zone) { swingOutZone++; if(isContact) contactOutZone++; }
     }
+    // Per-pitch-type swing/zone counts
+    if (inStrikeZone) s.zoneN++; else if (zone) s.outN++;
+    if (isSwing) { s.swings++; if (inStrikeZone) { s.zSw++; if (isContact) s.zCon++; } else if (zone) s.oSw++; }
 
     if (desc.includes('swinging_strike')) s.whiffs++;
     else if (desc.includes('called_strike')) s.cstrikes++;
@@ -1348,6 +1446,9 @@ function processOutingRows(rows) {
       avgRelSide:   s.rel_xs.length ? +avg(s.rel_xs).toFixed(2) : null,
       avgExt:       s.exts.length ? +avg(s.exts).toFixed(2) : null,
       avgPercVelo:  s.effSpeeds.length ? +avg(s.effSpeeds).toFixed(1) : null,
+      hardHitPct:   s.launch_speeds.length ? +(s.launch_speeds.filter(v=>v>=95).length/s.launch_speeds.length*100).toFixed(1) : null,
+      bbe: s.launch_speeds.length,
+      swings:s.swings, zoneN:s.zoneN, outN:s.outN, zSw:s.zSw, oSw:s.oSw, zCon:s.zCon,
     };
   });
 
@@ -2252,7 +2353,7 @@ function renderReport() {
     <div class="report-card">
       <div class="report-header">
         <div class="report-name">${currentAthlete.name}</div>
-        <div class="report-meta">${currentAthlete.throws}HP · ${currentAthlete.team||''} · ${currentAthlete.level||''} · 2026 Season</div>
+        <div class="report-meta">${currentAthlete.throws}HP · ${currentAthlete.team||''} · ${currentAthlete.level||''} · ${seasonLabel()} Season</div>
         <div class="report-summary-strip">
           ${[
             { v: athleteOutings.length,               l: 'G' },
@@ -2787,133 +2888,124 @@ function renderYoY() {
 
   // Render psStuff+ cards if data exists
   renderPsStuffCards();
-  // Aggregate all outings into a single season pitch map
+  // ---- Aggregate the selected season, per pitch type ----
+  // Outing-level averages are weighted by pitch count (shape) or balls in
+  // play (contact), so a 2-pitch outing doesn't count as much as a 30-pitch one.
+  const W = () => ({ sum:0, w:0 });
+  const addW = (acc, v, w) => { if (v === null || v === undefined || v === '' || isNaN(+v) || !w) return; acc.sum += (+v) * w; acc.w += w; };
+  const getW = (acc, d) => acc.w ? +(acc.sum / acc.w).toFixed(d) : null;
+
   const combined = {};
   athleteOutings.forEach(o => {
     let pm = {};
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
-      if (!s.count || s.count === 0) return;
-      if (!combined[pt]) combined[pt] = { count:0, velos:[], peakVelos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, ivbs:[], hbs:[], vaas:[], haas:[], relHeights:[], relSides:[], exts:[], percVelos:[] };
-      const c = combined[pt];
-      c.count    += s.count   || 0;
-      c.whiffs   += s.whiffs  || 0;
-      c.cstrikes += s.cstrikes|| 0;
-      c.hip      += s.hip     || 0;
-      if (s.avgVelo)   c.velos.push(pf(s.avgVelo));
-      if (s.peakVelo)  c.peakVelos.push(pf(s.peakVelo));
-      if (s.avgXwoba)  c.xwobas.push(pf(s.avgXwoba));
-      if (s.avgEV)     c.evs.push(pf(s.avgEV));
-      if (s.avgIVB)    c.ivbs.push(pf(s.avgIVB));
-      if (s.avgHB)     c.hbs.push(pf(s.avgHB));
-      if (s.avgVAA)    c.vaas.push(pf(s.avgVAA));
-      if (s.avgHAA)    c.haas.push(pf(s.avgHAA));
-      if (s.avgRelHeight != null && s.avgRelHeight !== '') c.relHeights.push(pf(s.avgRelHeight));
-      if (s.avgRelSide   != null && s.avgRelSide   !== '') c.relSides.push(pf(s.avgRelSide));
-      if (s.avgExt       != null && s.avgExt       !== '') c.exts.push(pf(s.avgExt));
-      if (s.avgPercVelo  != null && s.avgPercVelo  !== '') c.percVelos.push(pf(s.avgPercVelo));
+      if (!s.count) return;
+      if (!combined[pt]) combined[pt] = {
+        count:0, whiffs:0, cstrikes:0, hip:0, bbe:0, peak:null,
+        velo:W(), perc:W(), spin:W(), ivb:W(), hb:W(), vaa:W(), haa:W(), relH:W(), relS:W(), ext:W(),
+        xwoba:W(), xba:W(), xslg:W(), ev:W(), hh:W(), gb:W(),
+        // swing/zone counts only exist on outings imported after Sept 29 2026
+        swN:0, swWhiffs:0, swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0, zoneOutings:0,
+      };
+      const c = combined[pt], n = s.count;
+      c.count += n; c.whiffs += s.whiffs||0; c.cstrikes += s.cstrikes||0; c.hip += s.hip||0;
+      if (s.peakVelo) c.peak = Math.max(c.peak ?? 0, pf(s.peakVelo));
+      addW(c.velo, s.avgVelo, n);     addW(c.perc, s.avgPercVelo, n);  addW(c.spin, s.avgSpin, n);
+      addW(c.ivb,  s.avgIVB, n);      addW(c.hb,   s.avgHB, n);        addW(c.vaa,  s.avgVAA, n);
+      addW(c.haa,  s.avgHAA, n);      addW(c.relH, s.avgRelHeight, n); addW(c.relS, s.avgRelSide, n);
+      addW(c.ext,  s.avgExt, n);
+      const bbe = s.bbe || s.hip || 0;
+      c.bbe += bbe;
+      addW(c.xwoba, s.avgXwoba, s.hip||bbe); addW(c.xba, s.avgXba, s.hip||bbe); addW(c.xslg, s.avgXslg, s.hip||bbe);
+      addW(c.ev, s.avgEV, bbe);              addW(c.hh,  s.hardHitPct, bbe);
+      // GB% lives on the L/R splits
+      ['lhh','rhh'].forEach(k => { const sd = s[k]; if (sd && sd.gbPct != null) addW(c.gb, sd.gbPct, sd.hip || 0); });
+      if (s.swings !== undefined) { c.swN += n; c.swWhiffs += s.whiffs||0; c.swings += s.swings||0; }
+      if (s.zoneN !== undefined) { c.zoneOutings++; c.zoneN += s.zoneN||0; c.outN += s.outN||0; c.zSw += s.zSw||0; c.oSw += s.oSw||0; c.zCon += s.zCon||0; }
     });
   });
 
   const total = Object.values(combined).reduce((a,s)=>a+s.count, 0);
   const sorted = Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
+  const fmt = (v, d, suf='') => v === null || v === undefined || isNaN(v) ? '—' : (+v).toFixed(d) + suf;
+  const pct = (a, b) => b ? a / b * 100 : null;
 
-  // ---- Shape stat cards (same layout as analyzer) ----
-  const shapeHeader = `<div class="mov-header-row">
-    <div class="mov-header-label">Pitch</div>
-    <div class="mov-header-stats">
-      <div class="mov-header-stat">Avg velo</div>
-      <div class="mov-header-stat">Peak velo</div>
-      <div class="mov-header-stat">Perc velo</div>
-      <div class="mov-header-stat">Spin</div>
-      <div class="mov-header-stat">IVB</div>
-      <div class="mov-header-stat">HB</div>
-      <div class="mov-header-stat">VAA</div>
-      <div class="mov-header-stat">HAA</div>
-      <div class="mov-header-stat">Rel Height</div>
-      <div class="mov-header-stat">Rel Side</div>
-      <div class="mov-header-stat">Ext</div>
-    </div>
-  </div>`;
-
-  const shapeRows = sorted.map(([pt, s]) => {
-    const avgV  = s.velos.length    ? avg(s.velos).toFixed(1)    : '—';
-    const pkV   = s.peakVelos.length? Math.max(...s.peakVelos).toFixed(1) : '—';
-    // Get spin from stored outings pitch_stats
-    const spinVals = athleteOutings.map(o => {
-      let pm = {};
-      try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
-      return pm[pt]?.avgSpin ? pf(pm[pt].avgSpin) : null;
-    }).filter(Boolean);
-    const spin  = spinVals.length   ? Math.round(avg(spinVals))+'rpm' : '—';
-    const ivb   = s.ivbs.length     ? avg(s.ivbs).toFixed(1)+'"' : '—';
-    const hb    = s.hbs.length      ? avg(s.hbs).toFixed(1)+'"'  : '—';
-    const vaa   = s.vaas.length     ? avg(s.vaas).toFixed(1)+'°' : '—';
-    const haa   = s.haas.length     ? avg(s.haas).toFixed(1)+'°' : '—';
-    const relH  = s.relHeights.length ? avg(s.relHeights).toFixed(2)+"'" : '—';
-    const relS  = s.relSides.length   ? avg(s.relSides).toFixed(2)+"'"   : '—';
-    const ext   = s.exts.length       ? avg(s.exts).toFixed(1)+"'"       : '—';
-    const percV = s.percVelos.length  ? avg(s.percVelos).toFixed(1)      : '—';
-    return `<div class="mov-pitch-row">
-      <div class="mov-pitch-label">
-        <span class="pitch-dot" style="background:${pc(pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex-shrink:0"></span>
-        <span class="mov-pitch-name">${pn(pt)}</span>
+  // ---- Pitch shape cards: one card per pitch, stats grouped in rows ----
+  const shapeCards = sorted.filter(([,s]) => getW(s.velo,1) !== null).map(([pt, s]) => {
+    const stat = (lbl, val) => `<div class="shape-stat"><div class="shape-stat-lbl">${lbl}</div><div class="shape-stat-val">${val}</div></div>`;
+    const group = (lbl, stats) => `<div class="shape-group"><div class="shape-group-lbl">${lbl}</div><div class="shape-group-stats">${stats.join('')}</div></div>`;
+    const spin = getW(s.spin,0);
+    return `<div class="shape-card" style="border-top-color:${pc(pt)}">
+      <div class="shape-card-hd">
+        <span class="pitch-dot" style="background:${pc(pt)}"></span>
+        <span class="shape-card-name">${pn(pt)}</span>
+        <span class="shape-card-sub">${s.count} pitches · ${fmt(pct(s.count,total),1,'%')}</span>
       </div>
-      <div class="mov-stat-group">
-        <div class="mov-stat"><div class="mov-stat-val">${avgV}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${pkV}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${percV}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${spin}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${ivb}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${hb}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${vaa}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${haa}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${relH}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${relS}</div></div>
-        <div class="mov-stat"><div class="mov-stat-val">${ext}</div></div>
-      </div>
+      ${group('Velo', [stat('Avg', fmt(getW(s.velo,1),1)), stat('Peak', fmt(s.peak,1)), stat('Perceived', fmt(getW(s.perc,1),1))])}
+      ${group('Movement', [stat('Spin', spin!==null ? Math.round(spin)+' rpm' : '—'), stat('IVB', fmt(getW(s.ivb,1),1,'"')), stat('HB', fmt(getW(s.hb,1),1,'"'))])}
+      ${group('Approach', [stat('VAA', fmt(getW(s.vaa,1),1,'°')), stat('HAA', fmt(getW(s.haa,1),1,'°'))])}
+      ${group('Release', [stat('Height', fmt(getW(s.relH,2),2,"'")), stat('Side', fmt(getW(s.relS,2),2,"'")), stat('Extension', fmt(getW(s.ext,1),1,"'"))])}
     </div>`;
   }).join('');
-  document.getElementById('metrics-shape-cards').innerHTML = shapeHeader + shapeRows;
+  document.getElementById('metrics-shape-cards').innerHTML = shapeCards || '<div class="empty-state">No pitch shape data for this season.</div>';
 
-  // ---- Performance table ----
-  document.getElementById('metrics-perf-body').innerHTML = sorted.map(([pt, s]) => {
-    const usagePct = total ? (s.count/total*100).toFixed(1) : 0;
-    const whiff    = s.count ? (s.whiffs/s.count*100).toFixed(1) : '—';
-    const csw      = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : '—';
-    const xwoba    = s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—';
-    const ev       = s.evs.length    ? avg(s.evs).toFixed(1) : '—';
-    const hhPct    = s.evs.length    ? (s.hardHits/s.evs.length*100).toFixed(0)+'%' : '—';
-    const mlbW     = MLB_BASELINE_REF[pt]?.whiff_pct;
-    const mlbC     = MLB_BASELINE_REF[pt]?.csw_pct;
-    const mlbX     = MLB_BASELINE_REF[pt]?.avg_xwoba;
-    const wC  = parseFloat(whiff) >= 30 ? 'v-good' : parseFloat(whiff) >= 15 ? 'v-warn' : 'v-bad';
-    const cC  = parseFloat(csw) >= 30 ? 'v-good' : parseFloat(csw) >= 20 ? 'v-warn' : 'v-bad';
-    const xC  = xwoba !== '—' ? (parseFloat(xwoba) <= .250 ? 'v-good' : parseFloat(xwoba) <= .350 ? 'v-warn' : 'v-bad') : 'v-num';
+  // ---- vs-MLB cell: value, MLB avg, colored delta ----
+  function vsMLB(val, base, higherBetter, d=1, suf='') {
+    const f = v => d >= 3 ? (+v).toFixed(3).replace(/^0/, '') : (+v).toFixed(d) + suf;
+    if (val === null || val === undefined || isNaN(val)) return `<td class="v-num">—</td><td class="mlb-avg">${base!=null ? f(base) : '—'}</td>`;
+    if (base == null) return `<td class="v-num">${f(val)}</td><td class="mlb-avg">—</td>`;
+    const diff = val - base;
+    const tol = d >= 3 ? 0.010 : 0.5;
+    const better = higherBetter ? diff > 0 : diff < 0;
+    const cls = Math.abs(diff) < tol ? '' : better ? 'delta-good' : 'delta-bad';
+    const valCls = Math.abs(diff) < tol ? 'v-warn' : better ? 'v-good' : 'v-bad';
+    const arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '';
+    const dTxt = d >= 3 ? Math.abs(diff).toFixed(3).replace(/^0/, '') : Math.abs(diff).toFixed(d);
+    const vTxt = d >= 3 ? (+val).toFixed(3).replace(/^0/, '') : (+val).toFixed(d) + suf;
+    const bTxt = d >= 3 ? (+base).toFixed(3).replace(/^0/, '') : (+base).toFixed(d) + suf;
+    return `<td class="${valCls}">${vTxt}</td><td class="mlb-avg"><span class="v-num">${bTxt}</span> <span class="${cls}">${arrow}${dTxt}</span></td>`;
+  }
+  const chip = pt => `<td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>`;
+  let missingSwingData = false;
 
-    function mlbDelta(val, base, higherBetter) {
-      if (!base || val === '—') return `<span class="v-num">${base||'—'}</span>`;
-      const d = (parseFloat(val) - base).toFixed(1);
-      const better = higherBetter ? d > 0 : d < 0;
-      const cls = Math.abs(d) < 0.5 ? '' : better ? 'delta-good' : 'delta-bad';
-      const arrow = d > 0 ? '▲' : d < 0 ? '▼' : '';
-      return `<span class="v-num">${base}</span> <span class="${cls}">${arrow}${Math.abs(d)}</span>`;
-    }
-
-    return `<tr>
-      <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
+  // ---- Table 1: swing & miss ----
+  document.getElementById('metrics-swing-body').innerHTML = sorted.map(([pt, s]) => {
+    const whiffSw = s.swings ? pct(s.swWhiffs, s.swings) : null;
+    if (!s.swN) missingSwingData = true;
+    const zone  = s.zoneOutings ? pct(s.zoneN, s.zoneN + s.outN) : null;
+    const chase = s.zoneOutings ? pct(s.oSw, s.outN) : null;
+    const zCon  = s.zoneOutings ? pct(s.zCon, s.zSw) : null;
+    const csw   = pct(s.whiffs + s.cstrikes, s.count);
+    const cC = csw >= 30 ? 'v-good' : csw >= 25 ? 'v-warn' : 'v-bad';
+    return `<tr>${chip(pt)}
       <td class="v-num">${s.count}</td>
-      <td class="v-num">${usagePct}%</td>
-      <td class="${wC}">${whiff}%</td>
-      <td class="mlb-avg">${mlbDelta(whiff, mlbW, true)}</td>
-      <td class="${cC}">${csw}%</td>
-      <td class="mlb-avg">${mlbDelta(csw, mlbC, true)}</td>
-      <td class="${xC}">${xwoba}</td>
-      <td class="mlb-avg">${mlbDelta(xwoba, mlbX, false)}</td>
-      <td class="v-num">${ev}</td>
-      <td class="v-num">${hhPct}</td>
+      <td class="v-num">${fmt(pct(s.count,total),1,'%')}</td>
+      ${vsMLB(whiffSw, MLB_BASELINE_REF[pt]?.whiff_pct, true, 1, '%')}
+      <td class="v-num">${fmt(pct(s.whiffs,s.count),1,'%')}</td>
+      <td class="${cC}">${fmt(csw,1,'%')}</td>
+      <td class="v-num">${fmt(zone,1,'%')}</td>
+      <td class="v-num">${fmt(chase,1,'%')}</td>
+      <td class="v-num">${fmt(zCon,1,'%')}</td>
     </tr>`;
   }).join('');
+
+  // ---- Table 2: contact quality ----
+  document.getElementById('metrics-contact-body').innerHTML = sorted.map(([pt, s]) => {
+    const ref = MLB_BASELINE_REF[pt] || {};
+    return `<tr>${chip(pt)}
+      <td class="v-num">${s.bbe || s.hip || 0}</td>
+      ${vsMLB(getW(s.xwoba,3), ref.avg_xwoba, false, 3)}
+      <td class="v-num">${fmt(getW(s.xba,3),3).replace(/^0/,'')}</td>
+      <td class="v-num">${fmt(getW(s.xslg,3),3).replace(/^0/,'')}</td>
+      ${vsMLB(getW(s.ev,1), ref.avg_ev, false, 1)}
+      ${vsMLB(getW(s.hh,1), ref.hard_hit_pct, false, 1, '%')}
+      <td class="v-num">${fmt(getW(s.gb,1),1,'%')}</td>
+    </tr>`;
+  }).join('');
+
+  const note = document.getElementById('metrics-swing-note');
+  if (note) note.style.display = missingSwingData ? '' : 'none';
 
   // ---- Velo bar chart ----
   if (profileCharts['metrics-velo']) profileCharts['metrics-velo'].destroy();
@@ -2922,8 +3014,8 @@ function renderYoY() {
     data: {
       labels: sorted.map(([pt])=>pn(pt)),
       datasets: [
-        { label:'Avg velo',  data:sorted.map(([,s])=>s.velos.length?+avg(s.velos).toFixed(1):0),           backgroundColor:sorted.map(([pt])=>pc(pt)+'88'), borderRadius:3, borderSkipped:false },
-        { label:'Peak velo', data:sorted.map(([,s])=>s.peakVelos.length?+Math.max(...s.peakVelos).toFixed(1):0), backgroundColor:sorted.map(([pt])=>pc(pt)),     borderRadius:3, borderSkipped:false },
+        { label:'Avg velo',  data:sorted.map(([,s])=>getW(s.velo,1)||0), backgroundColor:sorted.map(([pt])=>pc(pt)+'88'), borderRadius:3, borderSkipped:false },
+        { label:'Peak velo', data:sorted.map(([,s])=>s.peak||0),          backgroundColor:sorted.map(([pt])=>pc(pt)),     borderRadius:3, borderSkipped:false },
       ]
     },
     options: { responsive:true, maintainAspectRatio:false,
@@ -2933,13 +3025,13 @@ function renderYoY() {
 
   // ---- Whiff% vs MLB avg grouped bar ----
   if (profileCharts['metrics-whiff']) profileCharts['metrics-whiff'].destroy();
-  const whiffPitches = sorted.filter(([,s])=>s.count>=3);
+  const whiffPitches = sorted.filter(([,s])=>s.count>=3 && s.swings>0);
   profileCharts['metrics-whiff'] = new Chart(document.getElementById('metrics-whiff-chart'), {
     type: 'bar',
     data: {
       labels: whiffPitches.map(([pt])=>pn(pt)),
       datasets: [
-        { label:'Season whiff%', data:whiffPitches.map(([,s])=>s.count?+(s.whiffs/s.count*100).toFixed(1):0), backgroundColor:whiffPitches.map(([pt])=>pc(pt)), borderRadius:3, borderSkipped:false },
+        { label:'Whiff/Swing', data:whiffPitches.map(([,s])=>+(s.swWhiffs/s.swings*100).toFixed(1)), backgroundColor:whiffPitches.map(([pt])=>pc(pt)), borderRadius:3, borderSkipped:false },
         { label:'MLB avg',       data:whiffPitches.map(([pt])=>MLB_BASELINE_REF[pt]?.whiff_pct||0),           backgroundColor:'rgba(255,255,255,0.08)',           borderRadius:3, borderSkipped:false },
       ]
     },
@@ -3068,7 +3160,7 @@ async function renderYearOverYear() {
   const records = await Promise.all(matches.map(async a => {
     let outings;
     if (a.id === currentAthlete.id) {
-      outings = athleteOutings;
+      outings = athleteOutingsAll;
     } else {
       try { const r = await api('getOutings', { athleteId: a.id }); outings = r.outings || []; } catch(e) { outings = []; }
     }
