@@ -113,6 +113,20 @@ function api(action, body = {}) {
   });
 }
 
+// api() with retries + backoff. Only use for actions that are safe to
+// repeat (addOuting and addAthlete both dedupe server-side).
+async function apiWithRetry(action, body = {}, retries = 2) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api(action, body);
+    } catch (e) {
+      if (attempt >= retries) throw e;
+      console.warn(`${action} attempt ${attempt+1} failed (${e.message}), retrying...`);
+      await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
+}
+
 /* ==================== ROSTER ==================== */
 async function loadRoster() {
   const grid = document.getElementById('athlete-grid');
@@ -813,7 +827,11 @@ async function runBulkImport() {
     try {
       const cleanMap = {};
       Object.entries(o.pitchMap).forEach(([pt,s]) => { if(s.count>0) cleanMap[pt]=s; });
-      await api('addOuting', {
+      // Retry up to 2x. Apps Script often finishes the write but the
+      // response gets lost on the googleusercontent redirect, so the
+      // first attempt "fails" even though the row saved. Retrying is
+      // safe: addOuting dedupes on athlete+date and returns success.
+      await apiWithRetry('addOuting', {
         athleteId,
         date: o.date,
         opponent: o.opponent,
@@ -841,6 +859,8 @@ async function runBulkImport() {
       row.className = 'bulk-outing-row error';
       status.style.color = 'var(--danger)';
       status.textContent = '✗ Error';
+      status.title = e.message || 'Unknown error';   // hover to see reason
+      console.error(`Bulk import failed for ${o.date} vs ${o.opponent}:`, e);
       errors++;
     }
 
