@@ -3041,6 +3041,11 @@ function yoyDeltaHTML(first, last, higherBetter=true) {
   return ` <span class="${cls}" style="font-size:11px">${arrow}${Math.abs(d)}</span>`;
 }
 
+// Year-over-Year state: all seasons for the current athlete, plus which
+// years are toggled on via the buttons at the top of the tab.
+let yoySeasons = [];
+let yoySelectedYears = new Set();
+
 async function renderYearOverYear() {
   const container = document.getElementById('history-content');
   container.innerHTML = '<div class="ai-loading"><div class="loading-spinner"></div><p>Loading season history...</p></div>';
@@ -3056,61 +3061,111 @@ async function renderYearOverYear() {
     return;
   }
 
+  // Every record for this pitcher: "Josh Sborz", "Josh Sborz (2023)", etc.
   const matches = allAthletes.filter(a => stripYearSuffix(a.name).toLowerCase() === baseName);
+  if (!matches.some(a => a.id === currentAthlete.id)) matches.push(currentAthlete);
 
-  if (matches.length < 2) {
-    container.innerHTML = `<div class="empty-state">No other season records found for ${stripYearSuffix(currentAthlete.name)}.<br><small>Add a record named "${stripYearSuffix(currentAthlete.name)} (YYYY)" for a prior season, import its outings, and it'll show up here automatically.</small></div>`;
-    return;
-  }
-
-  const seasons = await Promise.all(matches.map(async a => {
+  const records = await Promise.all(matches.map(async a => {
     let outings;
     if (a.id === currentAthlete.id) {
       outings = athleteOutings;
     } else {
-      try { const r = await api('getOutings', { athleteId: a.id }); outings = r.outings; } catch(e) { outings = []; }
+      try { const r = await api('getOutings', { athleteId: a.id }); outings = r.outings || []; } catch(e) { outings = []; }
     }
     return { athlete: a, outings };
   }));
 
-  seasons.forEach(s => {
-    const suffixMatch = s.athlete.name.match(/\((\d{4})\)\s*$/);
-    if (suffixMatch) {
-      s.year = suffixMatch[1];
-    } else {
-      const years = s.outings.map(o => (o.date||'').slice(0,4)).filter(Boolean);
-      const counts = {};
-      years.forEach(y => counts[y] = (counts[y]||0)+1);
-      s.year = Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0] || '—';
+  // Group outings by the year of each outing's date, so one record holding
+  // several Savant seasons splits into separate years, and "(YYYY)" records
+  // still work. Same date in two records only counts once.
+  const byYear = {};
+  const seenDates = new Set();
+  const orgStatsByYear = {};
+  records.forEach(rec => {
+    rec.outings.forEach(o => {
+      const d = (o.date || '').toString().split('T')[0];
+      const y = d.slice(0, 4);
+      if (!/^\d{4}$/.test(y) || seenDates.has(d)) return;
+      seenDates.add(d);
+      (byYear[y] = byYear[y] || []).push(o);
+    });
+    // Org season stats are keyed by record name; tie them to that record's year
+    const key = rec.athlete.name.toLowerCase();
+    const org = (typeof SEASON_STATS !== 'undefined') ? SEASON_STATS[key] : null;
+    if (org) {
+      const suffix = rec.athlete.name.match(/\((\d{4})\)\s*$/);
+      let y = suffix ? suffix[1] : null;
+      if (!y) {
+        const counts = {};
+        rec.outings.forEach(o => { const yy = (o.date||'').toString().slice(0,4); if (yy) counts[yy] = (counts[yy]||0)+1; });
+        y = Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0];
+      }
+      if (y) orgStatsByYear[y] = org;
     }
-    s.agg = computeSeasonAggregate(s.outings);
-    const key = s.athlete.name.toLowerCase();
-    s.orgStats = (typeof SEASON_STATS !== 'undefined') ? SEASON_STATS[key] : null;
   });
 
-  seasons.sort((a,b) => (a.year||'').localeCompare(b.year||''));
-  renderYearOverYearHTML(seasons);
+  yoySeasons = Object.keys(byYear).sort().map(year => ({
+    year,
+    outings: byYear[year],
+    agg: computeSeasonAggregate(byYear[year]),
+    orgStats: orgStatsByYear[year] || null,
+  }));
+
+  if (yoySeasons.length < 2) {
+    const nm = stripYearSuffix(currentAthlete.name);
+    container.innerHTML = `<div class="empty-state">Only one season of data found for ${nm}.<br><small>Import outings from another season (into this record or a "${nm} (YYYY)" record) and each year will show up here.</small></div>`;
+    return;
+  }
+
+  // Keep the previous selection when re-opening the tab; default = all years
+  const years = yoySeasons.map(s => s.year);
+  const kept = [...yoySelectedYears].filter(y => years.includes(y));
+  yoySelectedYears = new Set(kept.length ? kept : years);
+
+  renderYearOverYearHTML();
 }
 
-function renderYearOverYearHTML(seasons) {
+function toggleYoYYear(year) {
+  if (year === 'all') {
+    yoySelectedYears = new Set(yoySeasons.map(s => s.year));
+  } else if (yoySelectedYears.has(year)) {
+    if (yoySelectedYears.size > 1) yoySelectedYears.delete(year); // always keep one
+  } else {
+    yoySelectedYears.add(year);
+  }
+  renderYearOverYearHTML();
+}
+
+function renderYearOverYearHTML() {
   const container = document.getElementById('history-content');
+  const seasons = yoySeasons.filter(s => yoySelectedYears.has(s.year));
   const first = seasons[0];
   const last = seasons[seasons.length-1];
+  const allOn = seasons.length === yoySeasons.length;
+
+  const yearButtons = `
+    <div class="loc-filter-row" style="margin-bottom:1.25rem">
+      <span class="loc-filter-label">Seasons:</span>
+      <button class="loc-filter-btn${allOn?' active':''}" onclick="toggleYoYYear('all')">All</button>
+      ${yoySeasons.map(s => `<button class="loc-filter-btn${yoySelectedYears.has(s.year)?' active':''}" onclick="toggleYoYYear('${s.year}')">${s.year}</button>`).join('')}
+    </div>`;
 
   const headerRow = seasons.map(s => `<th class="v-num">${s.year}</th>`).join('');
+  const trendHd = seasons.length > 1 ? `<th>Trend ${first.year}→${last.year}</th>` : '<th></th>';
 
   function statRow(label, getVal, higherBetter=true, suffix='') {
     const cells = seasons.map(s => {
       const v = getVal(s);
       return `<td class="v-num">${v === null || v === undefined ? '—' : v + suffix}</td>`;
     }).join('');
-    const delta = yoyDeltaHTML(getVal(first), getVal(last), higherBetter);
-    return `<tr><td>${label}</td>${cells}<td style="min-width:60px">${seasons.length>1?delta:''}</td></tr>`;
+    const delta = seasons.length > 1 ? yoyDeltaHTML(getVal(first), getVal(last), higherBetter) : '';
+    return `<tr><td>${label}</td>${cells}<td style="min-width:60px">${delta}</td></tr>`;
   }
 
   const summaryTable = `
+    <div class="table-scroll">
     <table class="data-table" style="margin-bottom:1.5rem">
-      <thead><tr><th>Stat</th>${headerRow}<th>Trend</th></tr></thead>
+      <thead><tr><th>Stat</th>${headerRow}${trendHd}</tr></thead>
       <tbody>
         ${statRow('Outings', s=>s.agg.outingCount, true)}
         ${statRow('IP', s=>s.agg.totalIP || null, true)}
@@ -3119,33 +3174,36 @@ function renderYearOverYearHTML(seasons) {
         ${statRow('K%-BB%', s=>s.orgStats ? s.orgStats.kMinusBB : s.agg.kMinusBB, true, '%')}
         ${statRow('Whiff%', s=>s.orgStats ? s.orgStats.swingWhiffPct : s.agg.whiffPct, true, '%')}
       </tbody>
-    </table>`;
+    </table>
+    </div>`;
 
-  // Arsenal comparison — union of pitch types across all seasons
+  // Arsenal comparison — union of pitch types across the selected seasons
   const allPT = [...new Set(seasons.flatMap(s => Object.keys(s.agg.pitchStats)))];
   const arsenalRows = allPT.map(pt => {
-    const veloDelta = yoyDeltaHTML(first.agg.pitchStats[pt]?.avgVelo ?? null, last.agg.pitchStats[pt]?.avgVelo ?? null, true);
+    const veloDelta  = yoyDeltaHTML(first.agg.pitchStats[pt]?.avgVelo ?? null, last.agg.pitchStats[pt]?.avgVelo ?? null, true);
     const whiffDelta = yoyDeltaHTML(first.agg.pitchStats[pt]?.whiffPct ?? null, last.agg.pitchStats[pt]?.whiffPct ?? null, true);
     const cells = seasons.map(s => {
       const p = s.agg.pitchStats[pt];
-      if (!p) return `<td class="v-num" colspan="1">—</td>`;
+      if (!p) return `<td class="v-num">—</td>`;
       return `<td class="v-num">${p.avgVelo ?? '—'}mph · ${p.whiffPct ?? '—'}% whiff · ${p.usagePct}% usage</td>`;
     }).join('');
     return `<tr>
       <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
       ${cells}
-      <td style="min-width:90px;font-size:11px">velo${veloDelta}<br>whiff${whiffDelta}</td>
+      <td style="min-width:90px;font-size:11px">${seasons.length > 1 ? `velo${veloDelta}<br>whiff${whiffDelta}` : ''}</td>
     </tr>`;
   }).join('');
 
   const arsenalTable = `
     <div class="section-hd" style="margin-bottom:.75rem">Arsenal by season</div>
+    <div class="table-scroll">
     <table class="data-table">
-      <thead><tr><th>Pitch</th>${headerRow}<th>Trend</th></tr></thead>
+      <thead><tr><th>Pitch</th>${headerRow}${trendHd}</tr></thead>
       <tbody>${arsenalRows}</tbody>
-    </table>`;
+    </table>
+    </div>`;
 
-  container.innerHTML = summaryTable + arsenalTable;
+  container.innerHTML = yearButtons + summaryTable + arsenalTable;
 }
 
 function populateCompareSelectors() {
