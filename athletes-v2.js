@@ -68,8 +68,11 @@ function showConfigBanner() {
 
 function saveScriptUrl() {
   const url = document.getElementById('script-url-input').value.trim();
-  if (!url.startsWith('https://script.google.com')) {
-    toast('Please paste a valid Apps Script URL', 'error'); return;
+  // Accept the Apps Script URL directly, or the Cloudflare Worker proxy
+  // in front of it (*.workers.dev) — the proxy avoids Safari's echo 404s.
+  const ok = url.startsWith('https://script.google.com') || /^https:\/\/[^/]+\.workers\.dev\/?$/.test(url);
+  if (!ok) {
+    toast('Paste your Apps Script URL or your workers.dev proxy URL', 'error'); return;
   }
   SCRIPT_URL = url;
   localStorage.setItem('8ctane_script_url', url);
