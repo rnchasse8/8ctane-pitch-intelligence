@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>8ctane — Athletes</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="athletes.css?v=20260929j">
+<link rel="stylesheet" href="athletes.css?v=20260929k">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -87,6 +87,7 @@
         <select id="bulk-athlete-select" class="sel-input" style="max-width:320px">
           <option value="">Select athlete...</option>
         </select>
+        <label class="bulk-replace-label" title="Deletes the saved outing for any matching date and re-imports it with the new data"><input type="checkbox" id="bulk-replace"> Replace existing outings</label>
         <button class="btn-primary" id="bulk-import-btn" onclick="runBulkImport()" disabled style="opacity:.4">Import All Outings</button>
       </div>
 
@@ -297,7 +298,14 @@
 
     <!-- REPORT -->
     <div class="ptab-panel" id="ptab-report">
+      <div class="loc-filter-row" id="report-subtabs" style="margin-bottom:1.25rem">
+        <button class="loc-filter-btn active" data-sub="report" onclick="setReportSub('report')">Report</button>
+        <button class="loc-filter-btn" data-sub="11" onclick="setReportSub('11')">Winning 1-1</button>
+        <button class="loc-filter-btn" data-sub="fpfb" onclick="setReportSub('fpfb')">First-pitch fastballs</button>
+      </div>
       <div id="report-content"></div>
+      <div id="report-11" style="display:none"></div>
+      <div id="report-fpfb" style="display:none"></div>
     </div>
 
     <!-- SEASON INSIGHT -->
@@ -375,6 +383,6 @@
 
 <script src="baselines-ref.js?v=20260527"></script>
 <script src="mlb-shape-match.js?v=20260725"></script>
-<script src="athletes-v2.js?v=20260929j"></script>
+<script src="athletes-v2.js?v=20260929k"></script>
 </body>
 </html>

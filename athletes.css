@@ -820,3 +820,13 @@
 .yoy-pitch-hd td { padding-top:1.1rem !important; border-bottom:1px solid var(--border2) !important; }
 .yoy-pitch-hd .pitch-chip { font-family:'Barlow Condensed',sans-serif; font-size:17px; font-weight:700; }
 .yoy-pitch-hd .pitch-dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; }
+
+/* ---- REPORT: SITUATIONAL SUB-TABS ---- */
+.sit-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:.75rem; margin:.75rem 0 1.25rem; }
+.sit-kpi { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:.9rem 1rem; }
+.sit-kpi-val { font-family:'DM Mono',monospace; font-size:26px; color:var(--text); }
+.sit-kpi-lbl { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-top:.25rem; }
+.sit-kpi-sub { font-size:11px; color:var(--muted2); margin-top:.25rem; }
+.sit-kpi.sit-good .sit-kpi-val { color:var(--good); }
+.sit-kpi.sit-bad .sit-kpi-val { color:var(--danger); }
+.bulk-replace-label { display:flex; align-items:center; gap:.35rem; font-size:12px; color:var(--muted); cursor:pointer; white-space:nowrap; }

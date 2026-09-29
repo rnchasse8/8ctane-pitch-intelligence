@@ -54,16 +54,122 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+let reportSub = 'report';
+function setReportSub(name) {
+  reportSub = name;
+  document.querySelectorAll('#report-subtabs .loc-filter-btn').forEach(b => b.classList.toggle('active', b.dataset.sub === name));
+  document.getElementById('report-content').style.display = name === 'report' ? '' : 'none';
+  document.getElementById('report-11').style.display      = name === '11' ? '' : 'none';
+  document.getElementById('report-fpfb').style.display    = name === 'fpfb' ? '' : 'none';
+  if (name === '11') renderCount11();
+  if (name === 'fpfb') renderFirstPitchFB();
+}
+
 function renderTab(name) {
   if (name === 'trends')    renderTrends();
   if (name === 'splits')    renderSplits();
   if (name === 'locations') renderLocations();
   if (name === 'yoy')       renderYoY();
-  if (name === 'report') renderReport();
+  if (name === 'report') { renderReport(); setReportSub(reportSub); }
   if (name === 'season-insight') renderSeasonInsight();
   if (name === 'outing-insight') initOutingInsight();
   if (name === 'compare') populateCompareSelectors();
   if (name === 'history') renderYearOverYear();
+}
+
+/* ==================== SITUATIONAL (count / first pitch) ==================== */
+// Built at import from Statcast rows and saved per outing as sit_json.
+// Every bucket stores raw sums {pa, ab, h, k, bb, wn, wd} so seasons can be
+// added together: wOBA = wn / wd, BAA = h / ab.
+const SIT_FASTBALLS = new Set(['FF', 'FA', 'SI', 'FT']);   // 4-seam + sinker (cutters excluded)
+const SIT_NON_PA = /^(caught_stealing|pickoff|stolen_base|wild_pitch|passed_ball|other_advance|runner_double_play|truncated_pa|game_advisory|ejection)/;
+const SIT_NOT_AB = new Set(['walk','intent_walk','hit_by_pitch','sac_fly','sac_bunt','sac_fly_double_play','sac_bunt_double_play','catcher_interf']);
+const SIT_HITS = new Set(['single','double','triple','home_run']);
+const SIT_WOBA_W = { walk:.696, hit_by_pitch:.726, single:.883, double:1.244, triple:1.569, home_run:2.004 };
+
+function sitBucket() { return { pa:0, ab:0, h:0, k:0, bb:0, wn:0, wd:0 }; }
+function sitAdd(b, res) {
+  b.pa++; b.wn += res.wn; b.wd += res.wd;
+  if (res.ab) b.ab++; if (res.h) b.h++; if (res.k) b.k++; if (res.bb) b.bb++;
+}
+function sitMerge(dst, src) { if (!src) return; for (const k in src) dst[k] = (dst[k]||0) + (src[k]||0); }
+
+function computeSituational(rows) {
+  // Group into PAs (game + at-bat), ordered by pitch number
+  const pas = {};
+  rows.forEach(r => {
+    const key = (r.game_pk || r.game_date || '') + '|' + (r.at_bat_number || '');
+    if (!r.at_bat_number) return;
+    (pas[key] = pas[key] || []).push(r);
+  });
+  const out = {
+    c11_all: sitBucket(), c11_won: sitBucket(), c11_lost: sitBucket(), c11_end: sitBucket(),
+    c11_byPitch: {},          // pt -> { n, won, lost, end, wn, wd }
+    fp_all: sitBucket(),      // every PA (baseline)
+    fp_fb_pa: sitBucket(),    // PA started with a fastball — full PA result
+    fp_os_pa: sitBucket(),    // PA started with a non-fastball
+    fp_fb_end: sitBucket(),   // PA decided ON the first-pitch fastball (0-0 in play / HBP)
+    fp_fb_n: 0, fp_fb_strikes: 0, fp_n: 0,
+  };
+  Object.values(pas).forEach(ps => {
+    ps.sort((a, b) => (+a.pitch_number || 0) - (+b.pitch_number || 0));
+    const last = ps[ps.length - 1];
+    const ev = (last.events || '').toLowerCase();
+    if (!ev || SIT_NON_PA.test(ev)) return;           // not a completed PA
+    let wv = parseFloat(last.woba_value), wd = parseFloat(last.woba_denom);
+    if (isNaN(wv)) wv = SIT_WOBA_W[ev] || 0;
+    if (isNaN(wd)) wd = (ev === 'intent_walk' || ev === 'sac_bunt' || ev === 'catcher_interf') ? 0 : 1;
+    const res = { wn: wv, wd, ab: !SIT_NOT_AB.has(ev), h: SIT_HITS.has(ev), k: ev.startsWith('strikeout'), bb: ev === 'walk' || ev === 'intent_walk' };
+
+    sitAdd(out.fp_all, res);
+    // ---- first pitch ----
+    const f = ps[0];
+    const fpt = (f.pitch_type || '').toUpperCase();
+    const fdesc = (f.description || '').toLowerCase();
+    out.fp_n++;
+    if (SIT_FASTBALLS.has(fpt)) {
+      out.fp_fb_n++;
+      if (fdesc.includes('strike') || fdesc.includes('foul') || fdesc === 'hit_into_play') out.fp_fb_strikes++;
+      sitAdd(out.fp_fb_pa, res);
+      if (ps.length === 1) sitAdd(out.fp_fb_end, res);
+    } else if (fpt) sitAdd(out.fp_os_pa, res);
+
+    // ---- 1-1 count ----
+    const i11 = ps.findIndex(r => +r.balls === 1 && +r.strikes === 1);
+    if (i11 < 0) return;
+    const p11 = ps[i11];
+    const d11 = (p11.description || '').toLowerCase();
+    const pt11 = (p11.pitch_type || 'UN').toUpperCase();
+    let bucket;
+    if (i11 === ps.length - 1) bucket = 'end';                                  // PA ended on the 1-1 pitch
+    else if (d11.includes('ball') || d11 === 'pitchout') bucket = 'lost';      // -> 2-1
+    else bucket = 'won';                                                        // strike / foul -> 1-2
+    sitAdd(out.c11_all, res);
+    sitAdd(out['c11_' + bucket], res);
+    const bp = out.c11_byPitch[pt11] = out.c11_byPitch[pt11] || { n:0, won:0, lost:0, end:0, wn:0, wd:0 };
+    bp.n++; bp[bucket]++; bp.wn += res.wn; bp.wd += res.wd;
+  });
+  // round the wOBA sums so the JSON stays small
+  const rnd = b => { b.wn = +b.wn.toFixed(3); return b; };
+  ['c11_all','c11_won','c11_lost','c11_end','fp_all','fp_fb_pa','fp_os_pa','fp_fb_end'].forEach(k => rnd(out[k]));
+  Object.values(out.c11_byPitch).forEach(b => { b.wn = +b.wn.toFixed(3); });
+  return out;
+}
+
+// Season totals across outings (only outings that have sit_json)
+function aggregateSituational(outings) {
+  const agg = { outings:0, c11_all:{}, c11_won:{}, c11_lost:{}, c11_end:{}, c11_byPitch:{},
+                fp_all:{}, fp_fb_pa:{}, fp_os_pa:{}, fp_fb_end:{}, fp_fb_n:0, fp_fb_strikes:0, fp_n:0 };
+  outings.forEach(o => {
+    let s = o.sit;
+    if (!s) { try { s = o.sit_json ? JSON.parse(o.sit_json) : null; } catch(e) { s = null; } }
+    if (!s) return;
+    agg.outings++;
+    ['c11_all','c11_won','c11_lost','c11_end','fp_all','fp_fb_pa','fp_os_pa','fp_fb_end'].forEach(k => sitMerge(agg[k], s[k]));
+    agg.fp_fb_n += s.fp_fb_n||0; agg.fp_fb_strikes += s.fp_fb_strikes||0; agg.fp_n += s.fp_n||0;
+    Object.entries(s.c11_byPitch || {}).forEach(([pt, b]) => { agg.c11_byPitch[pt] = agg.c11_byPitch[pt] || {}; sitMerge(agg.c11_byPitch[pt], b); });
+  });
+  return agg;
 }
 
 /* ==================== WHIFF / SWING ==================== */
@@ -133,6 +239,95 @@ function outingsWhiffSw(outings) {
   let sw = 0, wh = 0;
   outings.forEach(o => { if (o.swings) { sw += o.swings; wh += o.swWhiffs || 0; } });
   return wps(wh, sw);
+}
+
+/* ==================== REPORT: 1-1 COUNT & FIRST-PITCH FASTBALLS ==================== */
+const sitWoba = b => b && b.wd ? b.wn / b.wd : null;
+const sitBaa  = b => b && b.ab ? b.h / b.ab : null;
+const fmt3 = v => v === null || v === undefined ? '—' : v.toFixed(3).replace(/^0/, '');
+const fmtP = (a, b) => b ? (a / b * 100).toFixed(1) + '%' : '—';
+
+function sitEmpty(el) {
+  const n = athleteOutings.length;
+  el.innerHTML = `<div class="empty-state">No count data for ${n ? 'these outings' : 'this season'} yet.<br>
+    <small>Count and plate-appearance results are saved on import starting Sept 29 2026. Re-import this season with
+    <b>Bulk Import → "Replace existing outings"</b> checked to fill it in (Statcast CSVs).</small></div>`;
+}
+
+function sitKpi(label, val, sub, cls = '') {
+  return `<div class="sit-kpi ${cls}"><div class="sit-kpi-val">${val}</div><div class="sit-kpi-lbl">${label}</div>${sub ? `<div class="sit-kpi-sub">${sub}</div>` : ''}</div>`;
+}
+
+function sitRow(label, b, extra = '') {
+  return `<tr><td>${label}</td><td class="v-num">${b.pa||0}</td><td class="v-num"><b>${fmt3(sitWoba(b))}</b></td>
+    <td class="v-num">${fmt3(sitBaa(b))}</td><td class="v-num">${fmtP(b.k||0, b.pa)}</td><td class="v-num">${fmtP(b.bb||0, b.pa)}</td>${extra}</tr>`;
+}
+
+function renderCount11() {
+  const el = document.getElementById('report-11');
+  const a = aggregateSituational(athleteOutings);
+  if (!a.outings || !a.c11_all.pa) return sitEmpty(el);
+  const won = a.c11_won, lost = a.c11_lost, end = a.c11_end;
+  const decided = (won.pa||0) + (lost.pa||0);
+  const wW = sitWoba(won), wL = sitWoba(lost);
+  const gap = (wW !== null && wL !== null) ? Math.round((wL - wW) * 1000) : null;
+
+  const byPitch = Object.entries(a.c11_byPitch).filter(([, b]) => b.n).sort((x, y) => y[1].n - x[1].n);
+  const tot11 = byPitch.reduce((s, [, b]) => s + b.n, 0);
+  const pitchRows = byPitch.map(([pt, b]) => `<tr>
+      <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
+      <td class="v-num">${b.n}</td><td class="v-num">${fmtP(b.n, tot11)}</td>
+      <td class="v-num">${fmtP(b.won||0, (b.won||0)+(b.lost||0))}</td>
+      <td class="v-num">${fmt3(b.wd ? b.wn/b.wd : null)}</td></tr>`).join('');
+
+  el.innerHTML = `
+    <div class="section-hd">Winning the 1-1 count — ${seasonLabel()}</div>
+    <div class="sit-kpis">
+      ${sitKpi('wOBA after winning 1-1', fmt3(wW), `${won.pa||0} PA reached 1-2`, 'sit-good')}
+      ${sitKpi('wOBA after losing 1-1', fmt3(wL), `${lost.pa||0} PA reached 2-1`, 'sit-bad')}
+      ${sitKpi('1-1 win rate', fmtP(won.pa||0, decided), 'strike on 1-1 (excl. balls in play)')}
+      ${sitKpi('Value of winning 1-1', gap !== null ? gap + ' pts' : '—', 'of wOBA saved vs losing it')}
+    </div>
+    <div class="table-scroll"><table class="data-table">
+      <thead><tr><th>After 1-1</th><th>PA</th><th>wOBA</th><th>BAA</th><th>K%</th><th>BB%</th></tr></thead>
+      <tbody>
+        ${sitRow('Won → 1-2', won)}
+        ${sitRow('Lost → 2-1', lost)}
+        ${sitRow('Decided on 1-1 pitch', end)}
+        ${sitRow('All PA through 1-1', a.c11_all)}
+      </tbody>
+    </table></div>
+    <div class="section-hd" style="margin-top:1.5rem">What you throw on 1-1</div>
+    <div class="table-scroll"><table class="data-table">
+      <thead><tr><th>Pitch</th><th>Thrown</th><th>Usage</th><th>Win rate</th><th>PA wOBA</th></tr></thead>
+      <tbody>${pitchRows}</tbody>
+    </table></div>
+    <div class="chart-footnote">"Won" = strike or foul on 1-1 → 1-2 · "Lost" = ball → 2-1 · wOBA is the final result of the plate appearance · Based on ${a.outings} outing${a.outings!==1?'s':''} with count data</div>`;
+}
+
+function renderFirstPitchFB() {
+  const el = document.getElementById('report-fpfb');
+  const a = aggregateSituational(athleteOutings);
+  if (!a.outings || !a.fp_n) return sitEmpty(el);
+  const endB = a.fp_fb_end, faB = a.fp_fb_pa, osB = a.fp_os_pa;
+  el.innerHTML = `
+    <div class="section-hd">First-pitch fastballs — ${seasonLabel()}</div>
+    <div class="sit-kpis">
+      ${sitKpi('BAA on first-pitch fastballs', fmt3(sitBaa(endB)), `${endB.h||0} H in ${endB.ab||0} AB decided on pitch 1`, sitBaa(endB) !== null && sitBaa(endB) <= .250 ? 'sit-good' : sitBaa(endB) >= .330 ? 'sit-bad' : '')}
+      ${sitKpi('First-pitch FB rate', fmtP(a.fp_fb_n, a.fp_n), `${a.fp_fb_n} of ${a.fp_n} PA`)}
+      ${sitKpi('First-pitch FB strike%', fmtP(a.fp_fb_strikes, a.fp_fb_n), 'called, swinging, foul or in play')}
+      ${sitKpi('BAA when PA starts with FB', fmt3(sitBaa(faB)), 'full plate appearance')}
+    </div>
+    <div class="table-scroll"><table class="data-table">
+      <thead><tr><th>Plate appearances</th><th>PA</th><th>wOBA</th><th>BAA</th><th>K%</th><th>BB%</th></tr></thead>
+      <tbody>
+        ${sitRow('Decided on first-pitch FB', endB)}
+        ${sitRow('Started with a fastball', faB)}
+        ${sitRow('Started with a non-fastball', osB)}
+        ${sitRow('All PA', a.fp_all)}
+      </tbody>
+    </table></div>
+    <div class="chart-footnote">Fastball = 4-seam or sinker (cutters not included) · "Decided on first-pitch FB" = the 0-0 fastball was put in play or hit the batter · Based on ${a.outings} outing${a.outings!==1?'s':''} with count data</div>`;
 }
 
 /* ==================== SEASON SELECTOR ==================== */
@@ -853,6 +1048,7 @@ function parseStatcastBulk(rows) {
       oonStrikePct:oneone_total?+(oneone_strikes/oneone_total*100).toFixed(1):null,
       race2kPct:   race2k_total?+(race2k_hit/race2k_total*100).toFixed(1):null,
       putawayPct:  putaway_total?+(putaway_k/putaway_total*100).toFixed(1):null,
+      sit: computeSituational(pitches),
       pitchMap: flatMap,
     };
   });
@@ -962,7 +1158,10 @@ async function runBulkImport() {
 
   // Check for duplicates against existing outings
   const existingRes = await api('getOutings', { athleteId });
-  const existingDates = new Set((existingRes.outings||[]).map(o => o.date?.toString().split('T')[0]));
+  const existingByDate = {};
+  (existingRes.outings||[]).forEach(o => { const d = o.date?.toString().split('T')[0]; (existingByDate[d] = existingByDate[d] || []).push(o.id); });
+  const existingDates = new Set(Object.keys(existingByDate));
+  const replaceExisting = !!document.getElementById('bulk-replace')?.checked;
 
   let done=0, skipped=0, errors=0;
 
@@ -973,7 +1172,21 @@ async function runBulkImport() {
 
     // Check duplicate
     const dateKey = o.date?.toString().split('T')[0];
-    if (existingDates.has(dateKey)) {
+    if (existingDates.has(dateKey) && replaceExisting) {
+      // Replace mode: delete the old outing(s) for this date, then re-add below
+      try {
+        status.textContent = 'Replacing...';
+        for (const oid of existingByDate[dateKey]) await apiWithRetry('deleteOuting', { athleteId, outingId: oid });
+      } catch(e) {
+        row.className = 'bulk-outing-row error';
+        status.style.color = 'var(--danger)';
+        status.textContent = '✗ Could not replace';
+        status.title = e.message || '';
+        errors++;
+        document.getElementById('bulk-progress-bar').style.width = ((i+1)/bulkOutings.length*100)+'%';
+        continue;
+      }
+    } else if (existingDates.has(dateKey)) {
       row.className = 'bulk-outing-row skip';
       status.style.color = 'var(--muted2)';
       status.textContent = '— Skipped (exists)';
@@ -998,6 +1211,7 @@ async function runBulkImport() {
         date: o.date,
         opponent: o.opponent,
         notes: '',
+        sit: o.sit || null,
         pitchMap: cleanMap,
         stats: {
           total: o.total_pitches, whiffs: o.whiffs, calledStrikes: o.calledStrikes,
@@ -1558,7 +1772,8 @@ function processOutingRows(rows) {
       ldPct:         bipCount      ? +(ldCount/bipCount*100).toFixed(1) : null,
       fpStrikePct:   fp_total      ? +(fp_strikes/fp_total*100).toFixed(1) : null,
       oonStrikePct:  oneone_total  ? +(oneone_strikes/oneone_total*100).toFixed(1) : null,
-    }
+    },
+    sit: computeSituational(rows),
   };
 }
 
@@ -1578,6 +1793,7 @@ async function submitOuting() {
       notes: document.getElementById('o-notes').value.trim(),
       pitchMap: pendingOutingData.pitchMap,
       stats: pendingOutingData.stats,
+      sit: pendingOutingData.sit || null,
     });
     closeModal();
     pendingOutingData = null;

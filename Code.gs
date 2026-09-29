@@ -218,7 +218,8 @@ const OUTING_HEADERS = [
   'zone_pct','o_swing_pct','z_swing_pct','z_contact_pct','swing_pct','strike_pct',
   'gb_pct','fb_pct','ld_pct',
   'fp_strike_pct','oon_strike_pct','race2k_pct','putaway_pct',
-  'createdAt'
+  'createdAt',
+  'sit_json'   // count / first-pitch PA results (Report → Winning 1-1, First-pitch fastballs)
 ];
 
 function getOutings(athleteId) {
@@ -255,22 +256,27 @@ function addOuting(body) {
   const ps  = (pt, key) => (pm[pt] && pm[pt][key] !== undefined) ? pm[pt][key] : '';
   const pct = (pt) => pm[pt] ? +(pm[pt].count / (s.total||1) * 100).toFixed(1) : 0;
   const id = 'out_' + Date.now();
-  sheet.appendRow([
-    id, body.athleteId, body.date||'', body.opponent||'',
-    body.inning_start||'', body.notes||'',
-    s.total||0, s.strikes||0, s.balls||0, s.whiffs||0,
-    s.calledStrikes||0, s.walks||0, s.ks||0, s.hrs||0, s.hits||0, s.ip||0,
-    JSON.stringify(pm),
-    pct('FF'), pct('ST'), pct('FS'), pct('FC'), pct('CU'), pct('SL'), pct('SI'), pct('CH'),
-    ps('FF','avgVelo'), ps('FF','whiffPct'), ps('ST','whiffPct'), ps('FS','whiffPct'), ps('CU','whiffPct'),
-    s.avgEV||'', s.hardHitPct||'',
-    s.zonePct||'', s.oSwingPct||'', s.zSwingPct||'', s.zContactPct||'',
-    s.swingPct||'', s.strikePct||'',
-    s.gbPct||'', s.fbPct||'', s.ldPct||'',
-    s.fpStrikePct||'', s.oonStrikePct||'',
-    s.race2kPct||'', s.putawayPct||'',
-    new Date().toISOString()
-  ]);
+  // Write by header NAME, not position, so older sheets whose columns were
+  // added in a different order (auto-migration) still line up.
+  const values = {
+    id: id, athleteId: body.athleteId, date: body.date||'', opponent: body.opponent||'',
+    inning_start: body.inning_start||'', notes: body.notes||'',
+    total_pitches: s.total||0, strikes: s.strikes||0, balls: s.balls||0, whiffs: s.whiffs||0,
+    called_strikes: s.calledStrikes||0, walks: s.walks||0, strikeouts: s.ks||0, hrs: s.hrs||0, hits: s.hits||0, ip: s.ip||0,
+    pitch_stats_json: JSON.stringify(pm),
+    ff_pct: pct('FF'), st_pct: pct('ST'), fs_pct: pct('FS'), fc_pct: pct('FC'), cu_pct: pct('CU'), sl_pct: pct('SL'), si_pct: pct('SI'), ch_pct: pct('CH'),
+    ff_velo: ps('FF','avgVelo'), ff_whiff: ps('FF','whiffPct'), st_whiff: ps('ST','whiffPct'), fs_whiff: ps('FS','whiffPct'), cu_whiff: ps('CU','whiffPct'),
+    avg_ev: s.avgEV||'', hard_hit_pct: s.hardHitPct||'',
+    zone_pct: s.zonePct||'', o_swing_pct: s.oSwingPct||'', z_swing_pct: s.zSwingPct||'', z_contact_pct: s.zContactPct||'',
+    swing_pct: s.swingPct||'', strike_pct: s.strikePct||'',
+    gb_pct: s.gbPct||'', fb_pct: s.fbPct||'', ld_pct: s.ldPct||'',
+    fp_strike_pct: s.fpStrikePct||'', oon_strike_pct: s.oonStrikePct||'',
+    race2k_pct: s.race2kPct||'', putaway_pct: s.putawayPct||'',
+    createdAt: new Date().toISOString(),
+    sit_json: body.sit ? JSON.stringify(body.sit) : '',
+  };
+  const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  sheet.appendRow(header.map(h => values[h] !== undefined ? values[h] : ''));
   return { success: true, id };
 }
 
