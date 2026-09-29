@@ -24,6 +24,8 @@ function handle(e) {
       case 'addOuting':      result = addOuting(body); break;
       case 'deleteOuting':   result = deleteOuting(body); break;
       case 'analyze':        result = callClaude(body); break;
+      // Deployment check: open <worker URL>/?action=version — should say sitJson: true
+      case 'version':        result = { version: '2026-09-29k', sitJson: true, outingHeaders: OUTING_HEADERS.length }; break;
       default: result = { error: 'Unknown action: ' + action };
     }
   } catch(err) {
