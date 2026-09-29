@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>8ctane — Athletes</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="athletes.css?v=20260929h">
+<link rel="stylesheet" href="athletes.css?v=20260929i">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -162,7 +162,7 @@
             <thead><tr>
               <th>Pitch</th><th>Total pitches</th><th>Usage</th>
               <th>Avg velo</th><th>8-Grade</th><th>Whiff%</th><th>CSW%</th><th>xwOBA</th>
-              <th>Whiff/Swing vs MLB</th>
+              <th>MLB avg whiff%</th>
             </tr></thead>
             <tbody id="season-arsenal-body"></tbody>
           </table>
@@ -245,14 +245,14 @@
           <table class="data-table">
             <thead><tr>
               <th>Pitch</th><th>Pitches</th><th>Usage</th>
-              <th>Whiff/Swing</th><th>MLB avg</th>
-              <th>Whiff/Pitch</th><th>CSW%</th>
+              <th>Whiff%</th><th>MLB avg</th>
+              <th>SwStr%</th><th>CSW%</th>
               <th>Zone%</th><th>Chase%</th><th>Z-Contact%</th>
             </tr></thead>
             <tbody id="metrics-swing-body"></tbody>
           </table>
         </div>
-        <div id="metrics-swing-note" class="chart-footnote" style="display:none">Whiff/Swing, Zone%, Chase% and Z-Contact% need outings imported after Sept 29 2026. Delete and re-import older outings to fill them in.</div>
+        <div id="metrics-swing-note" class="chart-footnote" style="display:none">Zone%, Chase% and Z-Contact% need outings imported after Sept 29 2026 — re-import older outings to fill them in.</div>
       </div>
 
       <div class="section" style="margin-top:1.5rem">
@@ -270,7 +270,7 @@
             <tbody id="metrics-contact-body"></tbody>
           </table>
         </div>
-        <div class="chart-footnote">xwOBA, xBA and xSLG are on balls in play · Hard hit = 95+ mph EV · MLB whiff baseline is per swing</div>
+        <div class="chart-footnote">Whiff% = whiffs per swing (Statcast) · SwStr% = whiffs per pitch · xwOBA, xBA, xSLG on balls in play · Hard hit = 95+ mph EV</div>
       </div>
 
       <div class="chart-grid-2" style="margin-top:1.5rem">
@@ -279,7 +279,7 @@
           <div class="chart-wrap" style="height:220px"><canvas id="metrics-velo-chart" role="img" aria-label="Avg velocity by pitch"></canvas></div>
         </div>
         <div class="chart-card">
-          <div class="chart-card-title">Whiff/Swing vs. MLB average</div>
+          <div class="chart-card-title">Whiff% vs. MLB average</div>
           <div class="chart-wrap" style="height:220px"><canvas id="metrics-whiff-chart" role="img" aria-label="Whiff% vs MLB average"></canvas></div>
         </div>
       </div>
@@ -378,6 +378,6 @@
 
 <script src="baselines-ref.js?v=20260527"></script>
 <script src="mlb-shape-match.js?v=20260725"></script>
-<script src="athletes-v2.js?v=20260929h"></script>
+<script src="athletes-v2.js?v=20260929i"></script>
 </body>
 </html>

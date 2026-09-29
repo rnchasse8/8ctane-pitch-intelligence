@@ -116,12 +116,12 @@ function buildPitchMap(rows) {
   rows.forEach(r => {
     const pt = r._pt;
     if (!map[pt]) map[pt] = {
-      count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0,
+      count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, swings:0,
       launch_speeds:[], xwobas:[], xbas:[], xslgs:[], events:[],
       pfx_xs:[], pfx_zs:[], spins:[], locations:[], spray:[],
       pfx_x_raw:[], pfx_z_raw:[], rel_xs:[], rel_zs:[], exts:[], throws:[],
-      lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
-      rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
+      lhh:{count:0,whiffs:0,cstrikes:0,hip:0,swings:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
+      rhh:{count:0,whiffs:0,cstrikes:0,hip:0,swings:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
     };
     const s = map[pt];
     s.count++;
@@ -145,6 +145,10 @@ function buildPitchMap(rows) {
     const desc = r.description || '';
     const isStrikeResult = desc.includes('swinging_strike')||desc.includes('called_strike')||desc.includes('foul')||desc==='hit_into_play'||desc==='foul_tip';
 
+    // Whiff% = whiffs per SWING (Statcast). Swings = whiffs + fouls + balls in play.
+    if (desc.includes('swinging_strike') || desc === 'missed_bunt' || desc.includes('foul') || desc === 'hit_into_play') {
+      s.swings++; if (side) side.swings++;
+    }
     if (desc.includes('swinging_strike') || desc === 'missed_bunt') {
       s.whiffs++; if(side) side.whiffs++;
     } else if (desc.includes('called_strike')) {
@@ -438,12 +442,12 @@ function renderArsenal() {
   document.getElementById('arsenal-tbody').innerHTML = sorted.map(([pt, s]) => {
     const usagePct = (s.count/total*100).toFixed(1);
     const avgV  = s.velos.length ? avg(s.velos).toFixed(1) : '—';
-    const whiff = s.count ? (s.whiffs/s.count*100).toFixed(1) : 0;
+    const whiff = s.swings ? (s.whiffs/s.swings*100).toFixed(1) : 0;
     const csw   = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0;
     const ball  = s.count ? (s.balls/s.count*100).toFixed(0) : 0;
     const avgEV = s.launch_speeds.length ? avg(s.launch_speeds).toFixed(1) : '—';
     const xwoba = s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—';
-    const wC  = whiff >= 30 ? 'v-good' : whiff >= 15 ? 'v-warn' : 'v-bad';
+    const wC  = whiff >= 30 ? 'v-good' : whiff >= 20 ? 'v-warn' : 'v-bad';
     const cC  = csw >= 30 ? 'v-good' : csw >= 20 ? 'v-warn' : 'v-bad';
     const xwC = xwoba !== '—' ? (parseFloat(xwoba) <= .250 ? 'v-good' : parseFloat(xwoba) <= .350 ? 'v-warn' : 'v-bad') : 'v-num';
 
@@ -581,10 +585,10 @@ function renderSplitsTable(map, total, bodyId) {
   const sorted = sortedPitches(map);
   document.getElementById(bodyId).innerHTML = sorted.map(([pt, s]) => {
     const usagePct = total ? (s.count/total*100).toFixed(1) : '—';
-    const whiff = s.count ? (s.whiffs/s.count*100).toFixed(0) : 0;
+    const whiff = s.swings ? (s.whiffs/s.swings*100).toFixed(0) : 0;
     const csw   = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(0) : 0;
     const xwoba = s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—';
-    const wC = whiff >= 30 ? 'v-good' : whiff >= 15 ? 'v-warn' : 'v-bad';
+    const wC = whiff >= 30 ? 'v-good' : whiff >= 20 ? 'v-warn' : 'v-bad';
     const xC = xwoba !== '—' ? (xwoba <= .250 ? 'v-good' : xwoba <= .350 ? 'v-warn' : 'v-bad') : 'v-num';
     return `<tr>
       <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
@@ -928,7 +932,7 @@ async function renderAIInsight() {
   const mlb = (typeof MLB_BASELINE_REF !== 'undefined') ? MLB_BASELINE_REF : {};
 
   const pitchLines = sorted.map(([pt, s]) => {
-    const whiff = s.count ? (s.whiffs/s.count*100).toFixed(1) : 0;
+    const whiff = s.swings ? (s.whiffs/s.swings*100).toFixed(1) : 0;
     const csw   = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0;
     const xwoba = s.xwobas.length ? avg(s.xwobas).toFixed(3) : 'N/A';
     const xba   = s.xbas.length  ? avg(s.xbas).toFixed(3)   : 'N/A';
@@ -1036,6 +1040,8 @@ function runComparison() {
 
   // Metrics grid
   const w1 = s1.rows.filter(r=>r.description?.includes('swinging_strike')).length;
+  const isSw = r => { const d = r.description||''; return d.includes('swinging_strike')||d==='missed_bunt'||d.includes('foul')||d==='hit_into_play'; };
+  const sw1 = s1.rows.filter(isSw).length, sw2 = s2.rows.filter(isSw).length;
   const w2 = s2.rows.filter(r=>r.description?.includes('swinging_strike')).length;
   const bb1 = s1.rows.filter(r=>r.events==='walk').length;
   const bb2 = s2.rows.filter(r=>r.events==='walk').length;
@@ -1048,7 +1054,7 @@ function runComparison() {
   document.getElementById('multi-metrics-grid').innerHTML = [
     { lbl:'Pitches',       v1:t1,                     v2:t2 },
     { lbl:'4S avg velo',   v1:av1+' mph',             v2:av2+' mph' },
-    { lbl:'Whiff rate',    v1:(w1/t1*100).toFixed(1)+'%', v2:(w2/t2*100).toFixed(1)+'%' },
+    { lbl:'Whiff rate',    v1:(sw1?(w1/sw1*100).toFixed(1):'—')+'%', v2:(sw2?(w2/sw2*100).toFixed(1):'—')+'%' },
     { lbl:'Walks',         v1:bb1,                    v2:bb2 },
     { lbl:'Strikeouts',    v1:k1,                     v2:k2 },
   ].map(m => `<div class="chart-card" style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem">

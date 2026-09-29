@@ -66,6 +66,75 @@ function renderTab(name) {
   if (name === 'history') renderYearOverYear();
 }
 
+/* ==================== WHIFF / SWING ==================== */
+// Every "Whiff%" in the app is whiffs per SWING — the Statcast / MLB
+// Network definition. Swings = swinging strikes + fouls (incl. tips and
+// bunts) + balls in play. SwStr% (whiffs per pitch) is labeled separately.
+//
+// Outings imported before Sept 29 2026 don't store swing counts, so they
+// are rebuilt from each pitch's saved outcome in `locations`
+// ([x, z, outcome, stand] — W / CS / HIP / F / B). If an outing has no
+// locations (older Trackman), the outing-level Swing% saved at import is
+// used for the outing total; per-pitch values stay blank for that outing.
+function wps(whiffs, swings) { return swings ? +(whiffs / swings * 100).toFixed(1) : null; }
+
+function swingsFromLocs(locs, stand) {
+  let sw = 0, wh = 0, n = 0;
+  (locs || []).forEach(l => {
+    if (!Array.isArray(l)) return;
+    if (stand && l[3] !== stand) return;
+    n++;
+    if (l[2] === 'W') { sw++; wh++; } else if (l[2] === 'F' || l[2] === 'HIP') sw++;
+  });
+  return n ? { swings: sw, whiffs: wh } : null;
+}
+
+// Adds swings / swWhiffs / whiffPct (per swing) / swStrPct (per pitch) to
+// every pitch type and L/R split, plus o.swings / o.swWhiffs / o.whiffSwPct.
+function enrichOuting(o) {
+  if (!o || o._whiffEnriched) return o;
+  let pm = {};
+  try { pm = (typeof o.pitch_stats === 'object' && o.pitch_stats) ? o.pitch_stats : JSON.parse(o.pitch_stats_json || '{}'); } catch(e) {}
+  let sw = 0, wh = 0, complete = true;
+  Object.values(pm).forEach(s => {
+    if (!s || !s.count) return;
+    s.swStrPct = +((s.whiffs || 0) / s.count * 100).toFixed(1);
+    if (s.swings !== undefined && s.swings !== null) { s.swWhiffs = s.whiffs || 0; }
+    else {
+      const d = swingsFromLocs(s.locations);
+      if (d) { s.swings = d.swings; s.swWhiffs = d.whiffs; } else { s.swings = null; s.swWhiffs = null; }
+    }
+    s.whiffPct = s.swings != null ? wps(s.swWhiffs, s.swings) : null;
+    ['lhh', 'rhh'].forEach(k => {
+      const sd = s[k]; if (!sd) return;
+      if (sd.swings !== undefined && sd.swings !== null) sd.swWhiffs = sd.whiffs || 0;
+      else {
+        const d = swingsFromLocs(s.locations, k === 'lhh' ? 'L' : 'R');
+        if (d) { sd.swings = d.swings; sd.swWhiffs = d.whiffs; } else { sd.swings = null; sd.swWhiffs = null; }
+      }
+      sd.whiffPct = sd.swings != null ? wps(sd.swWhiffs, sd.swings) : null;
+    });
+    if (s.swings == null) complete = false; else { sw += s.swings; wh += s.swWhiffs; }
+  });
+  if (!complete) {
+    const sp = pf(o.swing_pct), tp = +o.total_pitches || 0;
+    if (sp && tp) { sw = Math.round(sp * tp / 100); wh = +o.whiffs || 0; }
+  }
+  o.swings = sw || null;
+  o.swWhiffs = sw ? wh : null;
+  o.whiffSwPct = wps(o.swWhiffs, o.swings);
+  o.pitch_stats = pm;
+  o._whiffEnriched = true;
+  return o;
+}
+
+// Season Whiff/Swing across outings (sums, then divides once)
+function outingsWhiffSw(outings) {
+  let sw = 0, wh = 0;
+  outings.forEach(o => { if (o.swings) { sw += o.swings; wh += o.swWhiffs || 0; } });
+  return wps(wh, sw);
+}
+
 /* ==================== SEASON SELECTOR ==================== */
 // Season bar under the athlete hero. Filters athleteOutings to one year
 // (or All) and re-renders the hero, overview, outings list and whichever
@@ -367,7 +436,7 @@ async function openProfile(athleteId) {
     if (!currentAthlete) { showRoster(); return; }
 
     const { outings } = await api('getOutings', { athleteId });
-    athleteOutingsAll = outings || [];
+    athleteOutingsAll = (outings || []).map(enrichOuting);
     // Default to the most recent season; keep the previous pick for this
     // athlete if it still exists (e.g. after importing or deleting an outing)
     const ys = profileYears();
@@ -483,7 +552,9 @@ function parseBulkCSV(text, filename) {
     const ptags = Object.entries(o.pitchMap).filter(([,s])=>s.count>0)
       .sort((a,b)=>b[1].count-a[1].count).slice(0,5)
       .map(([pt,s])=>`${pn(pt)} ${o.total_pitches?(s.count/o.total_pitches*100).toFixed(0):0}%`).join(' · ');
-    const whiffPct = o.total_pitches ? (o.whiffs/o.total_pitches*100).toFixed(1) : '—';
+    const pmv = Object.values(o.pitchMap || {});
+    const bSw = pmv.reduce((a,s)=>a+(s.swings||0),0), bWh = pmv.reduce((a,s)=>a+(s.whiffs||0),0);
+    const whiffPct = bSw ? (bWh/bSw*100).toFixed(1) : '—';
     return `<div class="bulk-outing-row" id="bulk-row-${i}">
       <div class="bulk-outing-left">
         <div class="bulk-outing-date">${formatDate(o.date)}</div>
@@ -643,7 +714,7 @@ function parseStatcastBulk(rows) {
       if (isSwing) { totalSwings++; if(inSZ){swingInZone++;if(isContact)contactInZone++;} else if(zone)swingOutZone++; }
       // Per-pitch-type swing/zone counts (Whiff/Swing, Zone%, Chase%, Z-Contact%)
       if (inSZ) s.zoneN++; else if (zone) s.outN++;
-      if (isSwing) { s.swings++; if (inSZ) { s.zSw++; if (isContact) s.zCon++; } else if (zone) s.oSw++; }
+      if (isSwing) { s.swings++; if (side) side.swings = (side.swings||0) + 1; if (inSZ) { s.zSw++; if (isContact) s.zCon++; } else if (zone) s.oSw++; }
       if (desc.includes('swinging_strike')) {
         s.whiffs++;
         if(side) side.whiffs++;
@@ -706,7 +777,8 @@ function parseStatcastBulk(rows) {
         whiffs:   side.whiffs,
         cstrikes: side.cstrikes,
         hip:      side.hip,
-        whiffPct: side.count ? +(side.whiffs/side.count*100).toFixed(1) : 0,
+        swings:   side.swings || 0,
+        whiffPct: side.swings ? +(side.whiffs/side.swings*100).toFixed(1) : null,   // per swing
         cswPct:   side.count ? +((side.whiffs+side.cstrikes)/side.count*100).toFixed(1) : 0,
         strikePct:side.count ? +(side.totalStrikes/side.count*100).toFixed(1) : 0,
         avgVelo:  side.velos.length ? +avgg(side.velos).toFixed(1) : null,
@@ -729,7 +801,7 @@ function parseStatcastBulk(rows) {
         count:s.count, whiffs:s.whiffs, cstrikes:s.cstrikes, hip:s.hip,
         avgVelo:  s.velos.length  ? +avgg(s.velos).toFixed(1)  : null,
         peakVelo: s.velos.length  ? +Math.max(...s.velos).toFixed(1) : null,
-        whiffPct: +(s.whiffs/s.count*100).toFixed(1),
+        whiffPct: s.swings ? +(s.whiffs/s.swings*100).toFixed(1) : null,   // per swing
         cswPct:   +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1),
         avgXwoba: s.xwobas.length ? +avgg(s.xwobas).toFixed(3) : null,
         avgXba:   xbas_all.length  ? +avgg(xbas_all).toFixed(3)  : null,
@@ -822,7 +894,7 @@ function parseTrackmanBulk(rows) {
       // (60.5 - 6.3 ft) over this pitch's actual release distance.
       const ex=parseFloat(r.extension||r.Extension); if(!isNaN(ex)){s.exts.push(ex); if(!isNaN(v)&&ex<60.5)s.percVelos.push(v*(60.5-6.3)/(60.5-ex));}
       const call = r.pitchcall||r.PitchCall||'';
-      if(call.includes('SwingingStrike')||call==='StrikeSwinging'||call.includes('Foul')||call==='InPlay')s.swings++;
+      if(call.includes('SwingingStrike')||call==='StrikeSwinging'||call.includes('Foul')||call==='InPlay'){s.swings++;if(side)side.swings=(side.swings||0)+1;}
       if(call.includes('SwingingStrike')||call==='StrikeSwinging'){s.whiffs++;if(side)side.whiffs++;}
       else if(call.includes('CalledStrike')||call==='StrikeCalled'){s.cstrikes++;if(side)side.cstrikes++;}
       else if(call==='InPlay'){s.hip++;const ev=parseFloat(r.exitspeed||r.ExitSpeed);if(!isNaN(ev))s.launch_speeds.push(ev);}
@@ -840,7 +912,7 @@ function parseTrackmanBulk(rows) {
         count:s.count,whiffs:s.whiffs,cstrikes:s.cstrikes,hip:s.hip,
         avgVelo:s.velos.length?+avgg(s.velos).toFixed(1):null,
         peakVelo:s.velos.length?+Math.max(...s.velos).toFixed(1):null,
-        whiffPct:+(s.whiffs/s.count*100).toFixed(1),
+        whiffPct:s.swings?+(s.whiffs/s.swings*100).toFixed(1):null,
         cswPct:+((s.whiffs+s.cstrikes)/s.count*100).toFixed(1),
         avgIVB:s.ivbs.length?+avgg(s.ivbs).toFixed(1):null,
         avgHB:s.hbs.length?+avgg(s.hbs).toFixed(1):null,
@@ -853,8 +925,8 @@ function parseTrackmanBulk(rows) {
         hardHitPct:s.launch_speeds.length?+(s.launch_speeds.filter(v=>v>=95).length/s.launch_speeds.length*100).toFixed(1):null,
         bbe:s.launch_speeds.length,
         swings:s.swings,
-        lhh:{count:s.lhh.count,whiffs:s.lhh.whiffs,cstrikes:s.lhh.cstrikes,whiffPct:s.lhh.count?+(s.lhh.whiffs/s.lhh.count*100).toFixed(1):0,cswPct:s.lhh.count?+((s.lhh.whiffs+s.lhh.cstrikes)/s.lhh.count*100).toFixed(1):0},
-        rhh:{count:s.rhh.count,whiffs:s.rhh.whiffs,cstrikes:s.rhh.cstrikes,whiffPct:s.rhh.count?+(s.rhh.whiffs/s.rhh.count*100).toFixed(1):0,cswPct:s.rhh.count?+((s.rhh.whiffs+s.rhh.cstrikes)/s.rhh.count*100).toFixed(1):0},
+        lhh:{count:s.lhh.count,whiffs:s.lhh.whiffs,cstrikes:s.lhh.cstrikes,swings:s.lhh.swings||0,whiffPct:s.lhh.swings?+(s.lhh.whiffs/s.lhh.swings*100).toFixed(1):null,cswPct:s.lhh.count?+((s.lhh.whiffs+s.lhh.cstrikes)/s.lhh.count*100).toFixed(1):0},
+        rhh:{count:s.rhh.count,whiffs:s.rhh.whiffs,cstrikes:s.rhh.cstrikes,swings:s.rhh.swings||0,whiffPct:s.rhh.swings?+(s.rhh.whiffs/s.rhh.swings*100).toFixed(1):null,cswPct:s.rhh.count?+((s.rhh.whiffs+s.rhh.cstrikes)/s.rhh.count*100).toFixed(1):0},
       };
     });
     // Parse date from M/D/YY
@@ -999,7 +1071,8 @@ function renderProfileHero() {
   const totalWhiffs = athleteOutings.reduce((a,o)=>a+(+o.whiffs||0), 0);
   const totalIP = athleteOutings.reduce((a,o)=>a+(+o.ip||0), 0);
 
-  const whiffRate = totalPitches ? (totalWhiffs/totalPitches*100).toFixed(1) : '—';
+  const whiffSwSeason = outingsWhiffSw(athleteOutings);
+  const whiffRate = whiffSwSeason !== null ? whiffSwSeason.toFixed(1) : '—';
 
   // FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.10
   const fip = totalIP > 0
@@ -1053,8 +1126,7 @@ function renderSeasonOverview() {
       // Weighted season averages (by pitches / balls in play)
       if (s.avgVelo && s.count)  { c.veloW += pf(s.avgVelo)*s.count; c.veloN += s.count; }
       if (s.avgXwoba && s.hip)   { c.xwW += pf(s.avgXwoba)*s.hip;    c.xwN += s.hip; }
-      // Whiff/Swing — only outings imported with per-pitch swing counts
-      if (s.swings !== undefined) { c.swings += s.swings||0; c.swWhiffs += s.whiffs||0; }
+      if (s.swings) { c.swings += s.swings; c.swWhiffs += s.swWhiffs||0; }
       c.count += (s.count||0);
       c.whiffs += (s.whiffs||0);
       c.cstrikes += (s.cstrikes||0);
@@ -1071,19 +1143,18 @@ function renderSeasonOverview() {
 
   document.getElementById('season-arsenal-body').innerHTML = sorted.map(([pt, s]) => {
     const usagePct = total ? (s.count/total*100).toFixed(1) : 0;
-    const whiff = s.count ? (s.whiffs/s.count*100).toFixed(1) : '—';
+    const whiffN = wps(s.swWhiffs, s.swings);   // Whiff/Swing
+    const whiff = whiffN !== null ? whiffN.toFixed(1) : '—';
     const csw   = s.count ? ((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : '—';
     const avgV  = s.veloN ? (s.veloW/s.veloN).toFixed(1) : (s.velos.length ? avg(s.velos).toFixed(1) : '—');
     const xwoba = s.xwN ? (s.xwW/s.xwN).toFixed(3) : (s.xwobas.length ? avg(s.xwobas).toFixed(3) : '—');
     const mlbW  = MLB_BASELINE_REF[pt]?.whiff_pct;
-    // Per-pitch whiff% color bands (MLB per-pitch whiff is roughly 10-17%)
-    const wC    = parseFloat(whiff) >= 15 ? 'v-good' : parseFloat(whiff) >= 10 ? 'v-warn' : 'v-bad';
-    // MLB baseline is whiffs per SWING, so compare Whiff/Swing to it, not per-pitch whiff%
-    const whiffSw = s.swings ? s.swWhiffs / s.swings * 100 : null;
-    const mlbTag = (mlbW && whiffSw !== null) ? (() => {
-      const d = whiffSw - mlbW;
-      return `${whiffSw.toFixed(1)}% <span class="v-num">vs ${mlbW}%</span> <span class="${d>=0?'delta-good':'delta-bad'}">${d>=0?'▲':'▼'}${Math.abs(d).toFixed(1)}</span>`;
-    })() : (mlbW ? `<span class="v-num" title="Re-import this season's outings to get Whiff/Swing">— vs ${mlbW}%</span>` : '—');
+    // Whiff/Swing color bands vs its own pitch type's MLB average
+    const wC    = whiffN === null ? 'v-num' : mlbW ? (whiffN >= mlbW + 2 ? 'v-good' : whiffN >= mlbW - 2 ? 'v-warn' : 'v-bad') : (whiffN >= 30 ? 'v-good' : whiffN >= 20 ? 'v-warn' : 'v-bad');
+    const mlbTag = (mlbW && whiffN !== null) ? (() => {
+      const d = whiffN - mlbW;
+      return `${mlbW}% <span class="${d>=0?'delta-good':'delta-bad'}">${d>=0?'▲':'▼'}${Math.abs(d).toFixed(1)}</span>`;
+    })() : (mlbW ? `${mlbW}%` : '—');
 
     // 8-Grade — 100-scale, 100 = MLB average. Season-level outings
     // only store avgVelo/avgIVB/avgHB (no release point), so this matches
@@ -1119,7 +1190,7 @@ function renderSeasonOverview() {
       <td class="v-num">${usagePct}%</td>
       <td class="v-num">${avgV}</td>
       <td class="${gradeClass}" title="${gradeTitle}">${grade8 ?? '—'}</td>
-      <td class="${wC}">${whiff}%</td>
+      <td class="${wC}">${whiff}${whiff!=='—'?'%':''}</td>
       <td class="v-num">${csw}%</td>
       <td class="v-num">${xwoba}</td>
       <td class="mlb-avg">${mlbTag}</td>
@@ -1206,12 +1277,15 @@ function renderTrends() {
   });
 
   // ---- Whiff trend ----
-  const pitchKeys = [['FF','#378ADD'],['ST','#D85A30'],['CU','#1D9E75'],['FS','#BA7517']];
-  const whiffKey  = { FF:'ff_whiff', ST:'st_whiff', CU:'cu_whiff', FS:'fs_whiff' };
+  // Whiff/Swing per pitch type, top 5 pitch types by volume
+  const ptCounts = {};
+  sorted.forEach(o => Object.entries(o.pitch_stats||{}).forEach(([pt,s]) => { ptCounts[pt] = (ptCounts[pt]||0) + (s.count||0); }));
+  const pitchKeys = Object.entries(ptCounts).filter(([pt]) => pt !== 'OTHER').sort((a,b)=>b[1]-a[1]).slice(0,5).map(([pt]) => [pt, pc(pt)]);
+  const whiffOf = (o, pt) => { const v = o.pitch_stats?.[pt]?.whiffPct; return (v === null || v === undefined) ? null : v; };
   const whiffDs = pitchKeys
-    .filter(([pt]) => sorted.some(o => pf(o[whiffKey[pt]]) > 0))
+    .filter(([pt]) => sorted.some(o => whiffOf(o, pt) !== null))
     .map(([pt, col]) => ({
-      label: pn(pt), data: sorted.map(o => pf(o[whiffKey[pt]]) || null),
+      label: pn(pt), data: sorted.map(o => whiffOf(o, pt)),
       borderColor:col, backgroundColor:'transparent',
       tension:.3, pointRadius:4, pointBackgroundColor:col,
     }));
@@ -1252,7 +1326,7 @@ function renderOutingsList() {
     let pm = {};
     try { pm = typeof o.pitch_stats === 'object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json || '{}'); } catch(e) {}
     const topPitches = Object.entries(pm).sort((a,b)=>b[1].count-a[1].count).slice(0,5);
-    const whiffRate = o.total_pitches ? (o.whiffs/o.total_pitches*100).toFixed(1) : '—';
+    const whiffRate = o.whiffSwPct !== null && o.whiffSwPct !== undefined ? o.whiffSwPct.toFixed(1) : '—';
     return `<div class="outing-row">
       <div class="outing-date">${formatDate(o.date)}</div>
       <div class="outing-opp">${o.opponent || '—'}</div>
@@ -1432,7 +1506,7 @@ function processOutingRows(rows) {
       hip:      s.hip,
       avgVelo:  s.velos.length  ? +avg(s.velos).toFixed(1)  : null,
       peakVelo: s.velos.length  ? +Math.max(...s.velos).toFixed(1) : null,
-      whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : 0,
+      whiffPct: s.swings ? +(s.whiffs/s.swings*100).toFixed(1) : null,   // per swing
       cswPct:   s.count ? +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0,
       avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
       avgEV:    s.launch_speeds.length ? +avg(s.launch_speeds).toFixed(1) : null,
@@ -1636,9 +1710,10 @@ async function renderSeasonInsight() {
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
       if (!s.count) return;
-      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, velos:[], ivbs:[], hbs:[], vaas:[] };
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, velos:[], ivbs:[], hbs:[], vaas:[], swings:0, swWhiffs:0 };
       const c = combined[pt];
       c.count += s.count||0; c.whiffs += s.whiffs||0; c.cstrikes += s.cstrikes||0; c.hip += s.hip||0;
+      if (s.swings) { c.swings += s.swings; c.swWhiffs += s.swWhiffs||0; }
       if (s.avgVelo)  c.velos.push(pf(s.avgVelo));
       if (s.avgXwoba) c.xwobas.push(pf(s.avgXwoba));
       if (s.avgEV)    c.evs.push(pf(s.avgEV));
@@ -1668,7 +1743,8 @@ async function renderSeasonInsight() {
         count: s.count,
         usage: total ? +(s.count/total*100).toFixed(1) : 0,
         avgVelo: s.velos.length ? +avg(s.velos).toFixed(1) : null,
-        whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : 0,
+        whiffPct: wps(s.swWhiffs, s.swings),   // per swing
+        swStrPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : 0,
         cswPct: s.count ? +((s.whiffs+s.cstrikes)/s.count*100).toFixed(1) : 0,
         avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
         avgXba:  xbas.length  ? +avg(xbas).toFixed(3)  : null,
@@ -1735,7 +1811,7 @@ ${pitchSummary.map(p => {
   const gradeStr = (real && real.psStuffPlus) ? ' | psStuff+:' + real.psStuffPlus + ' [8ctane]' : '';
   const spinStr = p.avgSpin ? ' | Spin:' + p.avgSpin + 'rpm' : '';
   const shapeStr = ' | IVB:' + (p.avgIVB||'?') + '" HB:' + (p.avgHB||'?') + '"';
-  const resultsStr = ' | Whiff:' + p.whiffPct + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | xwOBA:' + (p.avgXwoba||'N/A') + ' | xBA:' + (p.avgXba||'N/A') + ' | xSLG:' + (p.avgXslg||'N/A');
+  const resultsStr = ' | Whiff/Swing:' + (p.whiffPct ?? '?') + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | SwStr:' + p.swStrPct + '% | xwOBA:' + (p.avgXwoba||'N/A') + ' | xBA:' + (p.avgXba||'N/A') + ' | xSLG:' + (p.avgXslg||'N/A');
   return p.pitch + ' (' + p.code + '): ' + p.count + ' pitches, ' + p.usage + '% usage | ' + (p.avgVelo||'?') + 'mph' + spinStr + shapeStr + resultsStr + gradeStr;
 }).join('\n')}
 
@@ -1912,7 +1988,7 @@ async function loadOutingInsight() {
     .sort((a,b)=>b[1].count-a[1].count)
     .map(([pt,s]) => {
       const mlb = MLB_BASELINE_REF[pt];
-      return `${pn(pt)}: ${s.count} pitches (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'} mph | Whiff: ${s.whiffPct||0}% | CSW: ${s.cswPct||0}% | xwOBA: ${s.avgXwoba||'N/A'} | IVB: ${s.avgIVB||'?'}" HB: ${s.avgHB||'?'}" VAA: ${s.avgVAA||'?'}° (MLB whiff avg: ${mlb?.whiff_pct||'?'}%)`;
+      return `${pn(pt)}: ${s.count} pitches (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'} mph | Whiff/Swing: ${s.whiffPct ?? '?'}% | SwStr: ${s.swStrPct ?? '?'}% | CSW: ${s.cswPct||0}% | xwOBA: ${s.avgXwoba||'N/A'} | IVB: ${s.avgIVB||'?'}" HB: ${s.avgHB||'?'}" VAA: ${s.avgVAA||'?'}° (MLB whiff avg: ${mlb?.whiff_pct||'?'}%)`;
     }).join('\n');
 
   const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher after their outing. Your tone is direct, honest, and encouraging — like a coach who watched every pitch and wants to help them grow. Use "you" and "your" throughout. Be specific about what happened, what worked, and what to adjust. Speak plainly — avoid stat jargon. NEVER mention psStuff+ or any stuff grade unless it was explicitly provided in the data — do not calculate or infer it yourself.
@@ -1960,7 +2036,7 @@ function renderOutingInsightHTML(a, outing, pm, total) {
         <span class="v-num" style="min-width:35px">${s.count}</span>
         <span style="color:var(--muted);font-size:11px;min-width:45px">${total?(s.count/total*100).toFixed(0):0}%</span>
         <span class="v-num" style="min-width:55px">${s.avgVelo||'—'} mph</span>
-        <span class="${s.whiffPct>=30?'v-good':s.whiffPct>=15?'v-warn':'v-bad'}">${s.whiffPct||0}% W</span>
+        <span class="${s.whiffPct>=30?'v-good':s.whiffPct>=20?'v-warn':'v-bad'}">${s.whiffPct ?? '—'}${s.whiffPct!=null?'%':''} W</span>
         <span class="v-num" style="font-size:11px">${s.cswPct||0}% CSW</span>
       </div>`).join('');
 
@@ -2168,10 +2244,11 @@ function renderReport() {
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
       if (!s.count) return;
-      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, velos:[], ivbs:[], hbs:[] };
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, velos:[], ivbs:[], hbs:[], swings:0, swWhiffs:0 };
       const c = combined[pt];
       c.count    += s.count    || 0;
       c.whiffs   += s.whiffs   || 0;
+      if (s.swings) { c.swings += s.swings; c.swWhiffs += s.swWhiffs||0; }
       c.cstrikes += s.cstrikes || 0;
       c.hip      += s.hip      || 0;
       if (s.avgVelo)      c.velos.push(pf(s.avgVelo));
@@ -2217,7 +2294,7 @@ function renderReport() {
   const outingHHPs = athleteOutings.map(o=>pf(o.hard_hit_pct)).filter(v=>v>0);
   const hardHitPctSeason = outingHHPs.length ? avg(outingHHPs) : 0;
 
-  const whiffPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
+  const whiffPct   = outingsWhiffSw(athleteOutings) ?? 0;   // per swing
   const cswPct     = totalPitches ? (totalWhiffs+totalCS)/totalPitches*100 : 0;
   const kPct       = totalHIP+totalK+totalBB > 0 ? totalK/(totalHIP+totalK+totalBB)*100 : 0;
   const bbPct      = totalHIP+totalK+totalBB > 0 ? totalBB/(totalHIP+totalK+totalBB)*100 : 0;
@@ -2275,7 +2352,8 @@ function renderReport() {
 
   // MLB baseline distributions — percentile curves (p10,p25,p50,p75,p90)
   const DIST = {
-    whiffPct:   { p10:12,  p25:17,  p50:22,  p75:27,  p90:33,  hib:true  },
+    whiffPct:   { p10:18,  p25:21,  p50:25,  p75:29,  p90:33,  hib:true  },   // whiffs per swing
+    swStrPct:   { p10:8,   p25:9.5, p50:11,  p75:13,  p90:15,  hib:true  },   // whiffs per pitch
     cswPct:     { p10:14,  p25:19,  p50:24,  p75:29,  p90:35,  hib:true  },
     kPct:       { p10:14,  p25:18,  p50:22,  p75:27,  p90:32,  hib:true  },
     bbPct:      { p10:4,   p25:6,   p50:8,   p75:11,  p90:14,  hib:false },
@@ -2382,7 +2460,7 @@ function renderReport() {
       ${pctBar('CSW%',            cswPct,      r(cswPct),      DIST.cswPct,     '%')}
       ${pctBar('K%',              kPct,        r(kPct),        DIST.kPct,       '%')}
       ${pctBar('BB%',             bbPct,       r(bbPct),       DIST.bbPct,      '%')}
-      ${pctBar('SwStr%',          swStrPct,    r(swStrPct),    DIST.whiffPct,   '%')}
+      ${pctBar('SwStr%',          swStrPct,    r(swStrPct),    DIST.swStrPct,   '%')}
 
       <div class="pct-group-hd">Plate discipline</div>
       ${zonePct     !== null     ? pctBar('Zone%',         zonePct,      r(zonePct),      DIST.zonePct,     '%') : ''}
@@ -2652,12 +2730,13 @@ function renderSplits() {
     Object.entries(pm).forEach(([pt, s]) => {
       if (!s.count) return;
       if (!combined[pt]) combined[pt] = {
-        count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0,
-        lhh:{ count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0 },
-        rhh:{ count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0 },
+        count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0, swings:0, swWhiffs:0,
+        lhh:{ count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0, swings:0, swWhiffs:0 },
+        rhh:{ count:0, whiffs:0, cstrikes:0, hip:0, velos:[], xbas:[], xslgs:[], launch_speeds:[], hard_hits:0, gb:0, fb:0, ld:0, bip:0, totalStrikes:0, swings:0, swWhiffs:0 },
       };
       const c = combined[pt];
       c.count += s.count||0; c.whiffs += s.whiffs||0; c.cstrikes += s.cstrikes||0; c.hip += s.hip||0;
+      if (s.swings) { c.swings += s.swings; c.swWhiffs += s.swWhiffs||0; }
       if (s.avgVelo) c.velos.push(pf(s.avgVelo));
       if (s.avgXba)  c.xbas.push(pf(s.avgXba));
       if (s.avgXslg) c.xslgs.push(pf(s.avgXslg));
@@ -2671,11 +2750,15 @@ function renderSplits() {
         dst.whiffs   += src.whiffs   ||0;
         dst.cstrikes += src.cstrikes ||0;
         dst.hip      += src.hip      ||0;
-        dst.gb       += src.gb       ||0;
-        dst.fb       += src.fb       ||0;
-        dst.ld       += src.ld       ||0;
-        dst.bip      += src.bip      ||0;
-        dst.totalStrikes += src.totalStrikes||0;
+        if (src.swings) { dst.swings += src.swings; dst.swWhiffs += src.swWhiffs||0; }
+        // Stored splits only keep percentages (gbPct etc.), not raw counts —
+        // rebuild counts from pct x balls in play so GB/FB/LD% aren't blank.
+        const bipN = src.bip || src.hip || 0;
+        dst.gb  += src.gb  != null ? src.gb  : (src.gbPct != null ? src.gbPct/100*bipN : 0);
+        dst.fb  += src.fb  != null ? src.fb  : (src.fbPct != null ? src.fbPct/100*bipN : 0);
+        dst.ld  += src.ld  != null ? src.ld  : (src.ldPct != null ? src.ldPct/100*bipN : 0);
+        dst.bip += (src.bip != null ? src.bip : (src.gbPct != null ? bipN : 0));
+        dst.totalStrikes += src.totalStrikes != null ? src.totalStrikes : (src.strikePct != null ? src.strikePct/100*src.count : 0);
         if (src.avgVelo) dst.velos.push(pf(src.avgVelo));
         if (src.avgXba)  dst.xbas.push(pf(src.avgXba));
         if (src.avgXslg) dst.xslgs.push(pf(src.avgXslg));
@@ -2695,14 +2778,14 @@ function renderSplits() {
       if (!st || !st.count) return '';
       const avgV = st.velos.length ? avg(st.velos).toFixed(1) : '—';
       const strikePct = st.count ? (st.totalStrikes/st.count*100).toFixed(1)+'%' : '—';
-      const whiffPct  = st.count ? (st.whiffs/st.count*100).toFixed(1)+'%' : '—';
+      const whiffPct  = st.swings ? (st.swWhiffs/st.swings*100).toFixed(1)+'%' : '—';   // per swing
       const xba  = st.xbas.length  ? avg(st.xbas).toFixed(3)  : '—';
       const xslg = st.xslgs.length ? avg(st.xslgs).toFixed(3) : '—';
       const xops = (st.xbas.length&&st.xslgs.length) ? (avg(st.xbas)+avg(st.xslgs)).toFixed(3) : '—';
       const gb   = st.bip ? (st.gb/st.bip*100).toFixed(1)+'%' : '—';
       const fb   = st.bip ? (st.fb/st.bip*100).toFixed(1)+'%' : '—';
       const ld   = st.bip ? (st.ld/st.bip*100).toFixed(1)+'%' : '—';
-      const wCls = parseFloat(whiffPct)>=30?'v-good':parseFloat(whiffPct)>=15?'':'v-bad';
+      const wCls = parseFloat(whiffPct)>=30?'v-good':parseFloat(whiffPct)>=20?'':'v-bad';
       return `<tr>
         <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
         <td class="v-num">${st.count}</td>
@@ -2743,8 +2826,12 @@ function renderSplits() {
   container.innerHTML =
     buildTable('Overall — Pitch Performance', s => ({
       count:s.count, whiffs:s.whiffs, cstrikes:s.cstrikes, hip:s.hip,
+      swings:s.swings, swWhiffs:s.swWhiffs,
       velos:s.velos, xbas:s.xbas, xslgs:s.xslgs, launch_speeds:s.launch_speeds,
-      totalStrikes:s.totalStrikes||0, gb:s.gb||0, fb:s.fb||0, ld:s.ld||0, bip:s.bip||0,
+      // top-level counts aren't stored per outing — combine the L/R splits
+      totalStrikes:(s.lhh.totalStrikes||0)+(s.rhh.totalStrikes||0),
+      gb:(s.lhh.gb||0)+(s.rhh.gb||0), fb:(s.lhh.fb||0)+(s.rhh.fb||0), ld:(s.lhh.ld||0)+(s.rhh.ld||0),
+      bip:(s.lhh.bip||0)+(s.rhh.bip||0),
     }), '#1a3a5c') +
     buildTable('vs. RHB — Pitch Performance', s => s.rhh, '#3a1a1a') +
     buildTable('vs. LHB — Pitch Performance', s => s.lhh, '#1a2a1a');
@@ -2921,7 +3008,7 @@ function renderYoY() {
       addW(c.ev, s.avgEV, bbe);              addW(c.hh,  s.hardHitPct, bbe);
       // GB% lives on the L/R splits
       ['lhh','rhh'].forEach(k => { const sd = s[k]; if (sd && sd.gbPct != null) addW(c.gb, sd.gbPct, sd.hip || 0); });
-      if (s.swings !== undefined) { c.swN += n; c.swWhiffs += s.whiffs||0; c.swings += s.swings||0; }
+      if (s.swings) { c.swN += n; c.swWhiffs += s.swWhiffs||0; c.swings += s.swings; }
       if (s.zoneN !== undefined) { c.zoneOutings++; c.zoneN += s.zoneN||0; c.outN += s.outN||0; c.zSw += s.zSw||0; c.oSw += s.oSw||0; c.zCon += s.zCon||0; }
     });
   });
@@ -2972,7 +3059,7 @@ function renderYoY() {
   // ---- Table 1: swing & miss ----
   document.getElementById('metrics-swing-body').innerHTML = sorted.map(([pt, s]) => {
     const whiffSw = s.swings ? pct(s.swWhiffs, s.swings) : null;
-    if (!s.swN) missingSwingData = true;
+    if (!s.zoneOutings) missingSwingData = true;
     const zone  = s.zoneOutings ? pct(s.zoneN, s.zoneN + s.outN) : null;
     const chase = s.zoneOutings ? pct(s.oSw, s.outN) : null;
     const zCon  = s.zoneOutings ? pct(s.zCon, s.zSw) : null;
@@ -3031,7 +3118,7 @@ function renderYoY() {
     data: {
       labels: whiffPitches.map(([pt])=>pn(pt)),
       datasets: [
-        { label:'Whiff/Swing', data:whiffPitches.map(([,s])=>+(s.swWhiffs/s.swings*100).toFixed(1)), backgroundColor:whiffPitches.map(([pt])=>pc(pt)), borderRadius:3, borderSkipped:false },
+        { label:'Whiff%', data:whiffPitches.map(([,s])=>+(s.swWhiffs/s.swings*100).toFixed(1)), backgroundColor:whiffPitches.map(([pt])=>pc(pt)), borderRadius:3, borderSkipped:false },
         { label:'MLB avg',       data:whiffPitches.map(([pt])=>MLB_BASELINE_REF[pt]?.whiff_pct||0),           backgroundColor:'rgba(255,255,255,0.08)',           borderRadius:3, borderSkipped:false },
       ]
     },
@@ -3080,7 +3167,7 @@ function computeSeasonAggregate(outings) {
   const totalWhiffs = outings.reduce((a,o)=>a+(+o.whiffs||0), 0);
   const totalIP  = outings.reduce((a,o)=>a+(+o.ip||0), 0);
 
-  const whiffPct = totalPitches ? +(totalWhiffs/totalPitches*100).toFixed(1) : null;
+  const whiffPct = outingsWhiffSw(outings);   // per swing
   const fip = totalIP > 0 ? +(((13*totalHR + 3*totalBB - 2*totalK) / totalIP) + 3.10).toFixed(2) : null;
   const whip = totalIP > 0 ? +((totalBB + totalH) / totalIP).toFixed(2) : null;
 
@@ -3101,10 +3188,11 @@ function computeSeasonAggregate(outings) {
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
       if (!s.count) return;
-      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, velos:[], xwobas:[] };
+      if (!combined[pt]) combined[pt] = { count:0, whiffs:0, velos:[], xwobas:[], swings:0, swWhiffs:0 };
       const c = combined[pt];
       c.count += s.count || 0;
       c.whiffs += s.whiffs || 0;
+      if (s.swings) { c.swings += s.swings; c.swWhiffs += s.swWhiffs||0; }
       if (s.avgVelo)  c.velos.push(pf(s.avgVelo));
       if (s.avgXwoba) c.xwobas.push(pf(s.avgXwoba));
     });
@@ -3114,7 +3202,7 @@ function computeSeasonAggregate(outings) {
     pitchStats[pt] = {
       count: s.count,
       usagePct: totalPitches ? +(s.count/totalPitches*100).toFixed(1) : 0,
-      whiffPct: s.count ? +(s.whiffs/s.count*100).toFixed(1) : null,
+      whiffPct: wps(s.swWhiffs, s.swings),   // per swing
       avgVelo: s.velos.length ? +avg(s.velos).toFixed(1) : null,
       avgXwoba: s.xwobas.length ? +avg(s.xwobas).toFixed(3) : null,
     };
@@ -3162,7 +3250,7 @@ async function renderYearOverYear() {
     if (a.id === currentAthlete.id) {
       outings = athleteOutingsAll;
     } else {
-      try { const r = await api('getOutings', { athleteId: a.id }); outings = r.outings || []; } catch(e) { outings = []; }
+      try { const r = await api('getOutings', { athleteId: a.id }); outings = (r.outings || []).map(enrichOuting); } catch(e) { outings = []; }
     }
     return { athlete: a, outings };
   }));
@@ -3340,7 +3428,7 @@ function renderComparison() {
           <div style="display:flex;gap:1.5rem;margin-bottom:.75rem;flex-wrap:wrap">
             ${[
               {v:o.total_pitches||0,l:'Pitches'},
-              {v:((o.whiffs/o.total_pitches||0)*100).toFixed(1)+'%',l:'Whiff%'},
+              {v:(o.whiffSwPct != null ? o.whiffSwPct.toFixed(1)+'%' : '—'),l:'Whiff%'},
               {v:o.strikeouts||0,l:'K'},
               {v:o.walks||0,l:'BB'},
             ].map(k=>`<div class="kpi"><div class="kpi-val mono" style="font-size:18px">${k.v}</div><div class="kpi-lbl">${k.l}</div></div>`).join('')}
@@ -3353,7 +3441,7 @@ function renderComparison() {
                 <div style="width:${pct}%;height:4px;border-radius:2px;background:${pc(pt)}"></div>
               </div>
               <span class="v-num" style="font-size:10px;width:30px;text-align:right">${pct}%</span>
-              <span style="font-size:10px;color:var(--muted);width:50px">W:${s.whiffPct||0}%</span>
+              <span style="font-size:10px;color:var(--muted);width:50px">W:${s.whiffPct != null ? s.whiffPct+'%' : '—'}</span>
             </div>`;
           }).join('')}</div>
         </div>`).join('')}
