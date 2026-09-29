@@ -490,7 +490,7 @@ function parseStatcastBulk(rows) {
       if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
       if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
         spins:[],locations:[],spray:[],
-        pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],throws:[],
+        pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],realExts:[],effSpeeds:[],throws:[],
         lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]},
         rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]}};
       const s = pm[pt];
@@ -517,6 +517,10 @@ function parseStatcastBulk(rows) {
       const ax=parseFloat(r.ax),ay=parseFloat(r.ay),az=parseFloat(r.az);
       const ext=parseFloat(r.release_extension)||6.0;
       s.exts.push(ext);
+      // Real extension only (no 6.0 fallback) for the displayed average
+      const extReal=parseFloat(r.release_extension); if(!isNaN(extReal)) s.realExts.push(extReal);
+      // Perceived velo — Statcast effective_speed
+      const eff=parseFloat(r.effective_speed); if(!isNaN(eff)) s.effSpeeds.push(eff);
       if(!isNaN(vx0)&&!isNaN(vy0)&&!isNaN(vz0)&&!isNaN(ax)&&!isNaN(ay)&&!isNaN(az)){
         const t=(60.5-ext)/Math.abs(vy0);
         const vxf=vx0+ax*t, vyf=vy0+ay*t, vzf=vz0+az*t;
@@ -642,6 +646,14 @@ function parseStatcastBulk(rows) {
         avgVAA:   s.vaas.length   ? +avgg(s.vaas).toFixed(1)   : null,
         avgHAA:   s.haas.length   ? +avgg(s.haas).toFixed(1)   : null,
         avgSpin:  s.spins.length  ? +avgg(s.spins).toFixed(0)  : null,
+        // Release point — release_pos_z (height, ft off the ground) and
+        // release_pos_x (side, ft from the center of the rubber; sign
+        // follows Statcast's raw convention, catcher's-view, NOT
+        // hand-flipped like avgHB is).
+        avgRelHeight: s.rel_zs.length ? +avgg(s.rel_zs).toFixed(2) : null,
+        avgRelSide:   s.rel_xs.length ? +avgg(s.rel_xs).toFixed(2) : null,
+        avgExt:       s.realExts.length ? +avgg(s.realExts).toFixed(2) : null,
+        avgPercVelo:  s.effSpeeds.length ? +avgg(s.effSpeeds).toFixed(1) : null,
         locations: s.locations || [],
         spray: s.spray || [],
         lhh: makeSplitStats(s.lhh),
@@ -697,7 +709,7 @@ function parseTrackmanBulk(rows) {
       const tagged = r.taggedpitchtype || r.TaggedPitchType || '';
       const auto   = r.autopitchtype   || r.AutoPitchType   || '';
       const pt = PT_MAP[tagged] || PT_MAP[auto] || 'OTHER';
-      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,launch_speeds:[],ivbs:[],hbs:[],lhh:{count:0,whiffs:0,cstrikes:0},rhh:{count:0,whiffs:0,cstrikes:0}};
+      if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,launch_speeds:[],ivbs:[],hbs:[],rel_xs:[],rel_zs:[],exts:[],percVelos:[],lhh:{count:0,whiffs:0,cstrikes:0},rhh:{count:0,whiffs:0,cstrikes:0}};
       const s = pm[pt]; s.count++;
       const stand = (r.batterside||r.BatterSide||'').toUpperCase();
       const side = stand==='L'?s.lhh:stand==='R'?s.rhh:null;
@@ -705,6 +717,13 @@ function parseTrackmanBulk(rows) {
       const v = parseFloat(r.relspeed||r.RelSpeed); if(!isNaN(v))s.velos.push(v);
       const ivb=parseFloat(r.inducedvertbreak||r.InducedVertBreak); if(!isNaN(ivb))s.ivbs.push(ivb);
       const hb=parseFloat(r.horzbreak||r.HorzBreak); if(!isNaN(hb))s.hbs.push(hb);
+      // Trackman release point — RelHeight/RelSide (feet)
+      const rh=parseFloat(r.relheight||r.RelHeight); if(!isNaN(rh))s.rel_zs.push(rh);
+      const rs=parseFloat(r.relside||r.RelSide); if(!isNaN(rs))s.rel_xs.push(rs);
+      // Trackman extension (ft). Trackman has no perceived-velo column, so
+      // estimate it per pitch: velo scaled by MLB-avg release distance
+      // (60.5 - 6.3 ft) over this pitch's actual release distance.
+      const ex=parseFloat(r.extension||r.Extension); if(!isNaN(ex)){s.exts.push(ex); if(!isNaN(v)&&ex<60.5)s.percVelos.push(v*(60.5-6.3)/(60.5-ex));}
       const call = r.pitchcall||r.PitchCall||'';
       if(call.includes('SwingingStrike')||call==='StrikeSwinging'){s.whiffs++;if(side)side.whiffs++;}
       else if(call.includes('CalledStrike')||call==='StrikeCalled'){s.cstrikes++;if(side)side.cstrikes++;}
@@ -729,6 +748,10 @@ function parseTrackmanBulk(rows) {
         avgHB:s.hbs.length?+avgg(s.hbs).toFixed(1):null,
         avgEV:s.launch_speeds.length?+avgg(s.launch_speeds).toFixed(1):null,
         avgXwoba:null,
+        avgRelHeight:s.rel_zs.length?+avgg(s.rel_zs).toFixed(2):null,
+        avgRelSide:s.rel_xs.length?+avgg(s.rel_xs).toFixed(2):null,
+        avgExt:s.exts.length?+avgg(s.exts).toFixed(2):null,
+        avgPercVelo:s.percVelos.length?+avgg(s.percVelos).toFixed(1):null,
         lhh:{count:s.lhh.count,whiffs:s.lhh.whiffs,cstrikes:s.lhh.cstrikes,whiffPct:s.lhh.count?+(s.lhh.whiffs/s.lhh.count*100).toFixed(1):0,cswPct:s.lhh.count?+((s.lhh.whiffs+s.lhh.cstrikes)/s.lhh.count*100).toFixed(1):0},
         rhh:{count:s.rhh.count,whiffs:s.rhh.whiffs,cstrikes:s.rhh.cstrikes,whiffPct:s.rhh.count?+(s.rhh.whiffs/s.rhh.count*100).toFixed(1):0,cswPct:s.rhh.count?+((s.rhh.whiffs+s.rhh.cstrikes)/s.rhh.count*100).toFixed(1):0},
       };
@@ -1216,13 +1239,19 @@ function processOutingRows(rows) {
 
   rows.forEach(r => {
     const pt = r._pt;
-    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rawRows:[] };
+    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[] };
     const s = pitchMap[pt];
     s.count++;
     s.rawRows.push(r);
     if (r.release_speed) s.velos.push(pf(r.release_speed));
     if (r.pfx_x) s.pfx_xs.push(pf(r.pfx_x));
     if (r.pfx_z) s.pfx_zs.push(pf(r.pfx_z));
+    // Release point — release_pos_z (height, ft) / release_pos_x (side, ft)
+    if (r.release_pos_z) s.rel_zs.push(pf(r.release_pos_z));
+    if (r.release_pos_x) s.rel_xs.push(pf(r.release_pos_x));
+    // Extension (ft) and perceived velo (Statcast effective_speed)
+    if (r.release_extension) s.exts.push(pf(r.release_extension));
+    if (r.effective_speed)   s.effSpeeds.push(pf(r.effective_speed));
 
     const desc = r.description||'';
     const zone = (r.zone||'').toString().trim();
@@ -1293,6 +1322,12 @@ function processOutingRows(rows) {
       avgHB:    s.pfx_xs.length ? +(-avg(s.pfx_xs)*12).toFixed(1) : null,
       avgVAA:   angles.length   ? +avg(angles.map(a=>a.vaa)).toFixed(1) : null,
       avgHAA:   angles.length   ? +avg(angles.map(a=>a.haa)).toFixed(1) : null,
+      // Release point — height (ft off ground) and side (ft from rubber
+      // center, catcher's-view sign — matches Statcast's raw convention).
+      avgRelHeight: s.rel_zs.length ? +avg(s.rel_zs).toFixed(2) : null,
+      avgRelSide:   s.rel_xs.length ? +avg(s.rel_xs).toFixed(2) : null,
+      avgExt:       s.exts.length ? +avg(s.exts).toFixed(2) : null,
+      avgPercVelo:  s.effSpeeds.length ? +avg(s.effSpeeds).toFixed(1) : null,
     };
   });
 
@@ -2739,7 +2774,7 @@ function renderYoY() {
     try { pm = typeof o.pitch_stats==='object' ? o.pitch_stats : JSON.parse(o.pitch_stats_json||'{}'); } catch(e){}
     Object.entries(pm).forEach(([pt, s]) => {
       if (!s.count || s.count === 0) return;
-      if (!combined[pt]) combined[pt] = { count:0, velos:[], peakVelos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, ivbs:[], hbs:[], vaas:[], haas:[] };
+      if (!combined[pt]) combined[pt] = { count:0, velos:[], peakVelos:[], whiffs:0, cstrikes:0, hip:0, xwobas:[], evs:[], hardHits:0, ivbs:[], hbs:[], vaas:[], haas:[], relHeights:[], relSides:[], exts:[], percVelos:[] };
       const c = combined[pt];
       c.count    += s.count   || 0;
       c.whiffs   += s.whiffs  || 0;
@@ -2753,6 +2788,10 @@ function renderYoY() {
       if (s.avgHB)     c.hbs.push(pf(s.avgHB));
       if (s.avgVAA)    c.vaas.push(pf(s.avgVAA));
       if (s.avgHAA)    c.haas.push(pf(s.avgHAA));
+      if (s.avgRelHeight != null && s.avgRelHeight !== '') c.relHeights.push(pf(s.avgRelHeight));
+      if (s.avgRelSide   != null && s.avgRelSide   !== '') c.relSides.push(pf(s.avgRelSide));
+      if (s.avgExt       != null && s.avgExt       !== '') c.exts.push(pf(s.avgExt));
+      if (s.avgPercVelo  != null && s.avgPercVelo  !== '') c.percVelos.push(pf(s.avgPercVelo));
     });
   });
 
@@ -2765,11 +2804,15 @@ function renderYoY() {
     <div class="mov-header-stats">
       <div class="mov-header-stat">Avg velo</div>
       <div class="mov-header-stat">Peak velo</div>
+      <div class="mov-header-stat">Perc velo</div>
       <div class="mov-header-stat">Spin</div>
       <div class="mov-header-stat">IVB</div>
       <div class="mov-header-stat">HB</div>
       <div class="mov-header-stat">VAA</div>
       <div class="mov-header-stat">HAA</div>
+      <div class="mov-header-stat">Rel Height</div>
+      <div class="mov-header-stat">Rel Side</div>
+      <div class="mov-header-stat">Ext</div>
     </div>
   </div>`;
 
@@ -2787,6 +2830,10 @@ function renderYoY() {
     const hb    = s.hbs.length      ? avg(s.hbs).toFixed(1)+'"'  : '—';
     const vaa   = s.vaas.length     ? avg(s.vaas).toFixed(1)+'°' : '—';
     const haa   = s.haas.length     ? avg(s.haas).toFixed(1)+'°' : '—';
+    const relH  = s.relHeights.length ? avg(s.relHeights).toFixed(2)+"'" : '—';
+    const relS  = s.relSides.length   ? avg(s.relSides).toFixed(2)+"'"   : '—';
+    const ext   = s.exts.length       ? avg(s.exts).toFixed(1)+"'"       : '—';
+    const percV = s.percVelos.length  ? avg(s.percVelos).toFixed(1)      : '—';
     return `<div class="mov-pitch-row">
       <div class="mov-pitch-label">
         <span class="pitch-dot" style="background:${pc(pt)};width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex-shrink:0"></span>
@@ -2795,11 +2842,15 @@ function renderYoY() {
       <div class="mov-stat-group">
         <div class="mov-stat"><div class="mov-stat-val">${avgV}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${pkV}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${percV}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${spin}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${ivb}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${hb}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${vaa}</div></div>
         <div class="mov-stat"><div class="mov-stat-val">${haa}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${relH}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${relS}</div></div>
+        <div class="mov-stat"><div class="mov-stat-val">${ext}</div></div>
       </div>
     </div>`;
   }).join('');
