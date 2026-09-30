@@ -246,6 +246,13 @@ let athlete=null,outings=[],locHand='all',locColor='pitch';
 // rebuilt from each pitch's saved outcome in `locations`. Same logic as
 // enrichOuting() in athletes-v2.js — keep the two in sync.
 function wps(w,s){return s?+(w/s*100).toFixed(1):null}
+
+// AI context — same as athletes-v2.js: HB and locations labeled by arm/glove side for the pitcher's hand
+function aiIsLefty(){return (athlete?.throws||'R').toUpperCase().startsWith('L')}
+function aiHB(hb,lefty){if(hb===null||hb===undefined||hb===''||isNaN(+hb))return'?';const arm=(+hb)*(lefty?-1:1);return `${Math.abs(arm).toFixed(1)}" ${arm>=0?'arm-side':'glove-side'}`}
+function aiOrientation(lefty){return lefty?'ORIENTATION (LHP): Arm side = INSIDE to LHB and AWAY from RHB. Glove side = INSIDE to RHB and AWAY from LHB. A LHP\'s fastball/sinker/changeup run ARM-side; sliders/sweepers/cutters move GLOVE-side.':'ORIENTATION (RHP): Arm side = INSIDE to RHB and AWAY from LHB. Glove side = INSIDE to LHB and AWAY from RHB. A RHP\'s fastball/sinker/changeup run ARM-side; sliders/sweepers/cutters move GLOVE-side.'}
+function aiLocationLines(pms,lefty){const agg={};pms.forEach(pm=>Object.entries(pm||{}).forEach(([pt,s])=>{(s.locations||[]).forEach(l=>{if(!Array.isArray(l))return;const[x,z,oc,st]=l;if(x==null||z==null||(st!=='L'&&st!=='R'))return;const k=pt+'|'+st;const a=agg[k]=agg[k]||{pt,st,n:0,arm:0,up:0,zone:0,aS:0,aW:0,gS:0,gW:0};const isArm=lefty?x>0:x<0;a.n++;if(isArm)a.arm++;if(z>2.5)a.up++;if(Math.abs(x)<=.83&&z>=1.5&&z<=3.5)a.zone++;const sw=oc==='W'||oc==='F'||oc==='HIP';if(sw){if(isArm){a.aS++;if(oc==='W')a.aW++}else{a.gS++;if(oc==='W')a.gW++}}})}));const rows=Object.values(agg).filter(a=>a.n>=8).sort((a,b)=>b.n-a.n);if(!rows.length)return'LOCATION DATA: not available — do NOT give specific location advice.';const p=(a,b)=>b?Math.round(a/b*100)+'%':'n/a';const armL=st=>lefty?(st==='L'?'inside':'away'):(st==='R'?'inside':'away');return'LOCATION DATA (where each pitch was actually thrown, by batter side):\n'+rows.map(a=>`${PITCH_NAMES[a.pt]||a.pt} vs ${a.st}HB (${a.n}p): ${p(a.arm,a.n)} arm-side (${armL(a.st)}), ${p(a.n-a.arm,a.n)} glove-side (${armL(a.st)==='inside'?'away':'inside'}) | ${p(a.up,a.n)} up | ${p(a.zone,a.n)} in zone | Whiff/Swing arm-side ${p(a.aW,a.aS)}, glove-side ${p(a.gW,a.gS)}`).join('\n')}
+const AI_LOCATION_RULE='LOCATION RULES: Use the ORIENTATION above exactly. Any location advice (in, away, arm side, glove side, up, down) must be supported by LOCATION DATA and must name the batter side (e.g. "in to LHB"). Never contradict the pitcher\'s handedness.';
 function swingsFromLocs(locs,stand){let sw=0,wh=0,n=0;(locs||[]).forEach(l=>{if(!Array.isArray(l))return;if(stand&&l[3]!==stand)return;n++;if(l[2]==='W'){sw++;wh++}else if(l[2]==='F'||l[2]==='HIP')sw++;});return n?{swings:sw,whiffs:wh}:null}
 function enrichOuting(o){
   let pm={};try{pm=(typeof o.pitch_stats==='object'&&o.pitch_stats)?o.pitch_stats:JSON.parse(o.pitch_stats_json||'{}')}catch(e){}
@@ -280,7 +287,19 @@ async function init(){
     athlete=athletes.find(a=>a.id===athleteId);
     if(!athlete)throw new Error('Athlete not found');
     const result=await api('getOutings',{athleteId});
-    outings=(result.outings||[]).map(enrichOuting);
+    // Per-athlete pitch remap (same table as athletes-v2.js — keep in sync)
+    const REMAP={'ryan chasse':{FC:'SL',FS:'CH',ST:null}}[(athlete?.name||'').replace(/\s*\(\d{4}\)\s*$/,'').trim().toLowerCase()];
+    const mergeS=(a,b)=>{if(!a)return b;if(!b)return a;const o={...a},na=a.count||0,nb=b.count||0,ok=v=>v!==null&&v!==undefined&&v!==''&&!isNaN(+v);
+      ['avgVelo','avgIVB','avgHB','avgSpin','avgVAA','avgExt'].forEach(k=>{if(ok(a[k])&&ok(b[k])&&na+nb)o[k]=+((+a[k]*na+ +b[k]*nb)/(na+nb)).toFixed(3);else if(ok(b[k]))o[k]=b[k]});
+      const ha=a.hip||0,hb=b.hip||0;['avgXwoba','avgXba','avgXslg','avgEV','hardHitPct','gbPct','fbPct','ldPct'].forEach(k=>{if(ok(a[k])&&ok(b[k])&&ha+hb)o[k]=+((+a[k]*ha+ +b[k]*hb)/(ha+hb)).toFixed(3);else if(ok(b[k]))o[k]=b[k]});
+      ['count','whiffs','cstrikes','hip','bbe','totalStrikes','gb','fb','ld','bip'].forEach(k=>{if(a[k]!=null||b[k]!=null)o[k]=(a[k]||0)+(b[k]||0)});
+      if(a.swings!=null&&b.swings!=null)o.swings=a.swings+b.swings;else delete o.swings;
+      if(a.peakVelo||b.peakVelo)o.peakVelo=Math.max(+a.peakVelo||0,+b.peakVelo||0);
+      ['locations','mv','spray'].forEach(k=>{if(a[k]||b[k])o[k]=[...(a[k]||[]),...(b[k]||[])]});
+      if(a.lhh||b.lhh)o.lhh=mergeS(a.lhh,b.lhh);if(a.rhh||b.rhh)o.rhh=mergeS(a.rhh,b.rhh);return o;};
+    const remapO=o=>{if(!REMAP)return o;let pm={};try{pm=(typeof o.pitch_stats==='object'&&o.pitch_stats)?o.pitch_stats:JSON.parse(o.pitch_stats_json||'{}')}catch(e){}
+      const out={};Object.entries(pm).forEach(([pt,s])=>{const to=Object.prototype.hasOwnProperty.call(REMAP,pt)?REMAP[pt]:pt;if(to===null)return;out[to]=out[to]?mergeS(out[to],s):s;});o.pitch_stats=out;return o;};
+    outings=(result.outings||[]).map(o=>enrichOuting(remapO(o)));
     renderHero();renderOverview();renderSplits();renderReport();populateOutingSelect();
     document.getElementById('loading').style.display='none';
     document.getElementById('app').style.display='';
@@ -507,14 +526,20 @@ async function renderSeasonInsight(){
   const totalBB=outings.reduce((a,o)=>a+(+o.walks||0),0);
   const sorted=Object.entries(combined).sort((a,b)=>b[1].count-a[1].count);
   const mlb=MLB_BASELINE_REF||{};
-  const pitchLines=sorted.map(([pt,s])=>{const m=mlb[pt];const whiff=s.sw?(s.sww/s.sw*100).toFixed(1):'?';const velo=s.velos.length?avg(s.velos).toFixed(1):'?';const ivb=s.ivbs.length?avg(s.ivbs).toFixed(1):'?';const hb=s.hbs.length?avg(s.hbs).toFixed(1):'?';const xwoba=s.xwobas.length?avg(s.xwobas).toFixed(3):'N/A';return`${PITCH_NAMES[pt]||pt}: ${(s.count/total*100).toFixed(0)}% usage | ${velo}mph | IVB:${ivb}" HB:${hb}" | Whiff/Swing:${whiff}% (MLB:${m?.whiff_pct||'?'}%) | xwOBA:${xwoba}`;}).join('\n');
+  const pitchLines=sorted.map(([pt,s])=>{const m=mlb[pt];const whiff=s.sw?(s.sww/s.sw*100).toFixed(1):'?';const velo=s.velos.length?avg(s.velos).toFixed(1):'?';const ivb=s.ivbs.length?avg(s.ivbs).toFixed(1):'?';const hb=s.hbs.length?avg(s.hbs).toFixed(1):'?';const xwoba=s.xwobas.length?avg(s.xwobas).toFixed(3):'N/A';return`${PITCH_NAMES[pt]||pt}: ${(s.count/total*100).toFixed(0)}% usage | ${velo}mph | IVB:${ivb}" HB:${aiHB(hb,aiIsLefty())} | Whiff/Swing:${whiff}% (MLB:${m?.whiff_pct||'?'}%) | xwOBA:${xwoba}`;}).join('\n');
   const prompt=`You are a pitching coach at 8ctane Baseball writing directly to your pitcher. Direct, encouraging, specific. "you"/"your" throughout. NEVER mention psStuff+ unless provided. Pitches with ≤10 samples excluded.
 
 PITCHER: ${athlete.name} (${athlete.throws}HP, ${athlete.team||''}, ${athlete.level||''})
 SEASON: ${outings.length} outings, ${total} pitches, ${totalK}K, ${totalBB}BB
 
-ARSENAL:
+${aiOrientation(aiIsLefty())}
+
+ARSENAL (HB labeled arm-side / glove-side):
 ${pitchLines}
+
+${aiLocationLines(outings.map(o=>o.pitch_stats),aiIsLefty())}
+
+${AI_LOCATION_RULE}
 
 RULES: Lead with strengths. Flag shape gaps (big IVB FB + big breaking ball = needs bridging pitch). ALWAYS include MLB comp with same handedness. Add pitch only if clear gap. Never suggest knuckleball/eephus. 30%+ whiff = elite weapon.
 
@@ -550,7 +575,7 @@ async function loadPlayerOutingInsight(){
   const container=document.getElementById('outing-insight-content');
   container.innerHTML='<div class="ai-loading"><div class="loading-spinner"></div>Analyzing outing...</div>';
   const pm=getPM(outing);const total=outing.total_pitches||0;
-  const pitchLines=Object.entries(pm).filter(([,s])=>s.count>0).sort((a,b)=>b[1].count-a[1].count).map(([pt,s])=>`${PITCH_NAMES[pt]||pt}: ${s.count}p (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'}mph | Whiff:${s.whiffPct||0}%`).join('\n');
+  const pitchLines=Object.entries(pm).filter(([,s])=>s.count>0).sort((a,b)=>b[1].count-a[1].count).map(([pt,s])=>`${PITCH_NAMES[pt]||pt}: ${s.count}p (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'}mph | IVB:${s.avgIVB||'?'}" HB:${aiHB(s.avgHB,aiIsLefty())} | Whiff/Swing:${s.whiffPct??'?'}%`).join('\n');
 
   // Build location and spray charts
   const allLocs=[];const allSpray=[];
@@ -563,7 +588,13 @@ async function loadPlayerOutingInsight(){
 PITCHER: ${athlete.name} (${athlete.throws}HP)
 OUTING: ${formatDate(outing.date)} vs ${outing.opponent||'Unknown'} | ${total}p | ${outing.strikeouts||outing.ks||0}K ${outing.walks||0}BB
 
+${aiOrientation(aiIsLefty())}
+
 ${pitchLines}
+
+${aiLocationLines([pm],aiIsLefty())}
+
+${AI_LOCATION_RULE}
 
 JSON only: {"headline":"2-3 words","summary":"3-4 sentences","whatWorked":[{"title":"...","detail":"..."}],"whatDidnt":[{"title":"...","detail":"..."}],"keyMoments":["..."],"nextOutingFocus":["...","...","..."]}`;
 

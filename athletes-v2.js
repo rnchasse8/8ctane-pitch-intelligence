@@ -172,6 +172,129 @@ function aggregateSituational(outings) {
   return agg;
 }
 
+/* ==================== PER-ATHLETE PITCH TYPE REMAP ==================== */
+// Merge or drop pitch types for specific pitchers when Statcast/Trackman
+// tagging doesn't match what they actually throw. Keyed by name without the
+// "(YYYY)" suffix, so it covers every season record. Applied when outings
+// load — the saved data in the sheet is untouched, so edits here are
+// reversible. Value null = drop that pitch type entirely.
+const ATHLETE_PITCH_REMAP = {
+  'ryan chasse': { FC: 'SL', FS: 'CH', ST: null },
+};
+
+function pitchRemapFor(athlete) {
+  return ATHLETE_PITCH_REMAP[stripYearSuffix(athlete?.name || '').toLowerCase()] || null;
+}
+
+// Combine two stat objects for the same pitch (or the same L/R split).
+// Counts add; averages are weighted by pitches, contact stats by balls in play.
+function mergePitchStats(a, b) {
+  if (!a) return b; if (!b) return a;
+  const out = { ...a };
+  const na = a.count || 0, nb = b.count || 0;
+  const W = (k, wa, wb) => {
+    const va = a[k], vb = b[k];
+    const oka = va !== null && va !== undefined && va !== '' && !isNaN(+va) && wa;
+    const okb = vb !== null && vb !== undefined && vb !== '' && !isNaN(+vb) && wb;
+    if (oka && okb) out[k] = +(((+va) * wa + (+vb) * wb) / (wa + wb)).toFixed(3);
+    else if (okb) out[k] = vb; // else keep a's
+  };
+  ['avgVelo','avgIVB','avgHB','avgSpin','avgVAA','avgHAA','avgRelHeight','avgRelSide','avgExt','avgPercVelo','strikePct']
+    .forEach(k => W(k, na, nb));
+  const ha = a.hip || 0, hb = b.hip || 0, ea = a.bbe || ha, eb = b.bbe || hb;
+  ['avgXwoba','avgXba','avgXslg','gbPct','fbPct','ldPct'].forEach(k => W(k, ha, hb));
+  ['avgEV','hardHitPct'].forEach(k => W(k, ea, eb));
+  ['count','whiffs','cstrikes','hip','bbe','zoneN','outN','zSw','oSw','zCon','totalStrikes','gb','fb','ld','bip'].forEach(k => {
+    if (a[k] != null || b[k] != null) out[k] = (a[k] || 0) + (b[k] || 0);
+  });
+  // swings: only sum when both sides know them, otherwise leave for enrichOuting to rebuild
+  out.swings = (a.swings != null && b.swings != null) ? a.swings + b.swings : undefined;
+  if (out.swings === undefined) delete out.swings;
+  if (a.peakVelo || b.peakVelo) out.peakVelo = Math.max(+a.peakVelo || 0, +b.peakVelo || 0);
+  ['locations','mv','spray'].forEach(k => { if (a[k] || b[k]) out[k] = [...(a[k] || []), ...(b[k] || [])]; });
+  if (a.lhh || b.lhh) out.lhh = mergePitchStats(a.lhh, b.lhh);
+  if (a.rhh || b.rhh) out.rhh = mergePitchStats(a.rhh, b.rhh);
+  out.whiffPct = out.swings ? +(out.whiffs / out.swings * 100).toFixed(1) : out.whiffPct;
+  out.cswPct = out.count ? +(((out.whiffs||0) + (out.cstrikes||0)) / out.count * 100).toFixed(1) : out.cswPct;
+  return out;
+}
+
+function applyPitchRemap(o, remap) {
+  if (!remap || !o) return o;
+  let pm = {};
+  try { pm = (typeof o.pitch_stats === 'object' && o.pitch_stats) ? o.pitch_stats : JSON.parse(o.pitch_stats_json || '{}'); } catch(e) {}
+  const out = {};
+  Object.entries(pm).forEach(([pt, s]) => {
+    const to = Object.prototype.hasOwnProperty.call(remap, pt) ? remap[pt] : pt;
+    if (to === null) return;                        // dropped pitch type
+    out[to] = out[to] ? mergePitchStats(out[to], s) : s;
+  });
+  o.pitch_stats = out;
+  // count / first-pitch data is keyed by pitch type too
+  if (o.sit_json) {
+    try {
+      const sit = JSON.parse(o.sit_json), bp = {};
+      Object.entries(sit.c11_byPitch || {}).forEach(([pt, b]) => {
+        const to = Object.prototype.hasOwnProperty.call(remap, pt) ? remap[pt] : pt;
+        if (to === null) return;
+        bp[to] = bp[to] || {}; sitMerge(bp[to], b);
+      });
+      sit.c11_byPitch = bp; o.sit = sit;
+    } catch(e) {}
+  }
+  return o;
+}
+
+/* ==================== AI CONTEXT: HANDEDNESS + LOCATION ==================== */
+// Stored HB is -pfx_x (inches): positive = toward 3B from the catcher's view,
+// which is ARM side for a RHP but GLOVE side for a LHP. The AI prompts used to
+// get the raw signed number with no orientation, so for lefties it read the
+// fastball's run as glove-side and gave backwards location advice. Everything
+// the AI sees is now labeled arm-side / glove-side and inside / away by batter.
+function aiIsLefty() { return (currentAthlete?.throws || 'R').toUpperCase().startsWith('L'); }
+
+function aiHB(hb, lefty) {
+  if (hb === null || hb === undefined || hb === '' || isNaN(+hb)) return '?';
+  const arm = (+hb) * (lefty ? -1 : 1);
+  return `${Math.abs(arm).toFixed(1)}" ${arm >= 0 ? 'arm-side' : 'glove-side'}`;
+}
+
+function aiOrientation(lefty) {
+  return lefty
+    ? `ORIENTATION (LHP): Arm side = INSIDE to LHB and AWAY from RHB. Glove side = INSIDE to RHB and AWAY from LHB. A LHP's fastball/sinker/changeup run ARM-side; sliders/sweepers/cutters move GLOVE-side.`
+    : `ORIENTATION (RHP): Arm side = INSIDE to RHB and AWAY from LHB. Glove side = INSIDE to LHB and AWAY from RHB. A RHP's fastball/sinker/changeup run ARM-side; sliders/sweepers/cutters move GLOVE-side.`;
+}
+
+// Where each pitch was actually located, by batter side, from saved
+// locations [plate_x, plate_z, outcome, stand]. plate_x is catcher's view
+// (negative = 3B side), so arm side = x < 0 for RHP, x > 0 for LHP.
+function aiLocationLines(pitchMaps, lefty) {
+  const agg = {};
+  pitchMaps.forEach(pm => Object.entries(pm || {}).forEach(([pt, s]) => {
+    (s.locations || []).forEach(l => {
+      if (!Array.isArray(l)) return;
+      const [x, z, oc, stand] = l;
+      if (x == null || z == null || (stand !== 'L' && stand !== 'R')) return;
+      const k = pt + '|' + stand;
+      const a = agg[k] = agg[k] || { pt, stand, n:0, arm:0, up:0, zone:0, armSw:0, armWh:0, gloveSw:0, gloveWh:0 };
+      const isArm = lefty ? x > 0 : x < 0;
+      a.n++; if (isArm) a.arm++; if (z > 2.5) a.up++;
+      if (Math.abs(x) <= 0.83 && z >= 1.5 && z <= 3.5) a.zone++;
+      const sw = oc === 'W' || oc === 'F' || oc === 'HIP';
+      if (sw) { if (isArm) { a.armSw++; if (oc === 'W') a.armWh++; } else { a.gloveSw++; if (oc === 'W') a.gloveWh++; } }
+    });
+  }));
+  const rows = Object.values(agg).filter(a => a.n >= 8).sort((a, b) => b.n - a.n);
+  if (!rows.length) return 'LOCATION DATA: not available for these outings — do NOT give specific location advice.';
+  const pc_ = (a, b) => b ? Math.round(a / b * 100) + '%' : 'n/a';
+  const armLbl = st => (lefty ? (st === 'L' ? 'inside' : 'away') : (st === 'R' ? 'inside' : 'away'));
+  return 'LOCATION DATA (where you actually threw each pitch, by batter side):\n' + rows.map(a =>
+    `${pn(a.pt)} vs ${a.stand}HB (${a.n}p): ${pc_(a.arm, a.n)} arm-side (${armLbl(a.stand)}), ${pc_(a.n - a.arm, a.n)} glove-side (${armLbl(a.stand) === 'inside' ? 'away' : 'inside'}) | ${pc_(a.up, a.n)} up | ${pc_(a.zone, a.n)} in zone | Whiff/Swing arm-side ${pc_(a.armWh, a.armSw)}, glove-side ${pc_(a.gloveWh, a.gloveSw)}`
+  ).join('\n');
+}
+
+const AI_LOCATION_RULE = `LOCATION RULES: Use the ORIENTATION above exactly. Any location advice ("in", "away", "arm side", "glove side", "up", "down") must be supported by LOCATION DATA and must name the batter side (e.g. "in to LHB"). Never contradict the pitcher's handedness.`;
+
 /* ==================== WHIFF / SWING ==================== */
 // Every "Whiff%" in the app is whiffs per SWING — the Statcast / MLB
 // Network definition. Swings = swinging strikes + fouls (incl. tips and
@@ -631,7 +754,8 @@ async function openProfile(athleteId) {
     if (!currentAthlete) { showRoster(); return; }
 
     const { outings } = await api('getOutings', { athleteId });
-    athleteOutingsAll = (outings || []).map(enrichOuting);
+    const remap = pitchRemapFor(currentAthlete);
+    athleteOutingsAll = (outings || []).map(o => enrichOuting(applyPitchRemap(o, remap)));
     // Default to the most recent season; keep the previous pick for this
     // athlete if it still exists (e.g. after importing or deleting an outing)
     const ys = profileYears();
@@ -1515,10 +1639,12 @@ function renderTrends() {
   });
 
   // ---- Mix trend ----
-  const mixPitches = [['FF','#378ADD'],['ST','#D85A30'],['FS','#BA7517'],['FC','#534AB7'],['CU','#1D9E75']];
-  const mixKey = { FF:'ff_pct', ST:'st_pct', FS:'fs_pct', FC:'fc_pct', CU:'cu_pct' };
+  // Built from each outing's pitch map so every pitch type shows (the sheet's
+  // fixed ff_pct/st_pct/... columns missed SL, CH, SI and ignore pitch remaps)
+  const mixPitches = Object.entries(ptCounts).filter(([pt]) => pt !== 'OTHER').sort((a,b)=>b[1]-a[1]).slice(0,6).map(([pt]) => [pt, pc(pt)]);
+  const mixShare = (o, pt) => { const pm = o.pitch_stats || {}; const tot = Object.values(pm).reduce((a,s)=>a+(s.count||0),0); return tot ? +((pm[pt]?.count||0)/tot*100).toFixed(1) : 0; };
   const mixDs = mixPitches.map(([pt,col]) => ({
-    label:pn(pt), data:sorted.map(o=>pf(o[mixKey[pt]])||0),
+    label:pn(pt), data:sorted.map(o=>mixShare(o, pt)),
     borderColor:col, backgroundColor:col+'55',
     fill:true, tension:.3, pointRadius:3,
   }));
@@ -2026,15 +2152,21 @@ ${orgStatsLine}
 
 NOTE: Pitches with 10 or fewer samples have been excluded as likely mistagged. Only analyze the pitches listed below.
 
-ARSENAL (IVB and HB in inches — only pitches with >10 samples):
+${aiOrientation(aiIsLefty())}
+
+ARSENAL (IVB in inches; HB in inches labeled arm-side / glove-side — only pitches with >10 samples):
 ${pitchSummary.map(p => {
   const real = pm_stored[p.code] || pm_stored[p.code === 'FA' ? 'FF' : p.code === 'FF' ? 'FA' : p.code];
   const gradeStr = (real && real.psStuffPlus) ? ' | psStuff+:' + real.psStuffPlus + ' [8ctane]' : '';
   const spinStr = p.avgSpin ? ' | Spin:' + p.avgSpin + 'rpm' : '';
-  const shapeStr = ' | IVB:' + (p.avgIVB||'?') + '" HB:' + (p.avgHB||'?') + '"';
+  const shapeStr = ' | IVB:' + (p.avgIVB||'?') + '" HB:' + aiHB(p.avgHB, aiIsLefty());
   const resultsStr = ' | Whiff/Swing:' + (p.whiffPct ?? '?') + '% (MLB avg:' + (p.mlbWhiff||'?') + '%) | SwStr:' + p.swStrPct + '% | xwOBA:' + (p.avgXwoba||'N/A') + ' | xBA:' + (p.avgXba||'N/A') + ' | xSLG:' + (p.avgXslg||'N/A');
   return p.pitch + ' (' + p.code + '): ' + p.count + ' pitches, ' + p.usage + '% usage | ' + (p.avgVelo||'?') + 'mph' + spinStr + shapeStr + resultsStr + gradeStr;
 }).join('\n')}
+
+${aiLocationLines(athleteOutings.map(o => o.pitch_stats), aiIsLefty())}
+
+${AI_LOCATION_RULE}
 
 8CTANE COACHING PHILOSOPHY — follow these exactly:
 
@@ -2209,7 +2341,7 @@ async function loadOutingInsight() {
     .sort((a,b)=>b[1].count-a[1].count)
     .map(([pt,s]) => {
       const mlb = MLB_BASELINE_REF[pt];
-      return `${pn(pt)}: ${s.count} pitches (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'} mph | Whiff/Swing: ${s.whiffPct ?? '?'}% | SwStr: ${s.swStrPct ?? '?'}% | CSW: ${s.cswPct||0}% | xwOBA: ${s.avgXwoba||'N/A'} | IVB: ${s.avgIVB||'?'}" HB: ${s.avgHB||'?'}" VAA: ${s.avgVAA||'?'}° (MLB whiff avg: ${mlb?.whiff_pct||'?'}%)`;
+      return `${pn(pt)}: ${s.count} pitches (${total?(s.count/total*100).toFixed(0):0}%) | ${s.avgVelo||'?'} mph | Whiff/Swing: ${s.whiffPct ?? '?'}% | SwStr: ${s.swStrPct ?? '?'}% | CSW: ${s.cswPct||0}% | xwOBA: ${s.avgXwoba||'N/A'} | IVB: ${s.avgIVB||'?'}" HB: ${aiHB(s.avgHB, aiIsLefty())} VAA: ${s.avgVAA||'?'}° (MLB whiff avg: ${mlb?.whiff_pct||'?'}%)`;
     }).join('\n');
 
   const prompt = `You are a pitching coach at 8ctane Baseball writing directly to your pitcher after their outing. Your tone is direct, honest, and encouraging — like a coach who watched every pitch and wants to help them grow. Use "you" and "your" throughout. Be specific about what happened, what worked, and what to adjust. Speak plainly — avoid stat jargon. NEVER mention psStuff+ or any stuff grade unless it was explicitly provided in the data — do not calculate or infer it yourself.
@@ -2218,8 +2350,14 @@ PITCHER: ${currentAthlete.name} (${currentAthlete.throws}HP, ${currentAthlete.le
 OUTING: ${formatDate(outing.date)} vs. ${outing.opponent||'Unknown'} | ${total} pitches | ${outing.strikeouts||outing.ks||0}K ${outing.walks||0}BB
 Zone%: ${outing.zone_pct||'N/A'}% | O-Swing%: ${outing.o_swing_pct||'N/A'}% | Z-Contact%: ${outing.z_contact_pct||'N/A'}% | GB%: ${outing.gb_pct||'N/A'}% | SwStr%: ${total?(+outing.whiffs/total*100).toFixed(1):'N/A'}%
 
-PITCH-BY-PITCH:
+${aiOrientation(aiIsLefty())}
+
+PITCH-BY-PITCH (HB labeled arm-side / glove-side):
 ${pitchLines}
+
+${aiLocationLines([pm], aiIsLefty())}
+
+${AI_LOCATION_RULE}
 
 Respond with JSON only (no markdown):
 {
@@ -3575,7 +3713,7 @@ async function renderYearOverYear() {
     if (a.id === currentAthlete.id) {
       outings = athleteOutingsAll;
     } else {
-      try { const r = await api('getOutings', { athleteId: a.id }); outings = (r.outings || []).map(enrichOuting); } catch(e) { outings = []; }
+      try { const r = await api('getOutings', { athleteId: a.id }); const rm = pitchRemapFor(a); outings = (r.outings || []).map(o => enrichOuting(applyPitchRemap(o, rm))); } catch(e) { outings = []; }
     }
     return { athlete: a, outings };
   }));
