@@ -2092,10 +2092,15 @@ function ocReleaseSVG(rows, lefty) {
   const W = 320, H = 300, K = 31, G = H - 26;
   const sx = x => W/2 + x * K, sy = z => G - z * K;
   const wavg = k => { let s = 0, w = 0; rows.forEach(([, p]) => { if (p[k] != null && p[k] !== '' && !isNaN(+p[k])) { s += +p[k] * p.count; w += p.count; } }); return w ? s / w : null; };
-  const relX = wavg('avgRelSide') ?? (lefty ? 1.8 : -1.8);
+  // Catcher's view: RHP release side is negative (3B side), LHP positive.
+  // Some sources (e.g. Trackman exports) store release side with the opposite
+  // sign — if it disagrees with the pitcher's hand, flip it for the drawing.
+  const rawX = wavg('avgRelSide');
+  const flipX = rawX !== null && ((lefty && rawX < 0) || (!lefty && rawX > 0)) ? -1 : 1;
+  const relX = rawX !== null ? rawX * flipX : (lefty ? 1.8 : -1.8);
   const relZ = wavg('avgRelHeight') ?? 5.8;
   const armDeg = wavg('avgArm');
-  const mirror = relX > 0;                    // renders are righties (arm on the left, catcher's view)
+  const mirror = lefty;                       // renders are righties; mirror for lefties
   const T = releaseTemplateFor(armDeg, relZ, relX);
 
   // Scale: body sized to a ~5.9 ft head-height in stride, stretched up to
@@ -2113,7 +2118,7 @@ function ocReleaseSVG(rows, lefty) {
   const pct = (v, of) => (v / of * 100).toFixed(3) + '%';
 
   const dots = rows.flatMap(([pt, st]) => (st.rp && st.rp.length ? st.rp : (st.avgRelSide != null && st.avgRelHeight != null ? [[+st.avgRelSide, +st.avgRelHeight]] : []))
-    .map(([x, z]) => `<circle cx="${sx(x).toFixed(1)}" cy="${sy(z).toFixed(1)}" r="${st.rp && st.rp.length ? 4 : 7}" fill="${pc(pt)}" fill-opacity=".92" stroke="rgba(0,0,0,.55)"/>`)).join('');
+    .map(([x, z]) => `<circle cx="${sx(x * flipX).toFixed(1)}" cy="${sy(z).toFixed(1)}" r="${st.rp && st.rp.length ? 4 : 7}" fill="${pc(pt)}" fill-opacity=".92" stroke="rgba(0,0,0,.55)"/>`)).join('');
 
   return `<div class="oc-rel" style="padding-top:${pct(H, W)}">
     <svg viewBox="0 0 ${W} ${H}" class="oc-rel-layer">
@@ -2183,6 +2188,15 @@ async function renderOutingCard() {
   });
 }
 
+// Runs allowed for an outing: saved value, else 0 if nobody reached base
+function outingRuns(o) {
+  let st = o.sit; if (!st && o.sit_json) { try { st = JSON.parse(o.sit_json); } catch(e) {} }
+  if (st?.runs != null) return st.runs;
+  const baserunners = (+o.hits || 0) + (+o.walks || 0) + (+o.hbp || 0);
+  const known = o.hits !== undefined && o.hits !== '' && o.walks !== undefined && o.walks !== '';
+  return known && baserunners === 0 ? 0 : null;
+}
+
 // Season summary: every outing in the selected season merged into one card
 function seasonPseudoOuting() {
   const pm = {};
@@ -2195,9 +2209,9 @@ function seasonPseudoOuting() {
   Object.values(pm).forEach(s => { s.mv = sample(s.mv, 150); s.rp = sample(s.rp, 150); });
   const sum = f => athleteOutings.reduce((a, o) => a + (+o[f] || 0), 0);
   const outs = athleteOutings.reduce((a, o) => a + ipToOuts(o.ip), 0);
-  let runs = 0, haveRuns = false, pitcherId = null;
+  let runs = 0, haveRuns = true, pitcherId = null;
   athleteOutings.forEach(o => { let st = o.sit; if (!st && o.sit_json) { try { st = JSON.parse(o.sit_json); } catch(e) {} }
-    if (st?.runs != null) { runs += st.runs; haveRuns = true; } if (st?.pitcherId) pitcherId = st.pitcherId; });
+    const r = outingRuns(o); if (r === null) haveRuns = false; else runs += r; if (st?.pitcherId) pitcherId = st.pitcherId; });
   return { id: '__season', pitch_stats: pm, ip: outs / 3, hits: sum('hits'), strikeouts: sum('strikeouts'), walks: sum('walks'), hrs: sum('hrs'),
            total_pitches: sum('total_pitches'), whiffSwPct: outingsWhiffSw(athleteOutings), sit: { runs: haveRuns ? runs : null, pitcherId } };
 }
@@ -2256,7 +2270,7 @@ async function renderCard(wrap, o, opts) {
         <div class="oc-sub">${opts.sub}</div>
         <div class="oc-tags"><span>${lefty ? 'LHP' : 'RHP'}</span>${currentAthlete?.team ? `<span>${currentAthlete.team}</span>` : ''}${currentAthlete?.level ? `<span>${currentAthlete.level}</span>` : ''}</div>
       </div>
-      <div class="oc-boxes">${box('IP', ipTxt)}${box('R', sit?.runs != null ? sit.runs : '—')}${box('H', o.hits ?? '—')}${box('K', o.strikeouts ?? '—')}${box('BB', o.walks ?? '—')}${box('HR', o.hrs ?? '—')}</div>
+      <div class="oc-boxes">${box('IP', ipTxt)}${box('R', o.id === '__season' ? (sit?.runs ?? '—') : (outingRuns(o) ?? '—'))}${box('H', o.hits ?? '—')}${box('K', o.strikeouts ?? '—')}${box('BB', o.walks ?? '—')}${box('HR', o.hrs ?? '—')}</div>
     </div>
     <div class="oc-panels">
       <div class="oc-panel"><div class="oc-ph">Release Point</div>${ocReleaseSVG(rows, lefty)}</div>
@@ -2364,7 +2378,7 @@ async function runExportData() {
       const ff = pm.FF || pm.FA || pm.SI;
       let sit = o.sit; if (!sit && o.sit_json) { try { sit = JSON.parse(o.sit_json); } catch(e) {} }
       return [(o.date || '').toString().slice(0, 10), o.opponent || '', o.ip ? fmtIP(ipToOuts(o.ip)) : '', o.total_pitches || tot,
-        o.strikeouts ?? '', o.walks ?? '', o.hbp ?? '', o.hits ?? '', o.hrs ?? '', sit?.runs ?? '',
+        o.strikeouts ?? '', o.walks ?? '', o.hbp ?? '', o.hits ?? '', o.hrs ?? '', outingRuns(o) ?? '',
         r1(o.whiffSwPct), r1(csw), r1(o.strike_pct), r1(o.zone_pct), r1(o.o_swing_pct), r1(ff?.avgVelo), grades[o.id]?.arsenalScore ?? ''];
     });
     downloadCSV(base + '_outings.csv', header, rows);
