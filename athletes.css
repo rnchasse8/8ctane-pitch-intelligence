@@ -964,3 +964,22 @@
 .oc-manage { margin-top:1rem; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:.6rem .9rem; }
 .oc-manage summary { cursor:pointer; color:var(--muted); font-size:13px; }
 .oc-manage[open] summary { margin-bottom:.75rem; }
+
+:root { --oc-body: #b9c8cf; --oc-glove: #7a5a3a; --oc-cap: #2c3e50; }
+
+/* mocap skeleton (release point panel) */
+:root { --sk-spine: #9fb3c8; --sk-throw: #ff8a3d; --sk-glove: #3db8ff; --sk-joint: #ffffff; }
+.sk line { filter: drop-shadow(0 0 2px rgba(0,0,0,.6)); }
+
+/* anatomical skeleton (release point panel) */
+.skel .bn { fill: url(#bnGrad); stroke: #8f8682; stroke-width: .8; }
+.skel .bn-l { stroke: #d9d1cd; stroke-width: 1.8; stroke-linecap: round; }
+.skel .bn-rib { fill: none; stroke: #d6cdc9; stroke-width: 2.2; stroke-linecap: round; }
+.skel .bn-cage { fill: rgba(220,212,208,.08); stroke: none; }
+.skel .bn-hole { fill: #1b1d23; }
+.skel .bn-tooth { stroke: #8f8682; stroke-width: .8; }
+
+/* release point: Visual3D render + dot overlay */
+.oc-rel { position:relative; width:100%; height:0; overflow:hidden; border-radius:8px; }
+.oc-rel-layer { position:absolute; inset:0; width:100%; height:100%; }
+.oc-rel-img { position:absolute; max-width:none; pointer-events:none; filter:drop-shadow(0 4px 6px rgba(0,0,0,.45)); }

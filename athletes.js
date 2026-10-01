@@ -2071,22 +2071,63 @@ function divColor(v, mid, span, higherBetter = true) {
   return `background:rgba(${base.join(',')},${(0.15 + a * 0.75).toFixed(2)});color:${a > 0.45 ? '#fff' : 'var(--text)'}`;
 }
 
+// ---- Release point: your Visual3D skeleton renders (img/release/*.png) ----
+// Three righty catcher's-view renders at ball release (low / mid / high slot).
+// The render closest to the pitcher's arm angle is scaled and placed so its
+// throwing hand sits on the pitcher's average release point and its landing
+// foot on the ground; lefties get it mirrored. Actual release dots go on top.
+// hand / ground = anchor pixels in each PNG (measured from the files).
+const RELEASE_TEMPLATES = {
+  low:  { src: 'img/release/low.png',  w: 631, h: 700, hand: [40.0, 282.0], ground: 696.6, skullTop: 10.1,  armDeg: 15 },
+  mid:  { src: 'img/release/mid.png',  w: 438, h: 700, hand: [36.3, 39.7],  ground: 696.8, skullTop: 16.2,  armDeg: 36 },
+  high: { src: 'img/release/high.png', w: 325, h: 700, hand: [30.0, 31.8],  ground: 697.1, skullTop: 105.0, armDeg: 55 },
+};
+function releaseTemplateFor(armDeg, relZ, relX) {
+  // no arm angle saved: estimate the slot from release height vs. side
+  const a = armDeg ?? (Math.atan2(Math.max(0.1, relZ - 4.6), Math.max(0.3, Math.abs(relX) - 0.45)) * 180 / Math.PI);
+  return a < 25 ? RELEASE_TEMPLATES.low : a < 46 ? RELEASE_TEMPLATES.mid : RELEASE_TEMPLATES.high;
+}
+
 function ocReleaseSVG(rows, lefty) {
-  const W = 300, H = 260, sx = x => W/2 + x * 38, sy = z => H - 34 - z * 30;
-  const dots = rows.flatMap(([pt, s]) => (s.rp && s.rp.length ? s.rp : (s.avgRelSide != null && s.avgRelHeight != null ? [[+s.avgRelSide, +s.avgRelHeight]] : []))
-    .map(([x, z]) => `<circle cx="${sx(x).toFixed(1)}" cy="${sy(z).toFixed(1)}" r="${s.rp && s.rp.length ? 4 : 7}" fill="${pc(pt)}" fill-opacity=".85" stroke="rgba(0,0,0,.4)"/>`)).join('');
-  const avgX = rows.reduce((a, [, s]) => a + (+s.avgRelSide || 0) * s.count, 0) / (rows.reduce((a, [, s]) => a + (s.avgRelSide != null ? s.count : 0), 0) || 1);
-  const avgZ = rows.reduce((a, [, s]) => a + (+s.avgRelHeight || 0) * s.count, 0) / (rows.reduce((a, [, s]) => a + (s.avgRelHeight != null ? s.count : 0), 0) || 1);
-  const shoulderX = avgX * 0.35, shoulderZ = Math.max(3.8, avgZ - 1.4);
-  return `<svg viewBox="0 0 ${W} ${H}" class="oc-svg">
-    <path d="M0 ${H-34} Q ${W/2} ${H-46} ${W} ${H-34} L ${W} ${H} L 0 ${H} Z" fill="#6b3a1f"/>
-    <rect x="${W/2-22}" y="${H-44}" width="44" height="4" fill="#eee" rx="1"/>
-    <line x1="${W/2}" y1="${H-40}" x2="${sx(shoulderX)}" y2="${sy(shoulderZ)}" stroke="var(--muted2)" stroke-width="10" stroke-linecap="round" opacity=".5"/>
-    ${avgZ ? `<line x1="${sx(shoulderX)}" y1="${sy(shoulderZ)}" x2="${sx(avgX)}" y2="${sy(avgZ)}" stroke="var(--muted)" stroke-width="6" stroke-linecap="round" opacity=".6"/>` : ''}
-    <circle cx="${sx(shoulderX)}" cy="${sy(shoulderZ)}" r="6" fill="var(--muted2)"/>
-    ${dots}
-    <text x="6" y="14" class="oc-axis">Catcher's view · ${lefty ? 'LHP' : 'RHP'}</text>
-  </svg>`;
+  const W = 320, H = 300, K = 31, G = H - 26;
+  const sx = x => W/2 + x * K, sy = z => G - z * K;
+  const wavg = k => { let s = 0, w = 0; rows.forEach(([, p]) => { if (p[k] != null && p[k] !== '' && !isNaN(+p[k])) { s += +p[k] * p.count; w += p.count; } }); return w ? s / w : null; };
+  const relX = wavg('avgRelSide') ?? (lefty ? 1.8 : -1.8);
+  const relZ = wavg('avgRelHeight') ?? 5.8;
+  const armDeg = wavg('avgArm');
+  const mirror = relX > 0;                    // renders are righties (arm on the left, catcher's view)
+  const T = releaseTemplateFor(armDeg, relZ, relX);
+
+  // Scale: body sized to a ~5.9 ft head-height in stride, stretched up to
+  // +/-20% toward the pitcher's release height; feet stay on the platform
+  // unless the hand would still be far off, then the figure lifts slightly.
+  const HEAD_FT = 5.9;
+  const sBody = (HEAD_FT * K) / (T.ground - T.skullTop);            // viewBox px per image px
+  const handFt = (T.ground - T.hand[1]) * sBody / K;                  // template hand height at body scale
+  const s = sBody * Math.max(0.85, Math.min(1.2, relZ / handFt));
+  const miss = relZ - (T.ground - T.hand[1]) * s / K;                 // ft the hand is still off
+  const lift = Math.max(-0.15, Math.min(0.15, miss * 0.5)) * K;   // keep feet (nearly) on the platform
+  const imgW = T.w * s, imgH = T.h * s;
+  const top = sy(0) - lift - T.ground * s;
+  const left = mirror ? sx(relX) - (T.w - T.hand[0]) * s : sx(relX) - T.hand[0] * s;
+  const pct = (v, of) => (v / of * 100).toFixed(3) + '%';
+
+  const dots = rows.flatMap(([pt, st]) => (st.rp && st.rp.length ? st.rp : (st.avgRelSide != null && st.avgRelHeight != null ? [[+st.avgRelSide, +st.avgRelHeight]] : []))
+    .map(([x, z]) => `<circle cx="${sx(x).toFixed(1)}" cy="${sy(z).toFixed(1)}" r="${st.rp && st.rp.length ? 4 : 7}" fill="${pc(pt)}" fill-opacity=".92" stroke="rgba(0,0,0,.55)"/>`)).join('');
+
+  return `<div class="oc-rel" style="padding-top:${pct(H, W)}">
+    <svg viewBox="0 0 ${W} ${H}" class="oc-rel-layer">
+      <defs><radialGradient id="stageGlow" cx=".5" cy="1" r=".8"><stop offset="0" stop-color="#3a3f4c"/><stop offset="1" stop-color="#16181e" stop-opacity="0"/></radialGradient></defs>
+      <rect x="0" y="0" width="${W}" height="${H}" fill="url(#stageGlow)"/>
+      <path d="M${sx(-3.6)},${sy(0)} L${sx(3.6)},${sy(0)} L${sx(4.4)},${H} L${sx(-4.4)},${H} Z" fill="#7d88a8" opacity=".55"/>
+      <line x1="${sx(0)}" y1="${sy(0)}" x2="${sx(0)}" y2="${H}" stroke="#16181e" stroke-width="2" opacity=".6"/>
+    </svg>
+    <img class="oc-rel-img" src="${T.src}" alt="" style="left:${pct(left, W)};top:${pct(top, H)};width:${pct(imgW, W)};height:${pct(imgH, H)};${mirror ? 'transform:scaleX(-1);' : ''}">
+    <svg viewBox="0 0 ${W} ${H}" class="oc-rel-layer">
+      ${dots}
+      <text x="6" y="14" class="oc-axis">Catcher's view · ${lefty ? 'LHP' : 'RHP'}${armDeg !== null ? ` · arm angle ${Math.round(armDeg)}°` : ''}</text>
+    </svg>
+  </div>`;
 }
 
 function ocMovementSVG(rows) {
