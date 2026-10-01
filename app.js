@@ -426,6 +426,38 @@ function renderPlayerHeader() {
 
 
 /* ---- Arsenal ---- */
+// 8ctane xArsenal grades for the Analyzer — scored by the Cloudflare Worker
+// (?action=scoreArsenal) so benchmarks stay private. Graded at MLB level.
+async function fillAnalyzerXArsenal(pitchMap, total) {
+  const cells = document.querySelectorAll('#arsenal-tbody [data-xa-pt]');
+  const url = localStorage.getItem('8ctane_script_url') || '';
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const hands = Object.values(pitchMap).flatMap(s => s.throws);
+  const hand = hands.filter(h => h === 'L').length > hands.length / 2 ? 'L' : 'R';
+  const pitches = Object.entries(pitchMap).filter(([, s]) => s.count >= 10 && s.count / (total||1) >= 0.03).map(([pt, s]) => ({
+    key: pt, code: pt,
+    velocity: mean(s.velos), spinRate: mean(s.spins),
+    ivb: s.pfx_z_raw.length ? mean(s.pfx_z_raw) * 12 : null,
+    hb:  s.pfx_x_raw.length ? -mean(s.pfx_x_raw) * 12 : null,   // same convention as the athlete app
+    extension: mean(s.exts), vaa: s.vaas && s.vaas.length ? mean(s.vaas) : null,
+  }));
+  const fail = msg => cells.forEach(el => { el.innerHTML = '<span class="v-num">—</span>'; el.title = msg; });
+  if (!url || !/workers\.dev/.test(url)) return fail('Grades need the Cloudflare Worker URL set in ⚙ Configure');
+  try {
+    const res = await fetch(`${url}?action=scoreArsenal`, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ hand, level:'MLB', veloWeighted:true, pitches }) }).then(r => r.json());
+    if (res.error) return fail(res.error);
+    const by = {}; res.pitches.forEach(r => by[r.key] = r);
+    cells.forEach(el => {
+      const r = by[el.dataset.xaPt];
+      if (!r) { el.innerHTML = '<span class="v-num">—</span>'; el.title = 'Not graded — too few pitches or pitch type not covered'; return; }
+      el.className = r.score >= 70 ? 'v-good' : r.score >= 55 ? 'v-num' : r.score >= 45 ? 'v-warn' : 'v-bad';
+      el.title = `xArsenal ${r.score} (${r.grade}, ${r.gradeLabel}) · graded as ${r.subtype}` + (r.spinEffEstimated && r.spinEfficiency != null ? ` · spin eff ~${r.spinEfficiency}% (estimated)` : '');
+      el.innerHTML = `<b>${r.score}</b> <span style="font-size:11px;color:var(--muted)">${r.grade}</span>`;
+    });
+  } catch (e) { fail('Could not load grades: ' + e.message); }
+}
+
 function renderArsenal() {
   const { pitchMap, total } = singleData;
   const sorted = sortedPitches(pitchMap);
@@ -433,7 +465,7 @@ function renderArsenal() {
 
   // Update table headers to include MLB avg columns if baselines loaded
   document.querySelector('#arsenal-table thead tr').innerHTML = hasBaselines
-    ? `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th><th>8-Grade</th>
+    ? `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th><th title="8ctane xArsenal pitch grade — 60 ≈ MLB average">Grade</th>
        <th>Whiff%</th><th>MLB avg</th><th>CSW%</th><th>MLB avg</th>
        <th>xwOBA</th><th>MLB avg</th><th>Avg EV</th>`
     : `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th>
@@ -470,18 +502,8 @@ function renderArsenal() {
     const mlbVelo    = shapeMatch ? shapeMatch.centroid.velo       : getBaseline(pt, 'avg_velo');
     const shapeNote  = shapeMatch ? `<span class="shape-match-tag" title="Compared to ${shapeMatch.n.toLocaleString()} MLB pitches with a similar velo/shape/release, not the full pitch-type average">shape-matched (n=${shapeMatch.n.toLocaleString()})</span>` : '';
 
-    // 8-Grade — 100-scale, 100 = MLB average, ~10 pts/SD. Grades the
-    // shape-matched cluster's real outcome data (or the flat pitch-type
-    // baseline as a fallback when there isn't enough shape data to match).
-    const gradeMetrics = shapeMatch ? shapeMatch.metrics : {
-      whiff_pct: getBaseline(pt, 'whiff_pct'),
-      csw_pct: getBaseline(pt, 'csw_pct'),
-      xwoba: getBaseline(pt, 'avg_xwoba'),
-      hard_hit_pct: getBaseline(pt, 'hard_hit_pct')
-    };
-    const grade8 = gradeFromMetrics(gradeMetrics);
-    const gradeClass = grade8 == null ? 'v-num' : grade8 >= 115 ? 'v-good' : grade8 >= 105 ? 'v-warn' : grade8 >= 90 ? 'v-num' : 'v-bad';
-    const gradeCell = `<td class="${gradeClass}" title="8-Grade: 100 = MLB average, ~10 pts per SD">${grade8 ?? '—'}</td>`;
+    // xArsenal grade — filled in after render by fillAnalyzerXArsenal()
+    const gradeCell = `<td data-xa-pt="${pt}" title="Loading xArsenal grade…"><span class="v-num">…</span></td>`;
 
     const pitchComps = throwsMode ? findPitchComps(
       pt, throwsMode,
@@ -533,6 +555,8 @@ function renderArsenal() {
       </tr>`;
     }
   }).join('');
+
+  if (hasBaselines) fillAnalyzerXArsenal(pitchMap, total);
 
   // Whole-arsenal MLB comp — "you pitch like..." banner
   const banner = document.getElementById('arsenal-comp-banner');

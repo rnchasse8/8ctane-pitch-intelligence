@@ -77,6 +77,54 @@ function renderTab(name) {
   if (name === 'history') renderYearOverYear();
 }
 
+/* ==================== PITCHING LINE (K / BB / HBP / H / HR / IP) ==================== */
+// FIP = ((13*HR + 3*(BB+HBP) - 2*K) / IP) + FIP constant   (FanGraphs definition)
+// The constant puts FIP on the league's ERA scale. MLB is ~3.10; other
+// leagues have different run environments — set them here when known.
+const FIP_CONSTANTS = { default: 3.10 };
+function fipConstant(level) { return FIP_CONSTANTS[level] ?? FIP_CONSTANTS.default; }
+function calcFIP(hr, bb, hbp, k, ip, level) {
+  return ip > 0 ? ((13*hr + 3*(bb + (hbp||0)) - 2*k) / ip) + fipConstant(level) : null;
+}
+
+// Statcast `events` -> outs recorded on the play (incl. caught stealing / pickoffs)
+const OUTS_ON_EVENT = {
+  field_out:1, strikeout:1, force_out:1, sac_fly:1, sac_bunt:1, fielders_choice_out:1, other_out:1,
+  grounded_into_double_play:2, double_play:2, strikeout_double_play:2, sac_fly_double_play:2,
+  sac_bunt_double_play:2, runner_double_play:2, triple_play:3,
+  caught_stealing_2b:1, caught_stealing_3b:1, caught_stealing_home:1,
+  pickoff_1b:1, pickoff_2b:1, pickoff_3b:1,
+  pickoff_caught_stealing_2b:1, pickoff_caught_stealing_3b:1, pickoff_caught_stealing_home:1,
+};
+function statcastLine(rows) {
+  let k=0, bb=0, hbp=0, h=0, hr=0, outs=0;
+  rows.forEach(r => {
+    const ev = (r.events || '').toLowerCase();
+    if (!ev) return;
+    if (ev === 'strikeout' || ev === 'strikeout_double_play') k++;
+    else if (ev === 'walk' || ev === 'intent_walk') bb++;
+    else if (ev === 'hit_by_pitch') hbp++;
+    if (ev === 'single' || ev === 'double' || ev === 'triple' || ev === 'home_run') h++;
+    if (ev === 'home_run') hr++;
+    outs += OUTS_ON_EVENT[ev] || 0;
+  });
+  return { ks:k, walks:bb, hbp, hits:h, hrs:hr, outs, ip: +(outs/3).toFixed(2) };
+}
+// Trackman: KorBB / PitchCall / PlayResult / OutsOnPlay (OutsOnPlay excludes strikeouts)
+function trackmanLine(rows) {
+  let k=0, bb=0, hbp=0, h=0, hr=0, outs=0;
+  rows.forEach(r => {
+    const korbb = r.korbb || r.KorBB || '', call = r.pitchcall || r.PitchCall || '', res = r.playresult || r.PlayResult || '';
+    if (korbb === 'Strikeout') { k++; outs++; }
+    if (korbb === 'Walk') bb++;
+    if (call === 'HitByPitch') hbp++;
+    if (['Single','Double','Triple','HomeRun'].includes(res)) h++;
+    if (res === 'HomeRun') hr++;
+    const oop = parseInt(r.outsonplay ?? r.OutsOnPlay, 10); if (!isNaN(oop) && oop > 0) outs += oop;
+  });
+  return { ks:k, walks:bb, hbp, hits:h, hrs:hr, outs, ip: +(outs/3).toFixed(2) };
+}
+
 /* ==================== SITUATIONAL (count / first pitch) ==================== */
 // Built at import from Statcast rows and saved per outing as sit_json.
 // Every bucket stores raw sums {pa, ab, h, k, bb, wn, wd} so seasons can be
@@ -1074,20 +1122,11 @@ function parseStatcastBulk(rows) {
     const allEVs = Object.values(pm).flatMap(s=>s.launch_speeds);
     const hardHits = Object.values(pm).reduce((a,s)=>a+s.hard_hits,0);
     const zonedP = inZone+outZone;
-    const ks = pitches.filter(r=>r.events==='strikeout').length;
-    const walks = pitches.filter(r=>r.events==='walk').length;
-    const hbp   = pitches.filter(r=>r.events==='hit_by_pitch').length;
-    const hrs   = pitches.filter(r=>r.events==='home_run').length;
-    const hits  = pitches.filter(r=>['single','double','triple','home_run'].includes(r.events||'')).length;
-    const outEvents = new Set(['field_out','strikeout','force_out','grounded_into_double_play','sac_fly','sac_bunt','fielders_choice_out','double_play','triple_play']);
-    const outsRecorded = pitches.reduce((a,r)=>{
-      const ev=r.events||'';
-      if(ev==='grounded_into_double_play'||ev==='double_play') return a+2;
-      if(ev==='triple_play') return a+3;
-      if(outEvents.has(ev)) return a+1;
-      return a;
-    }, 0);
-    const ip = +(outsRecorded/3).toFixed(2);
+    // K / BB / HBP / H / HR / IP — full event list (strikeout double plays,
+    // intentional walks, caught stealing and pickoffs were being missed)
+    const line  = statcastLine(pitches);
+    const ks = line.ks, walks = line.walks, hbp = line.hbp;
+    const hrs = line.hrs, hits = line.hits, ip = line.ip;
     const avgg = arr => arr.length ? arr.reduce((a,b)=>a+b)/arr.length : null;
 
     const makeSplitStats = (side) => {
@@ -1156,7 +1195,7 @@ function parseStatcastBulk(rows) {
       date, opponent:opp, total_pitches:total,
       whiffs:Object.values(pm).reduce((a,s)=>a+s.whiffs,0),
       calledStrikes:Object.values(pm).reduce((a,s)=>a+s.cstrikes,0),
-      walks, ks, hrs, hits, ip,
+      walks, ks, hrs, hits, ip, hbp,
       avgEV:allEVs.length?+avgg(allEVs).toFixed(1):null,
       hardHitPct:allEVs.length?+(hardHits/allEVs.length*100).toFixed(1):null,
       zonePct:    zonedP      ?+(inZone/zonedP*100).toFixed(1):null,
@@ -1225,8 +1264,9 @@ function parseTrackmanBulk(rows) {
       if(korbb==='Strikeout'){}; // handled above
     });
     const total=pitches.length;
-    const ks=pitches.filter(r=>(r.korbb||r.KorBB||'')===('Strikeout')).length;
-    const walks=pitches.filter(r=>(r.korbb||r.KorBB||'')==='Walk').length;
+    // Trackman imports never saved IP / H / HR, so FIP was blank or wrong for them
+    const tmLine=trackmanLine(pitches);
+    const ks=tmLine.ks, walks=tmLine.walks;
     const avgg=arr=>arr.length?arr.reduce((a,b)=>a+b)/arr.length:null;
     const flatMap={};
     Object.entries(pm).forEach(([pt,s])=>{
@@ -1255,7 +1295,7 @@ function parseTrackmanBulk(rows) {
     // Parse date from M/D/YY
     let isoDate = date;
     if (date.includes('/')) { const [m,d,y]=date.split('/'); isoDate=`20${y.slice(-2)}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; }
-    return {date:isoDate,opponent:opp,total_pitches:total,whiffs:Object.values(pm).reduce((a,s)=>a+s.whiffs,0),calledStrikes:Object.values(pm).reduce((a,s)=>a+s.cstrikes,0),walks,ks,avgEV:null,hardHitPct:null,zonePct:null,oSwingPct:null,zSwingPct:null,zContactPct:null,swingPct:null,strikePct:null,gbPct:null,fbPct:null,ldPct:null,fpStrikePct:null,oonStrikePct:null,pitchMap:flatMap};
+    return {date:isoDate,opponent:opp,total_pitches:total,whiffs:Object.values(pm).reduce((a,s)=>a+s.whiffs,0),calledStrikes:Object.values(pm).reduce((a,s)=>a+s.cstrikes,0),walks,ks,hbp:tmLine.hbp,hrs:tmLine.hrs,hits:tmLine.hits,ip:tmLine.ip,avgEV:null,hardHitPct:null,zonePct:null,oSwingPct:null,zSwingPct:null,zContactPct:null,swingPct:null,strikePct:null,gbPct:null,fbPct:null,ldPct:null,fpStrikePct:null,oonStrikePct:null,pitchMap:flatMap};
   });
   return { pitcher, outings };
 }
@@ -1339,7 +1379,7 @@ async function runBulkImport() {
         pitchMap: cleanMap,
         stats: {
           total: o.total_pitches, whiffs: o.whiffs, calledStrikes: o.calledStrikes,
-          walks: o.walks, ks: o.ks, hrs: o.hrs||0, hits: o.hits||0, ip: o.ip||0, avgEV: o.avgEV, hardHitPct: o.hardHitPct,
+          walks: o.walks, ks: o.ks, hbp: o.hbp||0, hrs: o.hrs||0, hits: o.hits||0, ip: o.ip||0, avgEV: o.avgEV, hardHitPct: o.hardHitPct,
           zonePct: o.zonePct, oSwingPct: o.oSwingPct, zSwingPct: o.zSwingPct,
           zContactPct: o.zContactPct, swingPct: o.swingPct, strikePct: o.strikePct,
           gbPct: o.gbPct, fbPct: o.fbPct, ldPct: o.ldPct,
@@ -1410,15 +1450,14 @@ function renderProfileHero() {
   const totalHR = athleteOutings.reduce((a,o)=>a+(+o.hrs||0), 0);
   const totalH  = athleteOutings.reduce((a,o)=>a+(+o.hits||0), 0);
   const totalWhiffs = athleteOutings.reduce((a,o)=>a+(+o.whiffs||0), 0);
-  const totalIP = athleteOutings.reduce((a,o)=>a+(+o.ip||0), 0);
+  const totalIP = athleteOutings.reduce((a,o)=>a+Math.round((+o.ip||0)*3), 0) / 3;   // via outs (ip is stored as outs/3)
+  const totalHBP = athleteOutings.reduce((a,o)=>a+(+o.hbp||0), 0);
 
   const whiffSwSeason = outingsWhiffSw(athleteOutings);
   const whiffRate = whiffSwSeason !== null ? whiffSwSeason.toFixed(1) : '—';
 
-  // FIP = ((13*HR + 3*BB - 2*K) / IP) + 3.10
-  const fip = totalIP > 0
-    ? (((13*totalHR + 3*totalBB - 2*totalK) / totalIP) + 3.10).toFixed(2)
-    : '—';
+  const fipV = calcFIP(totalHR, totalBB, totalHBP, totalK, totalIP, currentAthlete?.level);
+  const fip = fipV !== null ? fipV.toFixed(2) : '—';
 
   // WHIP = (BB + H) / IP
   const whip = totalIP > 0
@@ -1452,6 +1491,77 @@ function renderProfileHero() {
     { v: whiffRate+'%',         l: 'Whiff%'  },
     { v: displayKBB,            l: 'K%-BB%'  },
   ].map(k => `<div class="kpi"><div class="kpi-val mono">${k.v}</div><div class="kpi-lbl">${k.l}</div></div>`).join('');
+}
+
+/* ==================== xARSENAL GRADES (8ctane pitch grading) ==================== */
+// Scored by the Cloudflare Worker (?action=scoreArsenal) so the benchmarks
+// stay private. Inputs are the season's count-weighted pitch shape; spin
+// efficiency is estimated in the Worker (not in Statcast/Trackman exports).
+const XA_MIN_SHARE = 0.03, XA_MIN_COUNT = 10;   // ignore tiny-sample pitch types
+const xaCache = {};
+
+function xaSeasonShape(outings) {
+  const acc = {};
+  outings.forEach(o => Object.entries(o.pitch_stats || {}).forEach(([pt, s]) => {
+    if (!s || !s.count) return;
+    const a = acc[pt] = acc[pt] || { count:0, sums:{}, ws:{} };
+    a.count += s.count;
+    [['velocity','avgVelo'],['spinRate','avgSpin'],['ivb','avgIVB'],['hb','avgHB'],['extension','avgExt'],['vaa','avgVAA']].forEach(([k, f]) => {
+      const v = s[f]; if (v === null || v === undefined || v === '' || isNaN(+v)) return;
+      a.sums[k] = (a.sums[k]||0) + (+v) * s.count; a.ws[k] = (a.ws[k]||0) + s.count;
+    });
+  }));
+  const total = Object.values(acc).reduce((t, a) => t + a.count, 0);
+  return Object.entries(acc)
+    .filter(([pt, a]) => a.count >= XA_MIN_COUNT && a.count / (total||1) >= XA_MIN_SHARE)
+    .map(([pt, a]) => {
+      const p = { key: pt, code: pt };
+      ['velocity','spinRate','ivb','hb','extension','vaa'].forEach(k => { p[k] = a.ws[k] ? +(a.sums[k] / a.ws[k]).toFixed(2) : null; });
+      return p;
+    });
+}
+
+async function getXArsenal(outings) {
+  const pitches = xaSeasonShape(outings);
+  if (!pitches.length) return null;
+  const body = { hand: currentAthlete?.throws || 'R', level: currentAthlete?.level || '', veloWeighted: true, pitches };
+  const key = JSON.stringify(body);
+  if (!xaCache[key]) xaCache[key] = api('scoreArsenal', body).catch(e => { delete xaCache[key]; throw e; });
+  return xaCache[key];
+}
+
+const xaClass = sc => sc == null ? 'v-num' : sc >= 70 ? 'v-good' : sc >= 55 ? 'v-num' : sc >= 45 ? 'v-warn' : 'v-bad';
+const XA_METRIC_LBL = { velocity:'Velo', spinRate:'Spin', ivb:'IVB', hb:'HB', extension:'Ext', vaa:'VAA', spinEfficiency:'Spin eff' };
+function xaTitle(r) {
+  const parts = Object.entries(r.metrics).filter(([, m]) => m.score !== null && m.weight > 0).map(([k, m]) => `${XA_METRIC_LBL[k]} ${m.score}`);
+  return `xArsenal ${r.score} (${r.grade}, ${r.gradeLabel}) · graded as ${r.subtype}` +
+    (parts.length ? ` · ${parts.join(' · ')}` : '') +
+    (r.spinEffEstimated && r.spinEfficiency !== null ? ` · spin eff ~${r.spinEfficiency}% (estimated)` : '');
+}
+
+// Fill every [data-xa-pt] element in `root` from the xArsenal result
+async function fillXArsenal(root, outings, summaryEl) {
+  const cells = root.querySelectorAll('[data-xa-pt]');
+  try {
+    const res = await getXArsenal(outings);
+    const byPt = {}; (res?.pitches || []).forEach(r => { byPt[r.key] = r; });
+    cells.forEach(el => {
+      const r = byPt[el.dataset.xaPt];
+      if (!r) { el.innerHTML = '<span class="v-num">—</span>'; el.title = 'Not graded — too few pitches or pitch type not covered'; return; }
+      el.className = (el.dataset.xaBase || '') + ' ' + xaClass(r.score);
+      el.title = xaTitle(r);
+      el.innerHTML = `<b>${r.score}</b> <span class="xa-letter">${r.grade}</span>`;
+    });
+    if (summaryEl) {
+      summaryEl.innerHTML = res && res.pitches.length
+        ? `<span class="xa-sum-lbl">xArsenal</span> <b class="${xaClass(res.arsenalScore)}">${res.arsenalScore}</b> <span class="xa-letter">${res.arsenalGrade}</span> <span class="xa-sum-sub">${res.arsenalLabel} · graded at ${res.compLevel} level</span>`
+        : '';
+    }
+  } catch (e) {
+    const msg = /Unknown action/i.test(e.message || '') ? 'Grades need the updated Cloudflare Worker' : 'Could not load grades: ' + (e.message || '');
+    cells.forEach(el => { el.innerHTML = '<span class="v-num">—</span>'; el.title = msg; });
+    if (summaryEl) summaryEl.innerHTML = `<span class="xa-sum-sub">${msg}</span>`;
+  }
 }
 
 /* ==================== SEASON OVERVIEW ==================== */
@@ -1497,46 +1607,21 @@ function renderSeasonOverview() {
       return `${mlbW}% <span class="${d>=0?'delta-good':'delta-bad'}">${d>=0?'▲':'▼'}${Math.abs(d).toFixed(1)}</span>`;
     })() : (mlbW ? `${mlbW}%` : '—');
 
-    // 8-Grade — 100-scale, 100 = MLB average. Season-level outings
-    // only store avgVelo/avgIVB/avgHB (no release point), so this matches
-    // on REDUCED_FEATURES (velo + movement only, no release slot).
-    //
-    // IMPORTANT — two things have to be undone here, not just units:
-    // 1) avgIVB/avgHB are stored in INCHES, but shape_baselines.json was
-    //    built from raw Statcast pfx_x/pfx_z in FEET (app.js feeds it
-    //    unconverted) — so divide by 12.
-    // 2) avgHB specifically is ALSO pre-negated at storage time
-    //    (`-hb*12`, applied the same way regardless of throwing hand —
-    //    see the CSV-import parser), whereas matchShapeCluster() expects
-    //    the raw, un-negated Statcast sign and does its own hand-flip
-    //    internally. So avgHB needs an extra sign flip on top of the
-    //    unit conversion, or every pitch gets matched to a mirror-image
-    //    shape cluster. avgIVB has no such pre-negation, so it only
-    //    needs the /12.
-    let grade8 = null, gradeN = null;
-    if (currentAthlete?.throws && s.velos.length && s.ivbs.length && s.hbs.length) {
-      const result = compute8Grade(
-        pt, currentAthlete.throws.toUpperCase().charAt(0),
-        avg(s.velos), -avg(s.hbs) / 12, avg(s.ivbs) / 12,
-        null, null, null, REDUCED_FEATURES
-      );
-      if (result) { grade8 = result.grade; gradeN = result.n; }
-    }
-    const gradeClass = grade8 == null ? 'v-num' : grade8 >= 115 ? 'v-good' : grade8 >= 105 ? 'v-warn' : grade8 >= 90 ? 'v-num' : 'v-bad';
-    const gradeTitle = gradeN ? `8-Grade: 100 = MLB average · shape-matched vs ${gradeN.toLocaleString()} similar MLB pitches` : '8-Grade: 100 = MLB average';
 
     return `<tr>
       <td><span class="pitch-chip"><span class="pitch-dot" style="background:${pc(pt)}"></span>${pn(pt)}</span></td>
       <td class="v-num">${s.count}</td>
       <td class="v-num">${usagePct}%</td>
       <td class="v-num">${avgV}</td>
-      <td class="${gradeClass}" title="${gradeTitle}">${grade8 ?? '—'}</td>
+      <td data-xa-pt="${pt}" title="Loading xArsenal grade…"><span class="v-num">…</span></td>
       <td class="${wC}">${whiff}${whiff!=='—'?'%':''}</td>
       <td class="v-num">${csw}%</td>
       <td class="v-num">${xwoba}</td>
       <td class="mlb-avg">${mlbTag}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="9" class="empty-state">No outing data yet.</td></tr>';
+
+  fillXArsenal(document.getElementById('season-arsenal-body'), athleteOutings, document.getElementById('season-xarsenal'));
 
   // Charts
   if (profileCharts['season-mix']) { profileCharts['season-mix'].destroy(); }
@@ -1883,8 +1968,7 @@ function processOutingRows(rows) {
       total,
       whiffs:        totalWhiffs,
       calledStrikes: totalCS,
-      walks:         rows.filter(r=>r.events==='walk').length,
-      ks:            rows.filter(r=>r.events==='strikeout').length,
+      ...(() => { const l = statcastLine(rows); return { walks:l.walks, ks:l.ks, hbp:l.hbp, hits:l.hits, hrs:l.hrs, ip:l.ip }; })(),
       avgEV:         allEVs.length ? +avg(allEVs).toFixed(1) : null,
       hardHitPct:    allEVs.length ? +(hardHits/allEVs.length*100).toFixed(1) : null,
       zonePct:       zonedPitches  ? +(inZone/zonedPitches*100).toFixed(1) : null,
@@ -3387,6 +3471,7 @@ function renderYoY() {
         <span class="pitch-dot" style="background:${pc(pt)}"></span>
         <span class="shape-card-name">${pn(pt)}</span>
         <span class="shape-card-sub">${s.count} pitches · ${fmt(pct(s.count,total),1,'%')}</span>
+        <span class="xa-badge" data-xa-pt="${pt}" data-xa-base="xa-badge"></span>
       </div>
       ${group('Velo', [stat('Avg', fmt(getW(s.velo,1),1)), stat('Peak', fmt(s.peak,1)), stat('Perceived', fmt(getW(s.perc,1),1))])}
       ${group('Movement', [stat('Spin', spin!==null ? Math.round(spin)+' rpm' : '—'), stat('IVB', fmt(getW(s.ivb,1),1,'"')), stat('HB', fmt(getW(s.hb,1),1,'"'))])}
@@ -3395,6 +3480,7 @@ function renderYoY() {
     </div>`;
   }).join('');
   document.getElementById('metrics-shape-cards').innerHTML = shapeCards || '<div class="empty-state">No pitch shape data for this season.</div>';
+  fillXArsenal(document.getElementById('metrics-shape-cards'), athleteOutings, null);
 
   // ---- vs-MLB cell: value, MLB avg, colored delta ----
   function vsMLB(val, base, higherBetter, d=1, suf='') {
@@ -3627,7 +3713,9 @@ function computeSeasonAggregate(outings) {
   const outs = outings.reduce((a,o)=>a+ipToOuts(o.ip), 0);
   const ip = outs / 3;
 
-  const fip  = ip > 0 ? +(((13*totalHR + 3*totalBB - 2*totalK) / ip) + 3.10).toFixed(2) : null;
+  const totalHBP = sum('hbp');
+  const fipV = calcFIP(totalHR, totalBB, totalHBP, totalK, ip, currentAthlete?.level);
+  const fip  = fipV !== null ? +fipV.toFixed(2) : null;
   const whip = ip > 0 ? +((totalBB + totalH) / ip).toFixed(2) : null;
 
   // Per-pitch-type aggregation (weighted by pitches / balls in play)
