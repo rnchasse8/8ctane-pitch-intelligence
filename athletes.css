@@ -960,3 +960,7 @@
 .outing-row { position: relative; padding-right: 2.75rem; row-gap: .6rem; }
 .outing-row .outing-delete-btn { position: absolute; top: .55rem; right: .55rem; }
 .outing-row .outing-xa { order: 10; }
+
+.oc-manage { margin-top:1rem; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:.6rem .9rem; }
+.oc-manage summary { cursor:pointer; color:var(--muted); font-size:13px; }
+.oc-manage[open] summary { margin-bottom:.75rem; }

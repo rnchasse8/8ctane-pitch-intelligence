@@ -278,7 +278,7 @@ function mergePitchStats(a, b) {
   const ha = a.hip || 0, hb = b.hip || 0, ea = a.bbe || ha, eb = b.bbe || hb;
   ['avgXwoba','avgXba','avgXslg','gbPct','fbPct','ldPct'].forEach(k => W(k, ha, hb));
   ['avgEV','hardHitPct'].forEach(k => W(k, ea, eb));
-  ['count','whiffs','cstrikes','hip','bbe','zoneN','outN','zSw','oSw','zCon','totalStrikes','gb','fb','ld','bip','rv'].forEach(k => {
+  ['count','whiffs','cstrikes','hip','bbe','zoneN','outN','zSw','oSw','zCon','totalStrikes','gb','fb','ld','bip','rv','swWhiffs'].forEach(k => {
     if (a[k] != null || b[k] != null) out[k] = (a[k] || 0) + (b[k] || 0);
   });
   // swings: only sum when both sides know them, otherwise leave for enrichOuting to rebuild
@@ -288,7 +288,7 @@ function mergePitchStats(a, b) {
   ['locations','mv','spray','rp'].forEach(k => { if (a[k] || b[k]) out[k] = [...(a[k] || []), ...(b[k] || [])]; });
   if (a.lhh || b.lhh) out.lhh = mergePitchStats(a.lhh, b.lhh);
   if (a.rhh || b.rhh) out.rhh = mergePitchStats(a.rhh, b.rhh);
-  out.whiffPct = out.swings ? +(out.whiffs / out.swings * 100).toFixed(1) : out.whiffPct;
+  out.whiffPct = out.swings ? +(((out.swWhiffs ?? out.whiffs) || 0) / out.swings * 100).toFixed(1) : out.whiffPct;
   out.cswPct = out.count ? +(((out.whiffs||0) + (out.cstrikes||0)) / out.count * 100).toFixed(1) : out.cswPct;
   return out;
 }
@@ -317,6 +317,29 @@ function applyPitchRemap(o, remap) {
     } catch(e) {}
   }
   return o;
+}
+
+/* ==================== IN-ZONE WHIFF% ==================== */
+// Z-Whiff% = whiffs on swings at pitches in the zone / swings in the zone.
+// Uses the importer's zone counts (Statcast zone 1-9) when saved; otherwise
+// rebuilds from saved pitch locations using the rulebook box
+// (|plate_x| <= 0.83 ft, 1.5-3.5 ft high) — close, not batter-specific.
+function zoneWhiffOf(s) {
+  if (!s) return { sw:0, wh:0 };
+  if (s.zSw != null && s.zCon != null) return { sw: s.zSw, wh: s.zSw - s.zCon };
+  let sw = 0, wh = 0;
+  (s.locations || []).forEach(l => {
+    if (!Array.isArray(l)) return;
+    const [x, z, oc] = l;
+    if (x == null || z == null || Math.abs(x) > 0.83 || z < 1.5 || z > 3.5) return;
+    if (oc === 'W') { sw++; wh++; } else if (oc === 'F' || oc === 'HIP') sw++;
+  });
+  return { sw, wh };
+}
+function zoneWhiffPct(pitchStatsList) {   // list of pitch-stat objects
+  let sw = 0, wh = 0;
+  pitchStatsList.forEach(s => { const z = zoneWhiffOf(s); sw += z.sw; wh += z.wh; });
+  return sw ? wh / sw * 100 : null;
 }
 
 /* ==================== AI CONTEXT: HANDEDNESS + LOCATION ==================== */
@@ -843,8 +866,10 @@ async function openProfile(athleteId) {
     populateCompareSelectors();
 
     // Reset to overview tab
-    document.querySelectorAll('#profile-tabs .tab').forEach((t,i) => t.classList.toggle('active', i===0));
-    document.querySelectorAll('.ptab-panel').forEach((p,i) => p.classList.toggle('active', i===0));
+    // Land on the Report tab
+    document.querySelectorAll('#profile-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.ptab === 'report'));
+    document.querySelectorAll('.ptab-panel').forEach(p => p.classList.toggle('active', p.id === 'ptab-report'));
+    renderTab('report');
 
   } catch(e) {
     toast('Error loading profile: ' + e.message, 'error');
@@ -1939,6 +1964,19 @@ function renderTrends() {
       scales:{ y:yPct, x:xAxis } }
   });
 
+  // ---- In-zone whiff% by pitch ----
+  const zwOf = (o, pt) => { const z = zoneWhiffOf(o.pitch_stats?.[pt]); return z.sw >= 2 ? +(z.wh / z.sw * 100).toFixed(1) : null; };
+  const zwDs = pitchKeys.filter(([pt]) => sorted.some(o => zwOf(o, pt) !== null)).map(([pt, col]) => ({
+    label: pn(pt), data: sorted.map(o => zwOf(o, pt)), borderColor: col, backgroundColor: 'transparent',
+    tension: .3, pointRadius: 4, pointBackgroundColor: col, spanGaps: true,
+  }));
+  if (profileCharts['trend-zwhiff']) profileCharts['trend-zwhiff'].destroy();
+  const zwCanvas = document.getElementById('trend-zwhiff-chart');
+  if (zwCanvas) profileCharts['trend-zwhiff'] = new Chart(zwCanvas, {
+    type:'line', data:{ labels, datasets:zwDs },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend }, scales:{ y:yPct, x:xAxis } }
+  });
+
   // ---- Mix trend ----
   // Built from each outing's pitch map so every pitch type shows (the sheet's
   // fixed ff_pct/st_pct/... columns missed SL, CH, SI and ignore pitch remaps)
@@ -1963,7 +2001,7 @@ function renderOutingsList() {
   const container = document.getElementById('outings-list');
   if (!athleteOutings.length) {
     container.innerHTML = '<div class="empty-state">No outings yet. Add the first outing above.</div>';
-    if (outingView === 'card') renderOutingCard();
+    if (outingView === 'card') renderOutingCard(); else renderSeasonCard();
     return;
   }
   const sorted = [...athleteOutings].sort((a,b) => b.date.localeCompare(a.date));
@@ -1994,7 +2032,7 @@ function renderOutingsList() {
     </div>`;
   }).join('');
   fillOutingGrades();
-  if (outingView === 'card') renderOutingCard();
+  if (outingView === 'card') renderOutingCard(); else renderSeasonCard();
 }
 
 /* ==================== OUTING CARD (Pitch Profiler-style) ==================== */
@@ -2006,9 +2044,9 @@ function setOutingView(v) {
   outingView = v;
   document.querySelectorAll('[data-oview]').forEach(b => b.classList.toggle('active', b.dataset.oview === v));
   document.getElementById('outing-card-wrap').style.display = v === 'card' ? '' : 'none';
-  document.getElementById('outings-list-wrap').style.display = v === 'list' ? '' : 'none';
+  document.getElementById('season-card-wrap').style.display = v === 'season' ? '' : 'none';
   document.getElementById('oc-picker').style.visibility = v === 'card' ? '' : 'hidden';
-  if (v === 'card') renderOutingCard();
+  if (v === 'card') renderOutingCard(); else renderSeasonCard();
 }
 function outingsNewestFirst() { return [...athleteOutings].sort((a, b) => b.date.localeCompare(a.date)); }
 function selectOuting(id) { selectedOutingId = id; renderOutingCard(); }
@@ -2097,6 +2135,46 @@ async function renderOutingCard() {
   if (!list.some(o => o.id === selectedOutingId)) selectedOutingId = list[0].id;
   sel.innerHTML = list.map(o => `<option value="${o.id}" ${o.id === selectedOutingId ? 'selected' : ''}>${formatDate(o.date)}${o.opponent ? ' vs ' + o.opponent : ''} · ${o.total_pitches || 0}p</option>`).join('');
   const o = list.find(x => x.id === selectedOutingId);
+  return renderCard(wrap, o, {
+    sub: `${formatDate(o.date)}${o.opponent ? ' vs ' + o.opponent : ''}`,
+    gradeFn: () => gradeOutingForCard(o),
+    guard: () => selectedOutingId === o.id && outingView === 'card',
+  });
+}
+
+// Season summary: every outing in the selected season merged into one card
+function seasonPseudoOuting() {
+  const pm = {};
+  athleteOutings.forEach(o => Object.entries(o.pitch_stats || {}).forEach(([pt, s]) => {
+    if (!s || !s.count) return;
+    pm[pt] = pm[pt] ? mergePitchStats(pm[pt], s) : { ...s };
+  }));
+  // keep the SVGs light: evenly sample per-pitch dots
+  const sample = (arr, n) => !arr || arr.length <= n ? arr : Array.from({ length: n }, (_, i) => arr[Math.floor(i * arr.length / n)]);
+  Object.values(pm).forEach(s => { s.mv = sample(s.mv, 150); s.rp = sample(s.rp, 150); });
+  const sum = f => athleteOutings.reduce((a, o) => a + (+o[f] || 0), 0);
+  const outs = athleteOutings.reduce((a, o) => a + ipToOuts(o.ip), 0);
+  let runs = 0, haveRuns = false, pitcherId = null;
+  athleteOutings.forEach(o => { let st = o.sit; if (!st && o.sit_json) { try { st = JSON.parse(o.sit_json); } catch(e) {} }
+    if (st?.runs != null) { runs += st.runs; haveRuns = true; } if (st?.pitcherId) pitcherId = st.pitcherId; });
+  return { id: '__season', pitch_stats: pm, ip: outs / 3, hits: sum('hits'), strikeouts: sum('strikeouts'), walks: sum('walks'), hrs: sum('hrs'),
+           total_pitches: sum('total_pitches'), whiffSwPct: outingsWhiffSw(athleteOutings), sit: { runs: haveRuns ? runs : null, pitcherId } };
+}
+
+function renderSeasonCard() {
+  const wrap = document.getElementById('season-card');
+  if (!wrap) return;
+  if (!athleteOutings.length) { wrap.innerHTML = '<div class="empty-state">No outings this season.</div>'; return; }
+  const o = seasonPseudoOuting();
+  return renderCard(wrap, o, {
+    sub: `${seasonLabel()} Season · ${athleteOutings.length} outing${athleteOutings.length !== 1 ? 's' : ''}`,
+    gradeFn: () => getXArsenal(athleteOutings),
+    guard: () => outingView === 'season',
+    season: true,
+  });
+}
+
+async function renderCard(wrap, o, opts) {
   const lefty = aiIsLefty();
   const pm = o.pitch_stats || {};
   const total = Object.values(pm).reduce((a, s) => a + (s.count || 0), 0);
@@ -2107,7 +2185,7 @@ async function renderOutingCard() {
   const photo = sit?.pitcherId
     ? `<img class="oc-photo" crossorigin="anonymous" src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${sit.pitcherId}/headshot/67/current" alt="" onerror="this.outerHTML='<div class=&quot;oc-initials&quot;>${initials}</div>'">`
     : `<div class="oc-initials">${initials}</div>`;
-  const ipTxt = o.ip ? fmtIP(ipToOuts(o.ip)) : '—';
+  const ipTxt = o.ip ? fmtIP(Math.round(o.ip * 3)) : '—';
   const box = (l, v) => `<div class="oc-box"><div class="oc-box-l">${l}</div><div class="oc-box-v">${v}</div></div>`;
   const f1 = v => v === null || v === undefined || v === '' || isNaN(+v) ? '—' : (+v).toFixed(1);
   const f2 = v => v === null || v === undefined || v === '' || isNaN(+v) ? '—' : (+v).toFixed(2);
@@ -2122,18 +2200,19 @@ async function renderOutingCard() {
       <td class="oc-sep">${f2(s.avgRelHeight)}</td><td>${f2(s.avgRelSide)}</td><td>${f2(s.avgExt)}</td><td>${f0(s.avgArm)}</td>
       <td class="oc-sep"><span class="oc-cell" data-oc-grade="${pt}">…</span></td>
       <td><span class="oc-cell" style="${s.whiffPct != null ? divColor(s.whiffPct, mlbW || 25, 15, true) : ''}">${s.whiffPct != null ? s.whiffPct.toFixed(1) + '%' : '—'}</span></td>
-      <td><span class="oc-cell" style="${xw !== null ? divColor(xw, .320, .12, false) : ''}">${xw !== null ? xw.toFixed(3).replace(/^0/, '') : '—'}</span></td>
+      ${(() => { const zw = zoneWhiffPct([s]); return `<td><span class="oc-cell" style="${zw !== null ? divColor(zw, 15, 10, true) : ''}">${zw !== null ? zw.toFixed(1) + '%' : '—'}</span></td>`; })()}
+      <td><span class="oc-cell" style="${xw !== null ? divColor(xw, .370, .12, false) : ''}">${xw !== null ? xw.toFixed(3).replace(/^0/, '') : '—'}</span></td>
     </tr>`;
   }).join('');
   const wAvg = k => { let s = 0, w = 0; rows.forEach(([, p]) => { if (p[k] != null && p[k] !== '' && !isNaN(+p[k])) { s += +p[k] * p.count; w += p.count; } }); return w ? s / w : null; };
   const xwAll = (() => { let s = 0, w = 0; rows.forEach(([, p]) => { if (p.avgXwoba != null && p.avgXwoba !== '' && p.hip) { s += +p.avgXwoba * p.hip; w += p.hip; } }); return w ? s / w : null; })();
 
-  wrap.innerHTML = `<div class="oc" id="oc-export">
+  wrap.innerHTML = `<div class="oc">
     <div class="oc-head">
       ${photo}
       <div class="oc-title">
         <div class="oc-name">${name}</div>
-        <div class="oc-sub">${formatDate(o.date)}${o.opponent ? ' vs ' + o.opponent : ''}</div>
+        <div class="oc-sub">${opts.sub}</div>
         <div class="oc-tags"><span>${lefty ? 'LHP' : 'RHP'}</span>${currentAthlete?.team ? `<span>${currentAthlete.team}</span>` : ''}${currentAthlete?.level ? `<span>${currentAthlete.level}</span>` : ''}</div>
       </div>
       <div class="oc-boxes">${box('IP', ipTxt)}${box('R', sit?.runs != null ? sit.runs : '—')}${box('H', o.hits ?? '—')}${box('K', o.strikeouts ?? '—')}${box('BB', o.walks ?? '—')}${box('HR', o.hrs ?? '—')}</div>
@@ -2145,21 +2224,22 @@ async function renderOutingCard() {
     </div>
     <div class="oc-tablewrap"><table class="oc-table">
       <thead><tr><th>Pitch</th><th>#</th><th>%</th><th>Velo</th><th>Spin</th><th>IVB</th><th>HB</th><th>VAA</th><th>HAA</th>
-        <th class="oc-sep">vRel</th><th>hRel</th><th>Ext</th><th>Arm°</th><th class="oc-sep">Grade</th><th>Whiff%</th><th>xwOBA</th></tr></thead>
+        <th class="oc-sep">vRel</th><th>hRel</th><th>Ext</th><th>Arm°</th><th class="oc-sep">Grade</th><th>Whiff%</th><th>Z-Whiff%</th><th title="xwOBA on balls in play (MLB avg ≈ .370)">xwOBAcon</th></tr></thead>
       <tbody>${tableRows}
         <tr class="oc-overall"><td>Overall</td><td>${total}</td><td>100.0</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td>
           <td class="oc-sep">${f2(wAvg('avgRelHeight'))}</td><td>${f2(wAvg('avgRelSide'))}</td><td>${f2(wAvg('avgExt'))}</td><td>${f0(wAvg('avgArm'))}</td>
           <td class="oc-sep"><span class="oc-cell" data-oc-grade="__all">…</span></td>
           <td><span class="oc-cell" style="${o.whiffSwPct != null ? divColor(o.whiffSwPct, 25, 15, true) : ''}">${o.whiffSwPct != null ? o.whiffSwPct.toFixed(1) + '%' : '—'}</span></td>
-          <td><span class="oc-cell" style="${xwAll !== null ? divColor(xwAll, .320, .12, false) : ''}">${xwAll !== null ? xwAll.toFixed(3).replace(/^0/, '') : '—'}</span></td></tr>
+          ${(() => { const zw = zoneWhiffPct(rows.map(([, s]) => s)); return `<td><span class="oc-cell" style="${zw !== null ? divColor(zw, 15, 10, true) : ''}">${zw !== null ? zw.toFixed(1) + '%' : '—'}</span></td>`; })()}
+          <td><span class="oc-cell" style="${xwAll !== null ? divColor(xwAll, .370, .12, false) : ''}">${xwAll !== null ? xwAll.toFixed(3).replace(/^0/, '') : '—'}</span></td></tr>
       </tbody></table></div>
-    <div class="oc-foot"><span>Grade = 8ctane xArsenal (60 ≈ MLB average) · Whiff% per swing · Red = good for the pitcher, blue = bad${!rows.some(([, s]) => s.mv && s.mv.length) ? ' · Re-import for per-pitch dots and arm angle' : ''}</span><span class="oc-brand">8CTANE BASEBALL · Pitch Intelligence</span></div>
+    <div class="oc-foot"><span>${opts.season ? 'Season averages · grades use the season shape (min 10 pitches) · ' : ''}Grade = 8ctane xArsenal (60 ≈ MLB average) · Whiff% per swing · Z-Whiff% = whiffs on in-zone swings · Red = good for the pitcher, blue = bad${!rows.some(([, s]) => s.mv && s.mv.length) ? ' · Re-import for per-pitch dots and arm angle' : ''}</span><span class="oc-brand">8CTANE BASEBALL · Pitch Intelligence</span></div>
   </div>`;
 
   // grades
   try {
-    const res = await gradeOutingForCard(o);
-    if (selectedOutingId !== o.id) return;
+    const res = await opts.gradeFn();
+    if (opts.guard && !opts.guard()) return;
     const by = {}; (res?.pitches || []).forEach(r => { by[r.key] = r; });
     wrap.querySelectorAll('[data-oc-grade]').forEach(el => {
       const r = el.dataset.ocGrade === '__all' ? (res ? { score: res.arsenalScore, grade: res.arsenalGrade, gradeLabel: res.arsenalLabel } : null) : by[el.dataset.ocGrade];
@@ -2172,13 +2252,13 @@ async function renderOutingCard() {
 
 // Save the card as a PNG (html2canvas loaded on demand)
 async function saveOutingCardImage() {
-  const el = document.getElementById('oc-export'); if (!el) return;
+  const el = document.querySelector((outingView === 'season' ? '#season-card' : '#outing-card') + ' .oc'); if (!el) return;
   try {
     if (!window.html2canvas) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
     const canvas = await html2canvas(el, { backgroundColor: getComputedStyle(document.body).backgroundColor || '#0a0b0e', scale: 2, useCORS: true });
     const o = athleteOutings.find(x => x.id === selectedOutingId);
     const a = document.createElement('a');
-    a.download = `${stripYearSuffix(currentAthlete?.name || 'pitcher').replace(/\s+/g, '_')}_${(o?.date || '').toString().slice(0, 10)}.png`;
+    a.download = `${stripYearSuffix(currentAthlete?.name || 'pitcher').replace(/\s+/g, '_')}_${outingView === 'season' ? seasonLabel() + '_season' : (o?.date || '').toString().slice(0, 10)}.png`;
     a.href = canvas.toDataURL('image/png'); a.click();
   } catch(e) { toast('Could not create image: ' + (e.message || e), 'error'); }
 }
@@ -3243,6 +3323,7 @@ function renderReport() {
   const hardHitPctSeason = outingHHPs.length ? avg(outingHHPs) : 0;
 
   const whiffPct   = outingsWhiffSw(athleteOutings) ?? 0;   // per swing
+  const zWhiffSeason = zoneWhiffPct(athleteOutings.flatMap(o => Object.values(o.pitch_stats || {})));
   const cswPct     = totalPitches ? (totalWhiffs+totalCS)/totalPitches*100 : 0;
   const kPct       = totalHIP+totalK+totalBB > 0 ? totalK/(totalHIP+totalK+totalBB)*100 : 0;
   const bbPct      = totalHIP+totalK+totalBB > 0 ? totalBB/(totalHIP+totalK+totalBB)*100 : 0;
@@ -3302,6 +3383,7 @@ function renderReport() {
   const DIST = {
     whiffPct:   { p10:18,  p25:21,  p50:25,  p75:29,  p90:33,  hib:true  },   // whiffs per swing
     swStrPct:   { p10:8,   p25:9.5, p50:11,  p75:13,  p90:15,  hib:true  },   // whiffs per pitch
+    zWhiffPct:  { p10:9,   p25:12,  p50:15,  p75:18,  p90:22,  hib:true  },   // whiffs per in-zone swing
     cswPct:     { p10:14,  p25:19,  p50:24,  p75:29,  p90:35,  hib:true  },
     kPct:       { p10:14,  p25:18,  p50:22,  p75:27,  p90:32,  hib:true  },
     bbPct:      { p10:4,   p25:6,   p50:8,   p75:11,  p90:14,  hib:false },
@@ -3409,6 +3491,7 @@ function renderReport() {
       ${pctBar('K%',              kPct,        r(kPct),        DIST.kPct,       '%')}
       ${pctBar('BB%',             bbPct,       r(bbPct),       DIST.bbPct,      '%')}
       ${pctBar('SwStr%',          swStrPct,    r(swStrPct),    DIST.swStrPct,   '%')}
+      ${zWhiffSeason !== null ? pctBar('Z-Whiff%', zWhiffSeason, r(zWhiffSeason), DIST.zWhiffPct, '%') : ''}
 
       <div class="pct-group-hd">Plate discipline</div>
       ${zonePct     !== null     ? pctBar('Zone%',         zonePct,      r(zonePct),      DIST.zonePct,     '%') : ''}
@@ -4027,7 +4110,7 @@ function renderYoY() {
         velo:W(), perc:W(), spin:W(), ivb:W(), hb:W(), vaa:W(), haa:W(), relH:W(), relS:W(), ext:W(),
         xwoba:W(), xba:W(), xslg:W(), ev:W(), hh:W(), gb:W(),
         // swing/zone counts only exist on outings imported after Sept 29 2026
-        swN:0, swWhiffs:0, swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0, zoneOutings:0,
+        swN:0, swWhiffs:0, swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0, zoneOutings:0, zwSw:0, zwWh:0,
       };
       const c = combined[pt], n = s.count;
       c.count += n; c.whiffs += s.whiffs||0; c.cstrikes += s.cstrikes||0; c.hip += s.hip||0;
@@ -4043,6 +4126,7 @@ function renderYoY() {
       // GB% lives on the L/R splits
       ['lhh','rhh'].forEach(k => { const sd = s[k]; if (sd && sd.gbPct != null) addW(c.gb, sd.gbPct, sd.hip || 0); });
       if (s.swings) { c.swN += n; c.swWhiffs += s.swWhiffs||0; c.swings += s.swings; }
+      { const zw = zoneWhiffOf(s); c.zwSw += zw.sw; c.zwWh += zw.wh; }
       if (s.zoneN !== undefined) { c.zoneOutings++; c.zoneN += s.zoneN||0; c.outN += s.outN||0; c.zSw += s.zSw||0; c.oSw += s.oSw||0; c.zCon += s.zCon||0; }
     });
   });
@@ -4099,6 +4183,7 @@ function renderYoY() {
     const zone  = s.zoneOutings ? pct(s.zoneN, s.zoneN + s.outN) : null;
     const chase = s.zoneOutings ? pct(s.oSw, s.outN) : null;
     const zCon  = s.zoneOutings ? pct(s.zCon, s.zSw) : null;
+    const zWhiff = s.zwSw ? pct(s.zwWh, s.zwSw) : null;
     const csw   = pct(s.whiffs + s.cstrikes, s.count);
     const cC = csw >= 30 ? 'v-good' : csw >= 25 ? 'v-warn' : 'v-bad';
     return `<tr>${chip(pt)}
@@ -4110,6 +4195,7 @@ function renderYoY() {
       <td class="v-num">${fmt(zone,1,'%')}</td>
       <td class="v-num">${fmt(chase,1,'%')}</td>
       <td class="v-num">${fmt(zCon,1,'%')}</td>
+      <td class="${zWhiff === null ? 'v-num' : zWhiff >= 20 ? 'v-good' : zWhiff >= 12 ? 'v-warn' : 'v-bad'}">${fmt(zWhiff,1,'%')}</td>
     </tr>`;
   }).join('');
 
