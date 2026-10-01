@@ -82,10 +82,32 @@ function renderTab(name) {
 // FIP = ((13*HR + 3*(BB+HBP) - 2*K) / IP) + FIP constant   (FanGraphs definition)
 // The constant puts FIP on the league's ERA scale. MLB is ~3.10; other
 // leagues have different run environments — set them here when known.
-const FIP_CONSTANTS = { default: 3.10 };
-function fipConstant(level) { return FIP_CONSTANTS[level] ?? FIP_CONSTANTS.default; }
-function calcFIP(hr, bb, hbp, k, ip, level) {
-  return ip > 0 ? ((13*hr + 3*(bb + (hbp||0)) - 2*k) / ip) + fipConstant(level) : null;
+// Constant = lgERA - (13*HR + 3*(BB+HBP) - 2*K) / IP, from league totals.
+//   ALPB 2026: 10,875.2 IP, 7,218 ER (5.97 ERA), 1,689 HR, 5,711 BB, 955 HBP, 10,514 K -> 4.05
+const FIP_CONSTANTS = {
+  MLB:  { default: 3.10 },
+  ALPB: { 2026: 4.05, default: 4.05 },   // add a year here each season
+};
+const ALPB_TEAMS = /long island ducks|york revolution|southern maryland|hagerstown|lexington legends|high point rockers|gastonia|lancaster stormers|charleston dirty birds|staten island ferry hawks/i;
+
+function fipLeague(athlete) {
+  if (ALPB_TEAMS.test(athlete?.team || '') || /atlantic|alpb/i.test(athlete?.level || '')) return 'ALPB';
+  return 'MLB';   // MLB / MiLB / everything else until we have their league constants
+}
+function fipConstantFor(league, year) {
+  const t = FIP_CONSTANTS[league] || FIP_CONSTANTS.MLB;
+  return t[year] ?? t.default;
+}
+// Outings can span seasons ("All"): use each season's constant, weighted by innings
+function fipConstantForOutings(outings, athlete) {
+  const league = fipLeague(athlete);
+  let w = 0, sum = 0;
+  outings.forEach(o => { const ip = Math.round((+o.ip || 0) * 3) / 3; if (!ip) return;
+    sum += fipConstantFor(league, (o.date || '').toString().slice(0, 4)) * ip; w += ip; });
+  return w ? sum / w : fipConstantFor(league, null);
+}
+function calcFIP(hr, bb, hbp, k, ip, constant) {
+  return ip > 0 ? ((13*hr + 3*(bb + (hbp||0)) - 2*k) / ip) + constant : null;
 }
 
 // Statcast `events` -> outs recorded on the play (incl. caught stealing / pickoffs)
@@ -1457,7 +1479,7 @@ function renderProfileHero() {
   const whiffSwSeason = outingsWhiffSw(athleteOutings);
   const whiffRate = whiffSwSeason !== null ? whiffSwSeason.toFixed(1) : '—';
 
-  const fipV = calcFIP(totalHR, totalBB, totalHBP, totalK, totalIP, currentAthlete?.level);
+  const fipV = calcFIP(totalHR, totalBB, totalHBP, totalK, totalIP, fipConstantForOutings(athleteOutings, currentAthlete));
   const fip = fipV !== null ? fipV.toFixed(2) : '—';
 
   // WHIP = (BB + H) / IP
@@ -3858,7 +3880,7 @@ function computeSeasonAggregate(outings) {
   const ip = outs / 3;
 
   const totalHBP = sum('hbp');
-  const fipV = calcFIP(totalHR, totalBB, totalHBP, totalK, ip, currentAthlete?.level);
+  const fipV = calcFIP(totalHR, totalBB, totalHBP, totalK, ip, fipConstantForOutings(outings, currentAthlete));
   const fip  = fipV !== null ? +fipV.toFixed(2) : null;
   const whip = ip > 0 ? +((totalBB + totalH) / ip).toFixed(2) : null;
 

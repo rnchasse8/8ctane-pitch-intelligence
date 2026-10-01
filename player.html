@@ -329,7 +329,14 @@ function renderHero(){
   const totalIP=outings.reduce((a,o)=>a+(+o.ip||0),0);
   const totSw=outings.reduce((a,o)=>a+(o.swings||0),0),totSwW=outings.reduce((a,o)=>a+(o.swings?(o.swWhiffs||0):0),0);
   const whiffPct=totSw?(totSwW/totSw*100).toFixed(1):'—';
-  const fip=totalIP>0?(((13*totalHR+3*totalBB-2*totalK)/totalIP)+3.10).toFixed(2):'—';
+  const totalHBP=outings.reduce((a,o)=>a+(+o.hbp||0),0);
+  // FIP = ((13*HR + 3*(BB+HBP) - 2*K)/IP) + 3.10 — same as athletes-v2.js calcFIP
+  // FIP constant by league/season — same table as athletes-v2.js (ALPB 2026 = 4.05, MLB = 3.10)
+  const FIPC={MLB:{default:3.10},ALPB:{2026:4.05,default:4.05}};
+  const lg=/long island ducks|york revolution|southern maryland|hagerstown|lexington legends|high point rockers|gastonia|lancaster stormers|charleston dirty birds|staten island ferry hawks/i.test(athlete?.team||'')||/atlantic|alpb/i.test(athlete?.level||'')?'ALPB':'MLB';
+  let cw=0,cs=0;outings.forEach(o=>{const ip=Math.round((+o.ip||0)*3)/3;if(!ip)return;const y=(o.date||'').toString().slice(0,4);cs+=(FIPC[lg][y]??FIPC[lg].default)*ip;cw+=ip;});
+  const fipC=cw?cs/cw:FIPC[lg].default;
+  const fip=totalIP>0?(((13*totalHR+3*(totalBB+totalHBP)-2*totalK)/totalIP)+fipC).toFixed(2):'—';
   const whip=totalIP>0?((totalBB+totalH)/totalIP).toFixed(2):'—';
   const totalBIP=outings.reduce((a,o)=>{let pm={};try{pm=typeof o.pitch_stats==='object'?o.pitch_stats:JSON.parse(o.pitch_stats_json||'{}')}catch(e){}return a+Object.values(pm).reduce((s,p)=>s+(p.hip||0),0)},0);
   const totalPA=totalK+totalBB+totalBIP;
