@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>8ctane — Athletes</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="athletes.css?v=20260930d">
+<link rel="stylesheet" href="athletes.css?v=20260930e">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -143,6 +143,7 @@
       <button class="tab" data-ptab="splits">Splits</button>
       <button class="tab" data-ptab="locations">Locations</button>
       <button class="tab" data-ptab="yoy">Pitch Metrics</button>
+      <button class="tab" data-ptab="xarsenal">xArsenal</button>
       <button class="tab" data-ptab="report">Report</button>
       <button class="tab" data-ptab="season-insight">Season Insight</button>
       <button class="tab" data-ptab="outing-insight">Outing Insight</button>
@@ -325,6 +326,11 @@
     </div>
 
     <!-- OUTINGS LIST -->
+    <!-- xARSENAL -->
+    <div class="ptab-panel" id="ptab-xarsenal">
+      <div id="xarsenal-content"></div>
+    </div>
+
     <div class="ptab-panel" id="ptab-outings">
       <div class="section">
         <div class="section-hd">All outings</div>
@@ -383,6 +389,6 @@
 
 <script src="baselines-ref.js?v=20260527"></script>
 <script src="mlb-shape-match.js?v=20260725"></script>
-<script src="athletes-v2.js?v=20260930d"></script>
+<script src="athletes-v2.js?v=20260930e"></script>
 </body>
 </html>

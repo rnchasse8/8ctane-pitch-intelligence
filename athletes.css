@@ -839,3 +839,43 @@
 .xa-badge { margin-left:.5rem; font-family:'DM Mono',monospace; font-size:13px; padding:2px 8px; border-radius:4px; background:var(--surface2); border:1px solid var(--border); cursor:help; }
 .xa-badge:empty { display:none; }
 .shape-card-hd .shape-card-sub { margin-left:auto; }
+
+/* ---- xARSENAL TAB ---- */
+.xa-muted { color:var(--muted); font-size:12px; font-weight:400; }
+.xa-summary-card { display:flex; align-items:center; gap:1.25rem; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.1rem 1.4rem; margin-bottom:1.25rem; }
+.xa-sum-score { font-family:'DM Mono',monospace; font-size:48px; line-height:1; min-width:80px; text-align:center; }
+.xa-sum-title { font-family:'Barlow Condensed',sans-serif; font-size:20px; font-weight:600; }
+.xa-sum-desc { color:var(--muted); font-size:13px; margin-top:.25rem; }
+.xa-cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:1rem; }
+.xa-card { background:var(--surface); border:1px solid var(--border); border-top:3px solid var(--border2); border-radius:8px; padding:1rem 1.1rem; }
+.xa-card-hd { display:flex; align-items:center; gap:.5rem; }
+.xa-card-hd .pitch-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+.xa-card-name { font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:20px; text-transform:uppercase; }
+.xa-card-score { margin-left:auto; font-family:'DM Mono',monospace; font-size:32px; line-height:1; }
+.xa-card-grade { font-family:'DM Mono',monospace; font-size:15px; text-align:center; line-height:1.1; }
+.xa-card-grade small { font-size:10px; color:var(--muted); }
+.xa-why { font-size:13px; color:var(--text); margin:.6rem 0 .75rem; line-height:1.45; }
+.xa-mrow { display:grid; grid-template-columns:118px 112px 1fr 92px; align-items:center; gap:.5rem; padding:.3rem 0; border-top:1px solid var(--border); font-size:12px; }
+.xa-mlbl { color:var(--text); }
+.xa-imp { font-size:9px; text-transform:uppercase; letter-spacing:.06em; padding:1px 4px; border-radius:3px; margin-left:3px; color:var(--muted); border:1px solid var(--border); }
+.xa-imp-primary { color:var(--cyan); border-color:var(--cyan); }
+.xa-mval { font-family:'DM Mono',monospace; color:var(--muted); font-size:11px; }
+.xa-mbar { position:relative; height:8px; background:var(--surface2); border-radius:4px; }
+.xa-mfill { height:100%; border-radius:4px; }
+.xa-mavg { position:absolute; top:-3px; bottom:-3px; left:56%; width:1px; background:var(--muted); opacity:.6; }
+.xa-mscore { font-family:'DM Mono',monospace; text-align:right; }
+.xa-mscore span { font-size:10px; color:var(--muted); }
+.xa-s-elite { background:#22c55e; } .xa-s-above { background:#84cc16; } .xa-s-avg { background:#9ca3af; }
+.xa-s-below { background:#f59e0b; } .xa-s-poor { background:#f04040; }
+.xa-lev-hd { margin-top:.75rem; font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+.xa-lev { margin:.3rem 0 0 1rem; padding:0; font-size:12px; line-height:1.6; }
+/* outings list grade chips */
+.outing-xa { display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; min-width:100%; }
+.outing-xa:empty { display:none; }
+.xa-out-lbl { font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+.xa-out-total { font-family:'DM Mono',monospace; font-size:13px; margin-right:.25rem; }
+.xa-chip { display:inline-flex; align-items:center; gap:4px; font-family:'DM Mono',monospace; font-size:11px; padding:2px 7px; border:1px solid var(--border); border-radius:12px; cursor:help; }
+.xa-chip .pitch-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+.xa-chip .delta-good, .xa-chip .delta-bad { font-size:10px; }
+.xa-d0 { color:var(--muted); font-size:10px; }
+@media (max-width:520px) { .xa-mrow { grid-template-columns:96px 1fr 70px; } .xa-mval { display:none; } }

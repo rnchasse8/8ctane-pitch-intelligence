@@ -75,6 +75,7 @@ function renderTab(name) {
   if (name === 'outing-insight') initOutingInsight();
   if (name === 'compare') populateCompareSelectors();
   if (name === 'history') renderYearOverYear();
+  if (name === 'xarsenal') renderXArsenalTab();
 }
 
 /* ==================== PITCHING LINE (K / BB / HBP / H / HR / IP) ==================== */
@@ -1500,7 +1501,7 @@ function renderProfileHero() {
 const XA_MIN_SHARE = 0.03, XA_MIN_COUNT = 10;   // ignore tiny-sample pitch types
 const xaCache = {};
 
-function xaSeasonShape(outings) {
+function xaSeasonShape(outings, minCount = XA_MIN_COUNT, minShare = XA_MIN_SHARE) {
   const acc = {};
   outings.forEach(o => Object.entries(o.pitch_stats || {}).forEach(([pt, s]) => {
     if (!s || !s.count) return;
@@ -1513,7 +1514,7 @@ function xaSeasonShape(outings) {
   }));
   const total = Object.values(acc).reduce((t, a) => t + a.count, 0);
   return Object.entries(acc)
-    .filter(([pt, a]) => a.count >= XA_MIN_COUNT && a.count / (total||1) >= XA_MIN_SHARE)
+    .filter(([pt, a]) => a.count >= minCount && a.count / (total||1) >= minShare)
     .map(([pt, a]) => {
       const p = { key: pt, code: pt };
       ['velocity','spinRate','ivb','hb','extension','vaa'].forEach(k => { p[k] = a.ws[k] ? +(a.sums[k] / a.ws[k]).toFixed(2) : null; });
@@ -1533,7 +1534,7 @@ async function getXArsenal(outings) {
 const xaClass = sc => sc == null ? 'v-num' : sc >= 70 ? 'v-good' : sc >= 55 ? 'v-num' : sc >= 45 ? 'v-warn' : 'v-bad';
 const XA_METRIC_LBL = { velocity:'Velo', spinRate:'Spin', ivb:'IVB', hb:'HB', extension:'Ext', vaa:'VAA', spinEfficiency:'Spin eff' };
 function xaTitle(r) {
-  const parts = Object.entries(r.metrics).filter(([, m]) => m.score !== null && m.weight > 0).map(([k, m]) => `${XA_METRIC_LBL[k]} ${m.score}`);
+  const parts = Object.entries(r.metrics).filter(([, m]) => m.score !== null && m.importance).map(([k, m]) => `${XA_METRIC_LBL[k]} ${m.score}`);
   return `xArsenal ${r.score} (${r.grade}, ${r.gradeLabel}) · graded as ${r.subtype}` +
     (parts.length ? ` · ${parts.join(' · ')}` : '') +
     (r.spinEffEstimated && r.spinEfficiency !== null ? ` · spin eff ~${r.spinEfficiency}% (estimated)` : '');
@@ -1562,6 +1563,147 @@ async function fillXArsenal(root, outings, summaryEl) {
     cells.forEach(el => { el.innerHTML = '<span class="v-num">—</span>'; el.title = msg; });
     if (summaryEl) summaryEl.innerHTML = `<span class="xa-sum-sub">${msg}</span>`;
   }
+}
+
+// ---- Per-outing grades (one batched Worker call for the whole season) ----
+const XA_OUTING_MIN = 5;   // pitches of a type needed in an outing to grade it
+const xaOutingCache = {};
+async function getXArsenalByOuting(outings) {
+  const hand = currentAthlete?.throws || 'R', level = currentAthlete?.level || '';
+  const items = outings.map(o => ({ id: o.id, hand, level, veloWeighted: true, pitches: xaSeasonShape([o], XA_OUTING_MIN, 0) }))
+                       .filter(it => it.pitches.length);
+  if (!items.length) return {};
+  const key = JSON.stringify(items);
+  if (!xaOutingCache[key]) xaOutingCache[key] = api('scoreArsenal', { items })
+    .then(res => { const m = {}; (res.results || []).forEach(r => { m[r.id] = r; }); return m; })
+    .catch(e => { delete xaOutingCache[key]; throw e; });
+  return xaOutingCache[key];
+}
+
+// Outings list: grade chips per outing, with change vs the season grade
+async function fillOutingGrades() {
+  const els = document.querySelectorAll('#outings-list [data-xa-outing]');
+  if (!els.length) return;
+  try {
+    const [byOuting, season] = await Promise.all([getXArsenalByOuting(athleteOutings), getXArsenal(athleteOutings).catch(() => null)]);
+    const seasonBy = {}; (season?.pitches || []).forEach(r => { seasonBy[r.key] = r.score; });
+    els.forEach(el => {
+      const res = byOuting[el.dataset.xaOuting];
+      if (!res || !res.pitches.length) { el.innerHTML = ''; return; }
+      el.innerHTML = `<span class="xa-out-lbl">xArsenal</span><span class="xa-out-total ${xaClass(res.arsenalScore)}">${res.arsenalScore}</span>` +
+        res.pitches.sort((a, b) => b.score - a.score).map(r => {
+          const s = seasonBy[r.key];
+          const d = s !== undefined ? r.score - s : null;
+          const dTxt = d === null ? '' : d === 0 ? '<span class="xa-d0">=</span>' : `<span class="${d > 0 ? 'delta-good' : 'delta-bad'}">${d > 0 ? '▲' : '▼'}${Math.abs(d)}</span>`;
+          return `<span class="xa-chip" style="border-color:${pc(r.key)}66" title="${xaTitle(r)}${s !== undefined ? ` · season ${s}` : ''}"><span class="pitch-dot" style="background:${pc(r.key)}"></span>${r.key} <b class="${xaClass(r.score)}">${r.score}</b> ${dTxt}</span>`;
+        }).join('');
+    });
+  } catch (e) {
+    els.forEach(el => { el.innerHTML = ''; });
+  }
+}
+
+/* ==================== xARSENAL TAB ==================== */
+let xaTabChart = null;
+function xaValue(k, p, r) {
+  const v = k === 'spinEfficiency' ? r.spinEfficiency : p?.[k];
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  if (k === 'velocity') return (+v).toFixed(1) + ' mph';
+  if (k === 'spinRate') return Math.round(v) + ' rpm';
+  if (k === 'ivb') return (+v).toFixed(1) + '"';
+  if (k === 'hb') return aiHB(v, aiIsLefty());
+  if (k === 'extension') return (+v).toFixed(1) + ' ft';
+  if (k === 'vaa') return (+v).toFixed(1) + '°';
+  if (k === 'spinEfficiency') return '~' + v + '%' + (r.spinEffEstimated ? ' est.' : '');
+  return v;
+}
+const XA_STATUS_LBL = { elite:'Elite', above_avg:'Above avg', avg:'Average', below_avg:'Below avg', poor:'Poor' };
+const XA_STATUS_CLS = { elite:'xa-s-elite', above_avg:'xa-s-above', avg:'xa-s-avg', below_avg:'xa-s-below', poor:'xa-s-poor' };
+
+function xaWhy(r) {
+  const ms = Object.entries(r.metrics).filter(([, m]) => m.score !== null && (m.importance === 'primary' || m.importance === 'secondary'));
+  const strong = ms.filter(([, m]) => m.score >= 65).sort((a, b) => b[1].score - a[1].score);
+  const weak = ms.filter(([, m]) => m.score < 50).sort((a, b) => a[1].score - b[1].score);
+  const nm = ([k, m]) => `${XA_METRIC_LBL[k]} (${m.score})`;
+  const parts = [];
+  if (strong.length) parts.push(`Carried by ${strong.slice(0, 2).map(nm).join(' and ')}.`);
+  if (weak.length) parts.push(`Held back by ${weak.slice(0, 2).map(nm).join(' and ')}.`);
+  if (!parts.length) parts.push('Grades out evenly — no key metric far above or below average.');
+  return `Graded as a <b>${r.subtype}</b>. ` + parts.join(' ');
+}
+
+async function renderXArsenalTab() {
+  const el = document.getElementById('xarsenal-content');
+  el.innerHTML = '<div class="ai-loading"><div class="loading-spinner"></div><p>Grading arsenal...</p></div>';
+  const inputs = {}; xaSeasonShape(athleteOutings).forEach(p => { inputs[p.key] = p; });
+  let res;
+  try { res = await getXArsenal(athleteOutings); }
+  catch (e) {
+    el.innerHTML = `<div class="empty-state">${/Unknown action/i.test(e.message||'') ? 'Grades need the updated Cloudflare Worker.' : 'Could not load grades: ' + e.message}</div>`;
+    return;
+  }
+  if (!res || !res.pitches.length) { el.innerHTML = '<div class="empty-state">Not enough pitch data this season to grade.</div>'; return; }
+
+  const order = ['velocity','spinRate','ivb','hb','extension','vaa','spinEfficiency'];
+  const impRank = { primary:0, secondary:1, minor:2 };
+  const cards = [...res.pitches].sort((a, b) => b.score - a.score).map(r => {
+    const p = inputs[r.key];
+    const rows = order.filter(k => r.metrics[k].importance && r.metrics[k].score !== null)
+      .sort((a, b) => impRank[r.metrics[a].importance] - impRank[r.metrics[b].importance])
+      .map(k => { const m = r.metrics[k];
+        return `<div class="xa-mrow">
+          <div class="xa-mlbl">${XA_METRIC_LBL[k]} <span class="xa-imp xa-imp-${m.importance}">${m.importance}</span></div>
+          <div class="xa-mval">${xaValue(k, p, r)}</div>
+          <div class="xa-mbar"><div class="xa-mfill ${XA_STATUS_CLS[m.status]}" style="width:${Math.min(100, m.score / 107 * 100)}%"></div><div class="xa-mavg"></div></div>
+          <div class="xa-mscore"><b>${m.score}</b> <span>${XA_STATUS_LBL[m.status]}</span></div>
+        </div>`; }).join('');
+    const lev = (r.levers || []).map(l => `<li><b class="delta-good">+${l.gain}</b> with ${l.direction}${l.metric === 'spinEfficiency' && r.spinEffEstimated ? ' <span class="xa-muted">(estimated metric)</span>' : ''}</li>`).join('');
+    return `<div class="xa-card" style="border-top-color:${pc(r.key)}">
+      <div class="xa-card-hd">
+        <span class="pitch-dot" style="background:${pc(r.key)}"></span><span class="xa-card-name">${pn(r.key)}</span>
+        <span class="xa-card-score ${xaClass(r.score)}">${r.score}</span><span class="xa-card-grade">${r.grade}<br><small>${r.gradeLabel}</small></span>
+      </div>
+      <div class="xa-why">${xaWhy(r)}</div>
+      <div class="xa-mrows">${rows}</div>
+      ${lev ? `<div class="xa-lev-hd">Biggest levers</div><ul class="xa-lev">${lev}</ul>` : '<div class="xa-lev-hd">Every key metric is already grading as good or better.</div>'}
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="xa-summary-card">
+      <div class="xa-sum-score ${xaClass(res.arsenalScore)}">${res.arsenalScore}</div>
+      <div>
+        <div class="xa-sum-title">xArsenal ${res.arsenalGrade} · ${res.arsenalLabel} <span class="xa-muted">— ${seasonLabel()} · graded at ${res.compLevel} level</span></div>
+        <div class="xa-sum-desc">${res.description || ''}</div>
+      </div>
+    </div>
+    <div class="xa-cards">${cards}</div>
+    <div class="section" style="margin-top:1.5rem">
+      <div class="section-hd">Grade by outing</div>
+      <div class="chart-card"><div class="chart-wrap" style="height:260px"><canvas id="xa-trend-chart" role="img" aria-label="xArsenal grade by outing"></canvas></div></div>
+      <div class="chart-footnote">Each point = that pitch's grade in one outing (min ${XA_OUTING_MIN} pitches) · 60 ≈ MLB average · Scale: 35 below avg, 60 avg, 80 good, 100 elite</div>
+    </div>
+    <div class="chart-footnote">Bars show each metric's score (60 ≈ average, marked). "Primary" metrics drive most of the grade. Spin efficiency is estimated from velo, spin and movement. Levers = points gained if that one metric reached "good."</div>`;
+
+  // Grade-by-outing chart
+  try {
+    const byOuting = await getXArsenalByOuting(athleteOutings);
+    const sortedO = [...athleteOutings].sort((a, b) => a.date.localeCompare(b.date)).filter(o => byOuting[o.id]);
+    const pts = res.pitches.map(r => r.key);
+    if (xaTabChart) xaTabChart.destroy();
+    const cv = document.getElementById('xa-trend-chart');
+    if (cv && sortedO.length) xaTabChart = new Chart(cv, {
+      type: 'line',
+      data: { labels: sortedO.map(o => formatDate(o.date)),
+        datasets: pts.map(pt => ({ label: pn(pt), borderColor: pc(pt), backgroundColor: pc(pt), spanGaps: true, tension: .25, pointRadius: 3,
+          data: sortedO.map(o => byOuting[o.id].pitches.find(r => r.key === pt)?.score ?? null) })) },
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ labels:{ color:'#72747c', font:{ size:11, family:'DM Mono' } } },
+          tooltip:{ callbacks:{ afterLabel: ctx => { const o = sortedO[ctx.dataIndex]; return o.opponent ? 'vs ' + o.opponent : ''; } } } },
+        scales:{ y:{ suggestedMin:30, suggestedMax:90, ticks:{ color:'#72747c' }, grid:{ color:'rgba(255,255,255,0.04)' } },
+                 x:{ ticks:{ color:'#72747c', maxRotation:0, autoSkip:true, maxTicksLimit:10 }, grid:{ display:false } } } }
+    });
+  } catch (e) {}
 }
 
 /* ==================== SEASON OVERVIEW ==================== */
@@ -1760,7 +1902,7 @@ function renderOutingsList() {
       <div class="outing-opp">${o.opponent || '—'}</div>
       <div class="outing-stats">
         <div class="outing-stat"><div class="outing-stat-val">${o.total_pitches||0}</div><div class="outing-stat-lbl">Pitches</div></div>
-        <div class="outing-stat"><div class="outing-stat-val">${whiffRate}%</div><div class="outing-stat-lbl">Whiff%</div></div>
+        <div class="outing-stat"><div class="outing-stat-val">${whiffRate}${whiffRate !== '—' ? '%' : ''}</div><div class="outing-stat-lbl">Whiff%</div></div>
         <div class="outing-stat"><div class="outing-stat-val">${o.strikeouts||0}</div><div class="outing-stat-lbl">K</div></div>
         <div class="outing-stat"><div class="outing-stat-val">${o.walks||0}</div><div class="outing-stat-lbl">BB</div></div>
       </div>
@@ -1771,10 +1913,12 @@ function renderOutingsList() {
           return `<span class="pitch-pill" style="background:${pc(pt)}22;color:${pc(pt)}">${pt} ${pct}%</span>`;
         }).join('')}
       </div>
+      <div class="outing-xa" data-xa-outing="${o.id}"></div>
       ${o.notes ? `<div style="font-size:11px;color:var(--muted);font-style:italic;min-width:100%">${o.notes}</div>` : ''}
       <button class="outing-delete-btn" onclick="event.stopPropagation();confirmDeleteOuting('${o.id}','${formatDate(o.date)}')" title="Delete outing">✕</button>
     </div>`;
   }).join('');
+  fillOutingGrades();
 }
 
 /* ==================== ADD OUTING ==================== */
