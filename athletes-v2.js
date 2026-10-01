@@ -2078,9 +2078,9 @@ function divColor(v, mid, span, higherBetter = true) {
 // foot on the ground; lefties get it mirrored. Actual release dots go on top.
 // hand / ground = anchor pixels in each PNG (measured from the files).
 const RELEASE_TEMPLATES = {
-  low:  { src: 'img/release/low.png',  w: 631, h: 700, hand: [40.0, 282.0], ground: 696.6, skullTop: 10.1,  armDeg: 15 },
-  mid:  { src: 'img/release/mid.png',  w: 438, h: 700, hand: [36.3, 39.7],  ground: 696.8, skullTop: 16.2,  armDeg: 36 },
-  high: { src: 'img/release/high.png', w: 325, h: 700, hand: [30.0, 31.8],  ground: 697.1, skullTop: 105.0, armDeg: 55 },
+  low:  { src: (window.RELEASE_IMG && window.RELEASE_IMG.low) || 'img/release/low.png',  w: 631, h: 700, hand: [40.0, 282.0], ground: 696.6, skullTop: 10.1,  armDeg: 15 },
+  mid:  { src: (window.RELEASE_IMG && window.RELEASE_IMG.mid) || 'img/release/mid.png',  w: 438, h: 700, hand: [36.3, 39.7],  ground: 696.8, skullTop: 16.2,  armDeg: 36 },
+  high: { src: (window.RELEASE_IMG && window.RELEASE_IMG.high) || 'img/release/high.png', w: 325, h: 700, hand: [30.0, 31.8],  ground: 697.1, skullTop: 105.0, armDeg: 55 },
 };
 function releaseTemplateFor(armDeg, relZ, relX) {
   // no arm angle saved: estimate the slot from release height vs. side
@@ -2122,7 +2122,7 @@ function ocReleaseSVG(rows, lefty) {
       <path d="M${sx(-3.6)},${sy(0)} L${sx(3.6)},${sy(0)} L${sx(4.4)},${H} L${sx(-4.4)},${H} Z" fill="#7d88a8" opacity=".55"/>
       <line x1="${sx(0)}" y1="${sy(0)}" x2="${sx(0)}" y2="${H}" stroke="#16181e" stroke-width="2" opacity=".6"/>
     </svg>
-    <img class="oc-rel-img" src="${T.src}" alt="" style="left:${pct(left, W)};top:${pct(top, H)};width:${pct(imgW, W)};height:${pct(imgH, H)};${mirror ? 'transform:scaleX(-1);' : ''}">
+    <img class="oc-rel-img" src="${T.src}" alt="" onerror="this.style.display='none'" style="left:${pct(left, W)};top:${pct(top, H)};width:${pct(imgW, W)};height:${pct(imgH, H)};${mirror ? 'transform:scaleX(-1);' : ''}">
     <svg viewBox="0 0 ${W} ${H}" class="oc-rel-layer">
       ${dots}
       <text x="6" y="14" class="oc-axis">Catcher's view · ${lefty ? 'LHP' : 'RHP'}${armDeg !== null ? ` · arm angle ${Math.round(armDeg)}°` : ''}</text>
