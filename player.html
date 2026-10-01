@@ -141,6 +141,26 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
   .insight-grid,.splits-advice-grid{grid-template-columns:1fr}
   .player-tabs{padding:0 1rem}
 }
+/* ---- PITCH USAGE BY SIDE (Season Overview) ---- */
+.usage-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; max-width:760px; }
+.usage-card:empty { display:none; }
+.us-title { font-family:'Barlow Condensed',sans-serif; font-size:24px; font-weight:600; text-align:center; margin-bottom:.6rem; }
+.us-year { font-weight:800; border-bottom:3px dotted var(--cyan); }
+.us-grid { display:grid; grid-template-columns:1fr auto 1fr; row-gap:.35rem; column-gap:.75rem; align-items:center; }
+.us-hd { font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:15px; padding-bottom:.35rem; border-bottom:2px solid var(--border2); }
+.us-hd-l { text-align:right; } .us-hd-c { text-align:center; } .us-hd-r { text-align:left; }
+.us-side { display:flex; align-items:center; gap:.5rem; }
+.us-left { justify-content:flex-end; }
+.us-bar-wrap { flex:1; height:20px; display:flex; }
+.us-wrap-l { justify-content:flex-end; }
+.us-bar { height:100%; border-radius:10px; min-width:4px; }
+.us-left .us-bar { border-radius:10px 2px 2px 10px; } .us-right .us-bar { border-radius:2px 10px 10px 2px; }
+.us-pct { font-family:'DM Mono',monospace; font-size:14px; min-width:38px; }
+.us-left .us-pct { text-align:right; }
+.us-mid { display:flex; align-items:center; gap:.6rem; justify-content:center; border-left:2px solid var(--border2); border-right:2px solid var(--border2); padding:0 .6rem; }
+.us-pill { font-family:'Barlow Condensed',sans-serif; font-weight:600; font-size:15px; color:#111; padding:2px 12px; border-radius:6px; min-width:84px; text-align:center; }
+.us-rv { font-family:'DM Mono',monospace; font-weight:700; font-size:14px; min-width:32px; text-align:center; }
+.us-rv-pos { color:#e35d5d; } .us-rv-neg { color:#6b8fd6; } .us-rv0 { color:var(--muted); }
 </style>
 </head>
 <body>
@@ -383,7 +403,17 @@ function renderOverview(){
     return`<div style="display:flex;align-items:center;gap:1rem;padding:.75rem 1.25rem;border-bottom:1px solid var(--border)"><div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--cyan);min-width:100px">${formatDate(o.date)}</div><div style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;min-width:50px">vs ${o.opponent||'—'}</div><div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);flex:1">${tot}p · ${wp}% whiff · ${o.strikeouts||0}K ${o.walks||0}BB</div><div style="display:flex;gap:4px;flex-wrap:wrap">${tags}</div></div>`;
   }).join('');
 
-  document.getElementById('overview-content').innerHTML=`
+  // Savant-style pitch usage by batter side (same as athletes-v2.js renderUsageChart)
+  const usageHTML=(()=>{const acc={};outings.forEach(o=>Object.entries(getPM(o)).forEach(([pt,s])=>{if(!s||!s.count)return;const a=acc[pt]=acc[pt]||{L:0,R:0,rvL:0,rvR:0,hasRV:false};
+      if(s.lhh){a.L+=s.lhh.count||0;if(s.lhh.rv!=null){a.rvL+=+s.lhh.rv;a.hasRV=true}}if(s.rhh){a.R+=s.rhh.count||0;if(s.rhh.rv!=null){a.rvR+=+s.rhh.rv;a.hasRV=true}}}));
+    const tL=Object.values(acc).reduce((t,a)=>t+a.L,0),tR=Object.values(acc).reduce((t,a)=>t+a.R,0);if(!tL&&!tR)return'';
+    const rows=Object.entries(acc).filter(([pt,a])=>pt!=='OTHER'&&a.L+a.R>0).sort((x,y)=>(y[1].L+y[1].R)-(x[1].L+x[1].R));
+    const anyRV=rows.some(([,a])=>a.hasRV),pt_=p=>p>0&&p<1?'<1%':Math.round(p)+'%';
+    const rv=(v,h)=>{if(!h)return'<span class="us-rv us-rv0">—</span>';const r=Math.round(v);return`<span class="us-rv ${r>0?'us-rv-pos':r<0?'us-rv-neg':'us-rv0'}">${r>0?'+'+r:r}</span>`};
+    const mx=Math.max(1,...rows.map(([,a])=>Math.max(tL?a.L/tL*100:0,tR?a.R/tR*100:0)));
+    return`<div class="usage-card"><div class="us-title">Pitch Usage</div><div class="us-grid"><div class="us-hd us-hd-l">Usage vs. LHH</div><div class="us-hd us-hd-c">${anyRV?'Pitch Run Value':''}</div><div class="us-hd us-hd-r">Usage vs. RHH</div>${rows.map(([pt,a])=>{const pL=tL?a.L/tL*100:0,pR=tR?a.R/tR*100:0;
+      return`<div class="us-side us-left"><span class="us-pct">${pt_(pL)}</span><div class="us-bar-wrap us-wrap-l"><div class="us-bar" style="width:${pL/mx*100}%;background:${pc(pt)}"></div></div></div><div class="us-mid">${anyRV?rv(a.rvL,a.hasRV):''}<span class="us-pill" style="background:${pc(pt)}">${PITCH_NAMES[pt]||pt}</span>${anyRV?rv(a.rvR,a.hasRV):''}</div><div class="us-side us-right"><div class="us-bar-wrap"><div class="us-bar" style="width:${pR/mx*100}%;background:${pc(pt)}"></div></div><span class="us-pct">${pt_(pR)}</span></div>`}).join('')}</div></div>`})();
+  document.getElementById('overview-content').innerHTML=usageHTML+`
     <div class="section-hd" style="margin-bottom:1rem">Season arsenal</div>
     <div class="arsenal-table"><table><thead><tr><th>Pitch</th><th>Usage</th><th>Velo</th><th>Whiff%</th><th>MLB avg</th><th>CSW%</th><th>xwOBA</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="section-hd">Recent outings</div>

@@ -275,7 +275,7 @@ function mergePitchStats(a, b) {
   const ha = a.hip || 0, hb = b.hip || 0, ea = a.bbe || ha, eb = b.bbe || hb;
   ['avgXwoba','avgXba','avgXslg','gbPct','fbPct','ldPct'].forEach(k => W(k, ha, hb));
   ['avgEV','hardHitPct'].forEach(k => W(k, ea, eb));
-  ['count','whiffs','cstrikes','hip','bbe','zoneN','outN','zSw','oSw','zCon','totalStrikes','gb','fb','ld','bip'].forEach(k => {
+  ['count','whiffs','cstrikes','hip','bbe','zoneN','outN','zSw','oSw','zCon','totalStrikes','gb','fb','ld','bip','rv'].forEach(k => {
     if (a[k] != null || b[k] != null) out[k] = (a[k] || 0) + (b[k] || 0);
   });
   // swings: only sum when both sides know them, otherwise leave for enrichOuting to rebuild
@@ -1107,6 +1107,9 @@ function parseStatcastBulk(rows) {
       // Per-pitch-type swing/zone counts (Whiff/Swing, Zone%, Chase%, Z-Contact%)
       if (inSZ) s.zoneN++; else if (zone) s.outN++;
       if (isSwing) { s.swings++; if (side) side.swings = (side.swings||0) + 1; if (inSZ) { s.zSw++; if (isContact) s.zCon++; } else if (zone) s.oSw++; }
+      // Pitch run value (Savant): delta_run_exp is from the batter's side, so pitcher RV = -delta_run_exp
+      const dre = parseFloat(r.delta_run_exp);
+      if (!isNaN(dre)) { s.rv = (s.rv||0) - dre; if (side) side.rv = (side.rv||0) - dre; }
       if (desc.includes('swinging_strike')) {
         s.whiffs++;
         if(side) side.whiffs++;
@@ -1160,6 +1163,7 @@ function parseStatcastBulk(rows) {
         whiffs:   side.whiffs,
         cstrikes: side.cstrikes,
         hip:      side.hip,
+        rv:       side.rv != null ? +side.rv.toFixed(2) : undefined,
         swings:   side.swings || 0,
         whiffPct: side.swings ? +(side.whiffs/side.swings*100).toFixed(1) : null,   // per swing
         cswPct:   side.count ? +((side.whiffs+side.cstrikes)/side.count*100).toFixed(1) : 0,
@@ -1206,6 +1210,7 @@ function parseStatcastBulk(rows) {
         avgPercVelo:  s.effSpeeds.length ? +avgg(s.effSpeeds).toFixed(1) : null,
         swings:s.swings, zoneN:s.zoneN, outN:s.outN, zSw:s.zSw, oSw:s.oSw, zCon:s.zCon,
         bbe: s.launch_speeds.length,
+        rv: s.rv != null ? +s.rv.toFixed(2) : undefined,
         mv: s.mv || [],
         locations: s.locations || [],
         spray: s.spray || [],
@@ -1728,6 +1733,45 @@ async function renderXArsenalTab() {
   } catch (e) {}
 }
 
+/* ==================== PITCH USAGE BY BATTER SIDE (Savant-style) ==================== */
+function renderUsageChart() {
+  const el = document.getElementById('season-usage');
+  if (!el) return;
+  const acc = {};
+  athleteOutings.forEach(o => Object.entries(o.pitch_stats || {}).forEach(([pt, s]) => {
+    if (!s || !s.count) return;
+    const a = acc[pt] = acc[pt] || { L:0, R:0, rvL:0, rvR:0, hasRV:false, n:0 };
+    a.n += s.count;
+    if (s.lhh) { a.L += s.lhh.count || 0; if (s.lhh.rv != null) { a.rvL += +s.lhh.rv; a.hasRV = true; } }
+    if (s.rhh) { a.R += s.rhh.count || 0; if (s.rhh.rv != null) { a.rvR += +s.rhh.rv; a.hasRV = true; } }
+  }));
+  const totL = Object.values(acc).reduce((t, a) => t + a.L, 0), totR = Object.values(acc).reduce((t, a) => t + a.R, 0);
+  if (!totL && !totR) { el.innerHTML = ''; return; }
+  const rows = Object.entries(acc).filter(([pt, a]) => pt !== 'OTHER' && (a.L + a.R) > 0)
+    .sort((x, y) => (y[1].L + y[1].R) - (x[1].L + x[1].R));
+  const anyRV = rows.some(([, a]) => a.hasRV);
+  const pctTxt = p => p > 0 && p < 1 ? '<1%' : Math.round(p) + '%';
+  const rvTxt = (v, has) => {
+    if (!has) return '<span class="us-rv us-rv0">—</span>';
+    const r = Math.round(v);
+    return `<span class="us-rv ${r > 0 ? 'us-rv-pos' : r < 0 ? 'us-rv-neg' : 'us-rv0'}">${r > 0 ? '+' + r : r}</span>`;
+  };
+  const maxP = Math.max(1, ...rows.map(([, a]) => Math.max(totL ? a.L / totL * 100 : 0, totR ? a.R / totR * 100 : 0)));
+  el.innerHTML = `
+    <div class="us-title"><span class="us-year">${seasonLabel()}</span> Pitch Usage</div>
+    <div class="us-grid">
+      <div class="us-hd us-hd-l">Usage vs. LHH</div><div class="us-hd us-hd-c">${anyRV ? 'Pitch Run Value' : ''}</div><div class="us-hd us-hd-r">Usage vs. RHH</div>
+      ${rows.map(([pt, a]) => {
+        const pL = totL ? a.L / totL * 100 : 0, pR = totR ? a.R / totR * 100 : 0;
+        return `
+        <div class="us-side us-left"><span class="us-pct">${pctTxt(pL)}</span><div class="us-bar-wrap us-wrap-l"><div class="us-bar" style="width:${pL / maxP * 100}%;background:${pc(pt)}"></div></div></div>
+        <div class="us-mid">${anyRV ? rvTxt(a.rvL, a.hasRV) : ''}<span class="us-pill" style="background:${pc(pt)}">${pn(pt)}</span>${anyRV ? rvTxt(a.rvR, a.hasRV) : ''}</div>
+        <div class="us-side us-right"><div class="us-bar-wrap"><div class="us-bar" style="width:${pR / maxP * 100}%;background:${pc(pt)}"></div></div><span class="us-pct">${pctTxt(pR)}</span></div>`;
+      }).join('')}
+    </div>
+    <div class="chart-footnote">${anyRV ? 'Pitch run value = runs saved by that pitch vs. each side (positive = good for the pitcher). ' : 'Pitch run value appears once outings are re-imported from Statcast. '}${totL} pitches vs. LHH · ${totR} vs. RHH</div>`;
+}
+
 /* ==================== SEASON OVERVIEW ==================== */
 function renderSeasonOverview() {
   // Aggregate all pitch stats across all outings
@@ -1786,6 +1830,7 @@ function renderSeasonOverview() {
   }).join('') || '<tr><td colspan="9" class="empty-state">No outing data yet.</td></tr>';
 
   fillXArsenal(document.getElementById('season-arsenal-body'), athleteOutings, document.getElementById('season-xarsenal'));
+  renderUsageChart();
 
   // Charts
   if (profileCharts['season-mix']) { profileCharts['season-mix'].destroy(); }
@@ -2022,7 +2067,8 @@ function processOutingRows(rows) {
 
   rows.forEach(r => {
     const pt = r._pt;
-    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[], mv:[], swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0 };
+    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[], mv:[], swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0,
+      lhh:{count:0,whiffs:0,cstrikes:0,hip:0}, rhh:{count:0,whiffs:0,cstrikes:0,hip:0} };
     const s = pitchMap[pt];
     s.count++;
     s.rawRows.push(r);
@@ -2050,6 +2096,11 @@ function processOutingRows(rows) {
       if (inStrikeZone) { swingInZone++; if(isContact) contactInZone++; }
       else if (zone) { swingOutZone++; if(isContact) contactOutZone++; }
     }
+    // Batter-side usage + pitch run value (pitcher RV = -delta_run_exp)
+    const sideS = r.stand === 'L' ? s.lhh : r.stand === 'R' ? s.rhh : null;
+    if (sideS) sideS.count++;
+    const dreS = parseFloat(r.delta_run_exp);
+    if (!isNaN(dreS)) { s.rv = (s.rv||0) - dreS; if (sideS) sideS.rv = (sideS.rv||0) - dreS; }
     // Per-pitch-type swing/zone counts
     if (inStrikeZone) s.zoneN++; else if (zone) s.outN++;
     if (isSwing) { s.swings++; if (inStrikeZone) { s.zSw++; if (isContact) s.zCon++; } else if (zone) s.oSw++; }
@@ -2118,6 +2169,9 @@ function processOutingRows(rows) {
       hardHitPct:   s.launch_speeds.length ? +(s.launch_speeds.filter(v=>v>=95).length/s.launch_speeds.length*100).toFixed(1) : null,
       bbe: s.launch_speeds.length,
       mv: s.mv,
+      rv: s.rv != null ? +s.rv.toFixed(2) : undefined,
+      lhh: s.lhh.count ? { count:s.lhh.count, rv: s.lhh.rv != null ? +s.lhh.rv.toFixed(2) : undefined } : undefined,
+      rhh: s.rhh.count ? { count:s.rhh.count, rv: s.rhh.rv != null ? +s.rhh.rv.toFixed(2) : undefined } : undefined,
       swings:s.swings, zoneN:s.zoneN, outN:s.outN, zSw:s.zSw, oSw:s.oSw, zCon:s.zCon,
     };
   });
@@ -3122,6 +3176,91 @@ function setLocationColor(color, btn) {
   renderLocations();
 }
 
+let locationMode = 'heat';   // 'heat' (Savant density maps per pitch) | 'dots'
+function setLocationMode(m, btn) {
+  locationMode = m;
+  document.querySelectorAll('[data-locmode]').forEach(b => b.classList.toggle('active', b.dataset.locmode === m));
+  const colorRow = document.getElementById('loc-color-row');
+  if (colorRow) colorRow.style.display = m === 'dots' ? '' : 'none';
+  renderLocations();
+}
+
+// Density heat map on a canvas: Gaussian KDE over plate_x / plate_z (catcher's
+// view), banded like Savant — blue (few) -> white -> red (most).
+const HEAT_STOPS = [
+  [0.00, [123, 147, 201, 0]], [0.10, [123, 147, 201, 0.85]], [0.35, [168, 186, 224, 0.95]],
+  [0.55, [245, 245, 248, 1]], [0.72, [236, 170, 170, 1]], [0.88, [214, 90, 90, 1]], [1.00, [196, 40, 50, 1]],
+];
+function heatColor(v) {
+  for (let i = 1; i < HEAT_STOPS.length; i++) {
+    const [p1, c1] = HEAT_STOPS[i], [p0, c0] = HEAT_STOPS[i-1];
+    if (v <= p1) { const f = (v - p0) / (p1 - p0); return c0.map((c, k) => c + (c1[k] - c) * f); }
+  }
+  return HEAT_STOPS[HEAT_STOPS.length-1][1];
+}
+function drawHeatmap(canvas, locs) {
+  const W = canvas.width, H = canvas.height;
+  const ctx = canvas.getContext('2d');
+  const xMin = -3.0, xMax = 3.0, zMin = -0.6, zMax = 6.0;   // roomy frame like Savant
+  const sx = x => (x - xMin) / (xMax - xMin) * W, sz = z => H - (z - zMin) / (zMax - zMin) * H;
+  ctx.clearRect(0, 0, W, H);
+  // KDE on a coarse grid
+  const G = 2, gw = Math.ceil(W / G), gh = Math.ceil(H / G), dens = new Float32Array(gw * gh);
+  const n = locs.length;
+  const bw = Math.max(0.15, Math.min(0.36, 0.48 * Math.pow(n, -0.2)));   // ft — wider for small samples
+  const bpx = bw / (xMax - xMin) * W, rad = Math.ceil(bpx * 3 / G);
+  locs.forEach(({ x, z }) => {
+    const cx = sx(x) / G, cy = sz(z) / G;
+    for (let j = Math.max(0, Math.floor(cy - rad)); j < Math.min(gh, cy + rad); j++)
+      for (let i = Math.max(0, Math.floor(cx - rad)); i < Math.min(gw, cx + rad); i++) {
+        const dx = (i - cx) * G / bpx, dy = (j - cy) * G / bpx;
+        dens[j * gw + i] += Math.exp(-0.5 * (dx*dx + dy*dy));
+      }
+  });
+  let max = 0; for (let i = 0; i < dens.length; i++) if (dens[i] > max) max = dens[i];
+  if (max > 0) {
+    const img = ctx.createImageData(gw, gh);
+    for (let i = 0; i < dens.length; i++) {
+      let v = dens[i] / max;
+      if (v < 0.06) continue;
+      v = Math.round(v * 12) / 12;                       // banded contours
+      const [r, g, b, a] = heatColor(v);
+      img.data[i*4] = r; img.data[i*4+1] = g; img.data[i*4+2] = b; img.data[i*4+3] = a * 255;
+    }
+    const off = document.createElement('canvas'); off.width = gw; off.height = gh;
+    off.getContext('2d').putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true; ctx.drawImage(off, 0, 0, W, H);
+  }
+  // strike zone (dashed) + plate
+  ctx.setLineDash([6, 4]); ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(20,20,24,.9)';
+  ctx.strokeRect(sx(-0.83), sz(3.5), sx(0.83) - sx(-0.83), sz(1.5) - sz(3.5));
+  ctx.setLineDash([]); ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1;
+  ctx.strokeRect(sx(-0.83), sz(3.5), sx(0.83) - sx(-0.83), sz(1.5) - sz(3.5));
+  ctx.fillStyle = 'rgba(200,200,205,.35)';
+  ctx.beginPath();
+  const py = sz(0.35);
+  ctx.moveTo(sx(-0.71), py); ctx.lineTo(sx(0.71), py); ctx.lineTo(sx(0.71), py + 10); ctx.lineTo(sx(0), py + 20); ctx.lineTo(sx(-0.71), py + 10); ctx.closePath(); ctx.fill();
+}
+
+function renderLocationHeatmaps(container, pitchLocs) {
+  const total = Object.values(pitchLocs).reduce((t, l) => t + l.length, 0);
+  const pts = Object.entries(pitchLocs).filter(([pt, l]) => l.length && pt !== 'OTHER').sort((a, b) => b[1].length - a[1].length);
+  if (!pts.length) { container.innerHTML = '<div class="empty-state">No pitch location data for this filter.</div>'; return; }
+  const last = stripYearSuffix(currentAthlete?.name || '').split(' ').slice(-1)[0] || 'He';
+  const side = locationHand === 'L' ? ' vs. LHB' : locationHand === 'R' ? ' vs. RHB' : '';
+  container.innerHTML = `
+    <div class="hm-intro">${last} relies on ${pts.length} pitch${pts.length !== 1 ? 'es' : ''}${side}. ${pts.map(([pt, l]) =>
+      `<span style="color:${pc(pt)}">${pn(pt)}</span> (${(l.length / total * 100).toFixed(1)}%)`).join(' ')}</div>
+    <div class="hm-grid">${pts.map(([pt, l]) => `
+      <div class="hm-card">
+        <div class="hm-hd"><div class="hm-name" style="color:${pc(pt)}">${pn(pt)}</div><div class="hm-sub">${l.length} Pitches (${(l.length / total * 100).toFixed(1)}%)</div></div>
+        <canvas class="hm-canvas" data-pt="${pt}" width="300" height="340"></canvas>
+      </div>`).join('')}
+    </div>
+    <div class="chart-footnote">Catcher's view · Red = where the pitch is thrown most, blue = least · Dashed box = strike zone</div>`;
+  container.querySelectorAll('.hm-canvas').forEach(cv => drawHeatmap(cv, pitchLocs[cv.dataset.pt]));
+}
+
 function renderLocations() {
   const container = document.getElementById('locations-content');
   if (!athleteOutings.length) { container.innerHTML = '<div class="empty-state">No outing data yet.</div>'; return; }
@@ -3157,6 +3296,7 @@ function renderLocations() {
     container.innerHTML = '<div class="empty-state">No pitch location data available. Re-import your outings using Bulk Import to capture locations.</div>';
     return;
   }
+  if (locationMode === 'heat' && hasLocations) { renderLocationHeatmaps(container, pitchLocs); return; }
 
   const OUTCOME_COLORS = { W:'#e91e8c', CS:'#00d4ff', HIP:'#BA7517', F:'#534AB7', B:'rgba(255,255,255,0.15)' };
   const OUTCOME_LABELS = { W:'Whiff', CS:'Called Strike', HIP:'In Play', F:'Foul', B:'Ball' };

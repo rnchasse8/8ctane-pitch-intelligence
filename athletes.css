@@ -879,3 +879,32 @@
 .xa-chip .delta-good, .xa-chip .delta-bad { font-size:10px; }
 .xa-d0 { color:var(--muted); font-size:10px; }
 @media (max-width:520px) { .xa-mrow { grid-template-columns:96px 1fr 70px; } .xa-mval { display:none; } }
+
+/* ---- PITCH USAGE BY SIDE (Season Overview) ---- */
+.usage-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; max-width:760px; }
+.usage-card:empty { display:none; }
+.us-title { font-family:'Barlow Condensed',sans-serif; font-size:24px; font-weight:600; text-align:center; margin-bottom:.6rem; }
+.us-year { font-weight:800; border-bottom:3px dotted var(--cyan); }
+.us-grid { display:grid; grid-template-columns:1fr auto 1fr; row-gap:.35rem; column-gap:.75rem; align-items:center; }
+.us-hd { font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:15px; padding-bottom:.35rem; border-bottom:2px solid var(--border2); }
+.us-hd-l { text-align:right; } .us-hd-c { text-align:center; } .us-hd-r { text-align:left; }
+.us-side { display:flex; align-items:center; gap:.5rem; }
+.us-left { justify-content:flex-end; }
+.us-bar-wrap { flex:1; height:20px; display:flex; }
+.us-wrap-l { justify-content:flex-end; }
+.us-bar { height:100%; border-radius:10px; min-width:4px; }
+.us-left .us-bar { border-radius:10px 2px 2px 10px; } .us-right .us-bar { border-radius:2px 10px 10px 2px; }
+.us-pct { font-family:'DM Mono',monospace; font-size:14px; min-width:38px; }
+.us-left .us-pct { text-align:right; }
+.us-mid { display:flex; align-items:center; gap:.6rem; justify-content:center; border-left:2px solid var(--border2); border-right:2px solid var(--border2); padding:0 .6rem; }
+.us-pill { font-family:'Barlow Condensed',sans-serif; font-weight:600; font-size:15px; color:#111; padding:2px 12px; border-radius:6px; min-width:84px; text-align:center; }
+.us-rv { font-family:'DM Mono',monospace; font-weight:700; font-size:14px; min-width:32px; text-align:center; }
+.us-rv-pos { color:#e35d5d; } .us-rv-neg { color:#6b8fd6; } .us-rv0 { color:var(--muted); }
+/* ---- LOCATION HEAT MAPS ---- */
+.hm-intro { width:100%; font-size:15px; margin-bottom:.25rem; }
+.hm-grid { width:100%; display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:1rem; }
+.hm-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.hm-hd { padding:.6rem .8rem; border-bottom:1px solid var(--border); }
+.hm-name { font-size:20px; font-weight:500; }
+.hm-sub { font-family:'DM Mono',monospace; font-size:12px; color:var(--muted); }
+.hm-canvas { width:100%; height:auto; display:block; }
