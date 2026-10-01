@@ -908,3 +908,49 @@
 .hm-name { font-size:20px; font-weight:500; }
 .hm-sub { font-family:'DM Mono',monospace; font-size:12px; color:var(--muted); }
 .hm-canvas { width:100%; height:auto; display:block; }
+
+/* ---- OUTING CARD ---- */
+.oc-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; margin-bottom:1rem; }
+.oc-picker { display:flex; align-items:center; gap:.4rem; flex:1; min-width:280px; }
+.oc-picker select { flex:1; min-width:200px; }
+.oc-step { padding:.35rem .6rem; }
+.oc { background:var(--bg, #0a0b0e); padding:.25rem; }
+.oc-head { display:flex; align-items:center; gap:1.25rem; flex-wrap:wrap; background:linear-gradient(135deg,#132a4a,#0f1d33); border-radius:14px; padding:1.1rem 1.4rem; }
+.oc-photo { width:96px; height:96px; object-fit:cover; border-radius:12px; background:#fff; }
+.oc-initials { width:96px; height:96px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:38px; color:#fff; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); }
+.oc-title { flex:1; min-width:220px; }
+.oc-name { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:38px; line-height:1; color:#fff; font-variant:small-caps; letter-spacing:.02em; }
+.oc-sub { color:#d7deea; font-size:16px; margin-top:.3rem; }
+.oc-tags { display:flex; gap:.4rem; margin-top:.5rem; flex-wrap:wrap; }
+.oc-tags span { border:1px solid rgba(255,255,255,.3); border-radius:12px; padding:2px 10px; font-size:12px; color:#e6ebf3; }
+.oc-boxes { display:grid; grid-template-columns:repeat(3, 64px); gap:.45rem; }
+.oc-box { border:1px solid rgba(255,255,255,.18); border-radius:8px; text-align:center; padding:.35rem 0; }
+.oc-box-l { font-size:10px; color:#8fb4e6; letter-spacing:.06em; }
+.oc-box-v { font-family:'DM Mono',monospace; font-size:20px; color:#fff; }
+.oc-panels { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:1rem; margin:1rem 0; }
+.oc-panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:.75rem; }
+.oc-ph { text-align:center; font-family:'Barlow Condensed',sans-serif; font-weight:600; font-size:15px; letter-spacing:.06em; text-transform:uppercase; margin-bottom:.4rem; }
+.oc-svg { width:100%; height:auto; display:block; }
+.oc-axis { font-family:'DM Mono',monospace; font-size:9px; fill:var(--muted); }
+.oc-grid { stroke:rgba(255,255,255,.06); }
+.oc-freq { font-size:11px; }
+.oc-f-hd { display:flex; justify-content:space-around; color:var(--muted); margin-bottom:.35rem; }
+.oc-f-row { display:grid; grid-template-columns:1fr 1fr; min-height:54px; margin-bottom:.35rem; }
+.oc-f-side { display:flex; align-items:stretch; }
+.oc-f-l { justify-content:flex-end; border-right:1px solid var(--muted); }
+.oc-f-bar { opacity:.9; border-radius:3px; }
+.oc-f-txt { padding:0 .4rem; display:flex; flex-direction:column; justify-content:center; white-space:nowrap; }
+.oc-f-l .oc-f-txt { text-align:right; }
+.oc-f-count { font-weight:600; } .oc-f-sub { color:var(--muted); font-size:10px; }
+.oc-f-axis { display:flex; justify-content:space-between; color:var(--muted); font-size:10px; font-family:'DM Mono',monospace; margin-top:.25rem; }
+.oc-tablewrap { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:.5rem; overflow-x:auto; }
+.oc-table { width:100%; border-collapse:collapse; font-family:'DM Mono',monospace; font-size:13px; min-width:900px; }
+.oc-table th { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; padding:.6rem .4rem; text-align:center; border-bottom:1px solid var(--border); }
+.oc-table td { text-align:center; padding:.55rem .4rem; border-bottom:1px solid var(--border); }
+.oc-table .oc-pname { font-family:'Barlow',sans-serif; font-weight:600; text-align:left; }
+.oc-sep { border-left:1px solid var(--border2); }
+.oc-cell { display:inline-block; min-width:52px; padding:.3rem .4rem; border-radius:5px; }
+.oc-overall td { background:rgba(255,255,255,.03); font-weight:600; }
+.oc-foot { display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin-top:.75rem; padding:.7rem 1rem; border-radius:10px; background:#0f1d33; color:#b9c6da; font-size:11px; }
+.oc-brand { font-family:'Barlow Condensed',sans-serif; font-weight:700; letter-spacing:.08em; color:#fff; }
+.ex-opt { display:flex; align-items:center; gap:.5rem; font-size:13px; margin:.35rem 0; cursor:pointer; }

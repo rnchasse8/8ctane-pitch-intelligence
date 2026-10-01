@@ -220,6 +220,9 @@ function computeSituational(rows) {
     const bp = out.c11_byPitch[pt11] = out.c11_byPitch[pt11] || { n:0, won:0, lost:0, end:0, wn:0, wd:0 };
     bp.n++; bp[bucket]++; bp.wn += res.wn; bp.wd += res.wd;
   });
+  // Runs allowed while pitching (score change per pitch) + MLBAM id for the headshot
+  out.runs = rows.reduce((a, r) => { const b = parseFloat(r.bat_score), pb = parseFloat(r.post_bat_score); return a + (!isNaN(b) && !isNaN(pb) && pb > b ? pb - b : 0); }, 0);
+  const pid = rows.find(r => r.pitcher)?.pitcher; if (pid && /^\d+$/.test(pid)) out.pitcherId = pid;
   // round the wOBA sums so the JSON stays small
   const rnd = b => { b.wn = +b.wn.toFixed(3); return b; };
   ['c11_all','c11_won','c11_lost','c11_end','fp_all','fp_fb_pa','fp_os_pa','fp_fb_end'].forEach(k => rnd(out[k]));
@@ -270,7 +273,7 @@ function mergePitchStats(a, b) {
     if (oka && okb) out[k] = +(((+va) * wa + (+vb) * wb) / (wa + wb)).toFixed(3);
     else if (okb) out[k] = vb; // else keep a's
   };
-  ['avgVelo','avgIVB','avgHB','avgSpin','avgVAA','avgHAA','avgRelHeight','avgRelSide','avgExt','avgPercVelo','strikePct']
+  ['avgVelo','avgIVB','avgHB','avgSpin','avgVAA','avgHAA','avgRelHeight','avgRelSide','avgExt','avgPercVelo','strikePct','avgArm']
     .forEach(k => W(k, na, nb));
   const ha = a.hip || 0, hb = b.hip || 0, ea = a.bbe || ha, eb = b.bbe || hb;
   ['avgXwoba','avgXba','avgXslg','gbPct','fbPct','ldPct'].forEach(k => W(k, ha, hb));
@@ -282,7 +285,7 @@ function mergePitchStats(a, b) {
   out.swings = (a.swings != null && b.swings != null) ? a.swings + b.swings : undefined;
   if (out.swings === undefined) delete out.swings;
   if (a.peakVelo || b.peakVelo) out.peakVelo = Math.max(+a.peakVelo || 0, +b.peakVelo || 0);
-  ['locations','mv','spray'].forEach(k => { if (a[k] || b[k]) out[k] = [...(a[k] || []), ...(b[k] || [])]; });
+  ['locations','mv','spray','rp'].forEach(k => { if (a[k] || b[k]) out[k] = [...(a[k] || []), ...(b[k] || [])]; });
   if (a.lhh || b.lhh) out.lhh = mergePitchStats(a.lhh, b.lhh);
   if (a.rhh || b.rhh) out.rhh = mergePitchStats(a.rhh, b.rhh);
   out.whiffPct = out.swings ? +(out.whiffs / out.swings * 100).toFixed(1) : out.whiffPct;
@@ -1042,7 +1045,7 @@ function parseStatcastBulk(rows) {
       if (!pt || !VALID_PT.has(pt)) pt = 'OTHER';
       if (!pm[pt]) pm[pt] = {count:0,velos:[],whiffs:0,cstrikes:0,hip:0,xwobas:[],launch_speeds:[],pfx_xs:[],pfx_zs:[],vaas:[],haas:[],hard_hits:0,
         spins:[],locations:[],spray:[],
-        pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],realExts:[],effSpeeds:[],throws:[],mv:[],
+        pfx_x_raw:[],pfx_z_raw:[],rel_xs:[],rel_zs:[],exts:[],realExts:[],effSpeeds:[],throws:[],mv:[],rp:[],arms:[],
         swings:0,zoneN:0,outN:0,zSw:0,oSw:0,zCon:0,
         lhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]},
         rhh:{count:0,whiffs:0,cstrikes:0,hip:0,velos:[],xbas:[],xslgs:[],launch_speeds:[],hard_hits:0,gb:0,fb:0,ld:0,bip:0,totalStrikes:0,locations:[]}};
@@ -1065,6 +1068,8 @@ function parseStatcastBulk(rows) {
       if (!isNaN(ivb)) s.pfx_z_raw.push(ivb);
       const rpx = parseFloat(r.release_pos_x); if (!isNaN(rpx)) s.rel_xs.push(rpx);
       const rpz = parseFloat(r.release_pos_z); if (!isNaN(rpz)) s.rel_zs.push(rpz);
+      if (!isNaN(rpx) && !isNaN(rpz)) s.rp.push([+rpx.toFixed(2), +rpz.toFixed(2)]);   // per-pitch release (outing card)
+      const arm = parseFloat(r.arm_angle); if (!isNaN(arm)) s.arms.push(arm);          // Savant arm angle
       if (r.p_throws) s.throws.push(r.p_throws);
 
       // VAA / HAA from pitch physics
@@ -1211,6 +1216,8 @@ function parseStatcastBulk(rows) {
         swings:s.swings, zoneN:s.zoneN, outN:s.outN, zSw:s.zSw, oSw:s.oSw, zCon:s.zCon,
         bbe: s.launch_speeds.length,
         rv: s.rv != null ? +s.rv.toFixed(2) : undefined,
+        avgArm: s.arms.length ? +avgg(s.arms).toFixed(1) : null,
+        rp: s.rp || [],
         mv: s.mv || [],
         locations: s.locations || [],
         spray: s.spray || [],
@@ -1956,6 +1963,7 @@ function renderOutingsList() {
   const container = document.getElementById('outings-list');
   if (!athleteOutings.length) {
     container.innerHTML = '<div class="empty-state">No outings yet. Add the first outing above.</div>';
+    if (outingView === 'card') renderOutingCard();
     return;
   }
   const sorted = [...athleteOutings].sort((a,b) => b.date.localeCompare(a.date));
@@ -1986,6 +1994,279 @@ function renderOutingsList() {
     </div>`;
   }).join('');
   fillOutingGrades();
+  if (outingView === 'card') renderOutingCard();
+}
+
+/* ==================== OUTING CARD (Pitch Profiler-style) ==================== */
+let outingView = 'card';          // 'card' | 'list'
+let selectedOutingId = null;
+const xaCardCache = {};
+
+function setOutingView(v) {
+  outingView = v;
+  document.querySelectorAll('[data-oview]').forEach(b => b.classList.toggle('active', b.dataset.oview === v));
+  document.getElementById('outing-card-wrap').style.display = v === 'card' ? '' : 'none';
+  document.getElementById('outings-list-wrap').style.display = v === 'list' ? '' : 'none';
+  document.getElementById('oc-picker').style.visibility = v === 'card' ? '' : 'hidden';
+  if (v === 'card') renderOutingCard();
+}
+function outingsNewestFirst() { return [...athleteOutings].sort((a, b) => b.date.localeCompare(a.date)); }
+function selectOuting(id) { selectedOutingId = id; renderOutingCard(); }
+function stepOuting(dir) {
+  const list = outingsNewestFirst(); const i = list.findIndex(o => o.id === selectedOutingId);
+  const n = list[Math.min(list.length - 1, Math.max(0, i + dir))]; if (n) selectOuting(n.id);
+}
+
+async function gradeOutingForCard(o) {
+  const body = { hand: currentAthlete?.throws || 'R', level: currentAthlete?.level || '', veloWeighted: true, pitches: xaSeasonShape([o], 1, 0) };
+  if (!body.pitches.length) return null;
+  const key = JSON.stringify(body);
+  if (!xaCardCache[key]) xaCardCache[key] = api('scoreArsenal', body).catch(e => { delete xaCardCache[key]; throw e; });
+  return xaCardCache[key];
+}
+
+// Diverging cell color, Savant style: red = good for the pitcher, blue = bad
+function divColor(v, mid, span, higherBetter = true) {
+  if (v === null || v === undefined || isNaN(v)) return '';
+  let d = (v - mid) / span; if (!higherBetter) d = -d; d = Math.max(-1, Math.min(1, d));
+  const a = Math.abs(d), base = d >= 0 ? [214, 60, 70] : [70, 110, 200];
+  return `background:rgba(${base.join(',')},${(0.15 + a * 0.75).toFixed(2)});color:${a > 0.45 ? '#fff' : 'var(--text)'}`;
+}
+
+function ocReleaseSVG(rows, lefty) {
+  const W = 300, H = 260, sx = x => W/2 + x * 38, sy = z => H - 34 - z * 30;
+  const dots = rows.flatMap(([pt, s]) => (s.rp && s.rp.length ? s.rp : (s.avgRelSide != null && s.avgRelHeight != null ? [[+s.avgRelSide, +s.avgRelHeight]] : []))
+    .map(([x, z]) => `<circle cx="${sx(x).toFixed(1)}" cy="${sy(z).toFixed(1)}" r="${s.rp && s.rp.length ? 4 : 7}" fill="${pc(pt)}" fill-opacity=".85" stroke="rgba(0,0,0,.4)"/>`)).join('');
+  const avgX = rows.reduce((a, [, s]) => a + (+s.avgRelSide || 0) * s.count, 0) / (rows.reduce((a, [, s]) => a + (s.avgRelSide != null ? s.count : 0), 0) || 1);
+  const avgZ = rows.reduce((a, [, s]) => a + (+s.avgRelHeight || 0) * s.count, 0) / (rows.reduce((a, [, s]) => a + (s.avgRelHeight != null ? s.count : 0), 0) || 1);
+  const shoulderX = avgX * 0.35, shoulderZ = Math.max(3.8, avgZ - 1.4);
+  return `<svg viewBox="0 0 ${W} ${H}" class="oc-svg">
+    <path d="M0 ${H-34} Q ${W/2} ${H-46} ${W} ${H-34} L ${W} ${H} L 0 ${H} Z" fill="#6b3a1f"/>
+    <rect x="${W/2-22}" y="${H-44}" width="44" height="4" fill="#eee" rx="1"/>
+    <line x1="${W/2}" y1="${H-40}" x2="${sx(shoulderX)}" y2="${sy(shoulderZ)}" stroke="var(--muted2)" stroke-width="10" stroke-linecap="round" opacity=".5"/>
+    ${avgZ ? `<line x1="${sx(shoulderX)}" y1="${sy(shoulderZ)}" x2="${sx(avgX)}" y2="${sy(avgZ)}" stroke="var(--muted)" stroke-width="6" stroke-linecap="round" opacity=".6"/>` : ''}
+    <circle cx="${sx(shoulderX)}" cy="${sy(shoulderZ)}" r="6" fill="var(--muted2)"/>
+    ${dots}
+    <text x="6" y="14" class="oc-axis">Catcher's view · ${lefty ? 'LHP' : 'RHP'}</text>
+  </svg>`;
+}
+
+function ocMovementSVG(rows) {
+  const W = 300, H = 300, C = 150, R = 150 / 30;
+  const grid = [-30,-20,-10,10,20,30].map(v => `<line x1="${C+v*R}" y1="0" x2="${C+v*R}" y2="${H}" class="oc-grid"/><line x1="0" y1="${C-v*R}" x2="${W}" y2="${C-v*R}" class="oc-grid"/>`).join('');
+  const lbl = [-20,-10,10,20].map(v => `<text x="${C+v*R}" y="${H-4}" class="oc-axis" text-anchor="middle">${v}</text><text x="4" y="${C-v*R+3}" class="oc-axis">${v}</text>`).join('');
+  const clamp30 = v => Math.max(-29, Math.min(29, v));
+  const dots = rows.flatMap(([pt, s]) => {
+    const pts = s.mv && s.mv.length ? s.mv : (s.avgHB != null && s.avgIVB != null ? [[+s.avgHB, +s.avgIVB]] : []);
+    const big = !(s.mv && s.mv.length);
+    const out = pts.map(([hb, ivb]) => `<circle cx="${(C + clamp30(hb)*R).toFixed(1)}" cy="${(C - clamp30(ivb)*R).toFixed(1)}" r="${big ? 7 : 4.5}" fill="${pc(pt)}" fill-opacity=".8" stroke="rgba(0,0,0,.4)"/>`);
+    if (s.avgHB != null && s.avgIVB != null && !big)   // ring at the average
+      out.push(`<circle cx="${C + clamp30(+s.avgHB)*R}" cy="${C - clamp30(+s.avgIVB)*R}" r="8" fill="none" stroke="${pc(pt)}" stroke-width="2"/>`);
+    return out;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="oc-svg">${grid}
+    <line x1="${C}" y1="0" x2="${C}" y2="${H}" stroke="var(--muted)"/><line x1="0" y1="${C}" x2="${W}" y2="${C}" stroke="var(--muted)"/>
+    ${lbl}${dots}<text x="${W-4}" y="12" class="oc-axis" text-anchor="end">HB / IVB (in)</text></svg>`;
+}
+
+function ocFrequency(rows) {
+  const totL = rows.reduce((a, [, s]) => a + (s.lhh?.count || 0), 0), totR = rows.reduce((a, [, s]) => a + (s.rhh?.count || 0), 0);
+  if (!totL && !totR) return '<div class="empty-state" style="padding:1rem">No batter-side data for this outing.</div>';
+  const line = (sd, tot, side) => {
+    const n = sd?.count || 0; const w = tot ? n / tot * 100 : 0;
+    const wh = sd?.whiffPct != null ? `${sd.whiffPct}% whiff` : '';
+    return { w, txt: `<div class="oc-f-count">Count: ${n}</div>${wh ? `<div class="oc-f-sub">${wh}</div>` : ''}` };
+  };
+  return `<div class="oc-freq">
+    <div class="oc-f-hd"><span>LHH (${totL})</span><span>RHH (${totR})</span></div>
+    ${rows.map(([pt, s]) => { const L = line(s.lhh, totL), Rr = line(s.rhh, totR);
+      return `<div class="oc-f-row">
+        <div class="oc-f-side oc-f-l"><div class="oc-f-txt">${L.txt}</div><div class="oc-f-bar" style="width:${L.w/2}%;background:${pc(pt)}"></div></div>
+        <div class="oc-f-side oc-f-r"><div class="oc-f-bar" style="width:${Rr.w/2}%;background:${pc(pt)}"></div><div class="oc-f-txt">${Rr.txt}</div></div>
+      </div>`; }).join('')}
+    <div class="oc-f-axis"><span>100%</span><span>50%</span><span>0%</span><span>50%</span><span>100%</span></div>
+  </div>`;
+}
+
+async function renderOutingCard() {
+  const wrap = document.getElementById('outing-card');
+  const sel = document.getElementById('outing-select');
+  if (!wrap || !sel) return;
+  const list = outingsNewestFirst();
+  if (!list.length) { wrap.innerHTML = '<div class="empty-state">No outings yet.</div>'; sel.innerHTML = ''; return; }
+  if (!list.some(o => o.id === selectedOutingId)) selectedOutingId = list[0].id;
+  sel.innerHTML = list.map(o => `<option value="${o.id}" ${o.id === selectedOutingId ? 'selected' : ''}>${formatDate(o.date)}${o.opponent ? ' vs ' + o.opponent : ''} · ${o.total_pitches || 0}p</option>`).join('');
+  const o = list.find(x => x.id === selectedOutingId);
+  const lefty = aiIsLefty();
+  const pm = o.pitch_stats || {};
+  const total = Object.values(pm).reduce((a, s) => a + (s.count || 0), 0);
+  const rows = Object.entries(pm).filter(([pt, s]) => s && s.count).sort((a, b) => b[1].count - a[1].count);
+  let sit = o.sit; if (!sit && o.sit_json) { try { sit = JSON.parse(o.sit_json); } catch(e) {} }
+  const name = stripYearSuffix(currentAthlete?.name || '');
+  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const photo = sit?.pitcherId
+    ? `<img class="oc-photo" crossorigin="anonymous" src="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${sit.pitcherId}/headshot/67/current" alt="" onerror="this.outerHTML='<div class=&quot;oc-initials&quot;>${initials}</div>'">`
+    : `<div class="oc-initials">${initials}</div>`;
+  const ipTxt = o.ip ? fmtIP(ipToOuts(o.ip)) : '—';
+  const box = (l, v) => `<div class="oc-box"><div class="oc-box-l">${l}</div><div class="oc-box-v">${v}</div></div>`;
+  const f1 = v => v === null || v === undefined || v === '' || isNaN(+v) ? '—' : (+v).toFixed(1);
+  const f2 = v => v === null || v === undefined || v === '' || isNaN(+v) ? '—' : (+v).toFixed(2);
+  const f0 = v => v === null || v === undefined || v === '' || isNaN(+v) ? '—' : Math.round(+v);
+
+  const tableRows = rows.map(([pt, s]) => {
+    const mlbW = MLB_BASELINE_REF[pt]?.whiff_pct;
+    const xw = s.avgXwoba != null && s.avgXwoba !== '' ? +s.avgXwoba : null;
+    return `<tr>
+      <td class="oc-pname" style="color:${pc(pt)}">${pn(pt)}</td><td>${s.count}</td><td>${(s.count / total * 100).toFixed(1)}</td>
+      <td>${f1(s.avgVelo)}</td><td>${f0(s.avgSpin)}</td><td>${f1(s.avgIVB)}</td><td>${f1(s.avgHB)}</td><td>${f2(s.avgVAA)}</td><td>${f2(s.avgHAA)}</td>
+      <td class="oc-sep">${f2(s.avgRelHeight)}</td><td>${f2(s.avgRelSide)}</td><td>${f2(s.avgExt)}</td><td>${f0(s.avgArm)}</td>
+      <td class="oc-sep"><span class="oc-cell" data-oc-grade="${pt}">…</span></td>
+      <td><span class="oc-cell" style="${s.whiffPct != null ? divColor(s.whiffPct, mlbW || 25, 15, true) : ''}">${s.whiffPct != null ? s.whiffPct.toFixed(1) + '%' : '—'}</span></td>
+      <td><span class="oc-cell" style="${xw !== null ? divColor(xw, .320, .12, false) : ''}">${xw !== null ? xw.toFixed(3).replace(/^0/, '') : '—'}</span></td>
+    </tr>`;
+  }).join('');
+  const wAvg = k => { let s = 0, w = 0; rows.forEach(([, p]) => { if (p[k] != null && p[k] !== '' && !isNaN(+p[k])) { s += +p[k] * p.count; w += p.count; } }); return w ? s / w : null; };
+  const xwAll = (() => { let s = 0, w = 0; rows.forEach(([, p]) => { if (p.avgXwoba != null && p.avgXwoba !== '' && p.hip) { s += +p.avgXwoba * p.hip; w += p.hip; } }); return w ? s / w : null; })();
+
+  wrap.innerHTML = `<div class="oc" id="oc-export">
+    <div class="oc-head">
+      ${photo}
+      <div class="oc-title">
+        <div class="oc-name">${name}</div>
+        <div class="oc-sub">${formatDate(o.date)}${o.opponent ? ' vs ' + o.opponent : ''}</div>
+        <div class="oc-tags"><span>${lefty ? 'LHP' : 'RHP'}</span>${currentAthlete?.team ? `<span>${currentAthlete.team}</span>` : ''}${currentAthlete?.level ? `<span>${currentAthlete.level}</span>` : ''}</div>
+      </div>
+      <div class="oc-boxes">${box('IP', ipTxt)}${box('R', sit?.runs != null ? sit.runs : '—')}${box('H', o.hits ?? '—')}${box('K', o.strikeouts ?? '—')}${box('BB', o.walks ?? '—')}${box('HR', o.hrs ?? '—')}</div>
+    </div>
+    <div class="oc-panels">
+      <div class="oc-panel"><div class="oc-ph">Release Point</div>${ocReleaseSVG(rows, lefty)}</div>
+      <div class="oc-panel"><div class="oc-ph">Movement Profile</div>${ocMovementSVG(rows)}</div>
+      <div class="oc-panel"><div class="oc-ph">Pitch Frequency</div>${ocFrequency(rows)}</div>
+    </div>
+    <div class="oc-tablewrap"><table class="oc-table">
+      <thead><tr><th>Pitch</th><th>#</th><th>%</th><th>Velo</th><th>Spin</th><th>IVB</th><th>HB</th><th>VAA</th><th>HAA</th>
+        <th class="oc-sep">vRel</th><th>hRel</th><th>Ext</th><th>Arm°</th><th class="oc-sep">Grade</th><th>Whiff%</th><th>xwOBA</th></tr></thead>
+      <tbody>${tableRows}
+        <tr class="oc-overall"><td>Overall</td><td>${total}</td><td>100.0</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td><td>·</td>
+          <td class="oc-sep">${f2(wAvg('avgRelHeight'))}</td><td>${f2(wAvg('avgRelSide'))}</td><td>${f2(wAvg('avgExt'))}</td><td>${f0(wAvg('avgArm'))}</td>
+          <td class="oc-sep"><span class="oc-cell" data-oc-grade="__all">…</span></td>
+          <td><span class="oc-cell" style="${o.whiffSwPct != null ? divColor(o.whiffSwPct, 25, 15, true) : ''}">${o.whiffSwPct != null ? o.whiffSwPct.toFixed(1) + '%' : '—'}</span></td>
+          <td><span class="oc-cell" style="${xwAll !== null ? divColor(xwAll, .320, .12, false) : ''}">${xwAll !== null ? xwAll.toFixed(3).replace(/^0/, '') : '—'}</span></td></tr>
+      </tbody></table></div>
+    <div class="oc-foot"><span>Grade = 8ctane xArsenal (60 ≈ MLB average) · Whiff% per swing · Red = good for the pitcher, blue = bad${!rows.some(([, s]) => s.mv && s.mv.length) ? ' · Re-import for per-pitch dots and arm angle' : ''}</span><span class="oc-brand">8CTANE BASEBALL · Pitch Intelligence</span></div>
+  </div>`;
+
+  // grades
+  try {
+    const res = await gradeOutingForCard(o);
+    if (selectedOutingId !== o.id) return;
+    const by = {}; (res?.pitches || []).forEach(r => { by[r.key] = r; });
+    wrap.querySelectorAll('[data-oc-grade]').forEach(el => {
+      const r = el.dataset.ocGrade === '__all' ? (res ? { score: res.arsenalScore, grade: res.arsenalGrade, gradeLabel: res.arsenalLabel } : null) : by[el.dataset.ocGrade];
+      if (!r) { el.textContent = '—'; return; }
+      el.textContent = r.score; el.setAttribute('style', divColor(r.score, 60, 25, true));
+      el.title = r.subtype ? xaTitle(r) : `xArsenal ${r.score} (${r.grade}, ${r.gradeLabel})`;
+    });
+  } catch(e) { wrap.querySelectorAll('[data-oc-grade]').forEach(el => { el.textContent = '—'; }); }
+}
+
+// Save the card as a PNG (html2canvas loaded on demand)
+async function saveOutingCardImage() {
+  const el = document.getElementById('oc-export'); if (!el) return;
+  try {
+    if (!window.html2canvas) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+    const canvas = await html2canvas(el, { backgroundColor: getComputedStyle(document.body).backgroundColor || '#0a0b0e', scale: 2, useCORS: true });
+    const o = athleteOutings.find(x => x.id === selectedOutingId);
+    const a = document.createElement('a');
+    a.download = `${stripYearSuffix(currentAthlete?.name || 'pitcher').replace(/\s+/g, '_')}_${(o?.date || '').toString().slice(0, 10)}.png`;
+    a.href = canvas.toDataURL('image/png'); a.click();
+  } catch(e) { toast('Could not create image: ' + (e.message || e), 'error'); }
+}
+
+/* ==================== EXPORT DATA (CSV) ==================== */
+function showExportData() {
+  const dates = athleteOutings.map(o => (o.date || '').toString().slice(0, 10)).sort();
+  const allDates = athleteOutingsAll.map(o => (o.date || '').toString().slice(0, 10)).sort();
+  openModal('Export data', `
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">From</label><input class="form-input" id="ex-from" type="date" value="${dates[0] || ''}"></div>
+      <div class="form-group"><label class="form-label">To</label><input class="form-input" id="ex-to" type="date" value="${dates[dates.length-1] || ''}"></div>
+    </div>
+    <div class="loc-filter-row" style="margin:.25rem 0 1rem">
+      <span class="loc-filter-label">Quick:</span>
+      <button class="loc-filter-btn" onclick="document.getElementById('ex-from').value='${dates[0]||''}';document.getElementById('ex-to').value='${dates[dates.length-1]||''}'">${seasonLabel() || 'Season'}</button>
+      <button class="loc-filter-btn" onclick="document.getElementById('ex-from').value='${allDates[0]||''}';document.getElementById('ex-to').value='${allDates[allDates.length-1]||''}'">All seasons</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">What to export</label>
+      <label class="ex-opt"><input type="checkbox" id="ex-outings" checked> Outing summary — one row per outing</label>
+      <label class="ex-opt"><input type="checkbox" id="ex-pitches" checked> Pitch-type detail — one row per pitch type per outing</label>
+      <label class="ex-opt"><input type="checkbox" id="ex-grades" checked> Include xArsenal grades</label>
+    </div>
+    <div class="form-actions" style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem">
+      <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" id="ex-go" onclick="runExportData()">Download CSV</button>
+    </div>`);
+}
+
+function csvCell(v) { if (v === null || v === undefined) return ''; const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }
+function downloadCSV(name, header, rows) {
+  const csv = [header, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+async function runExportData() {
+  const from = document.getElementById('ex-from').value, to = document.getElementById('ex-to').value;
+  const wantO = document.getElementById('ex-outings').checked, wantP = document.getElementById('ex-pitches').checked, wantG = document.getElementById('ex-grades').checked;
+  if (!wantO && !wantP) { toast('Pick at least one export', 'error'); return; }
+  const outs = athleteOutingsAll.filter(o => { const d = (o.date || '').toString().slice(0, 10); return (!from || d >= from) && (!to || d <= to); })
+                                .sort((a, b) => a.date.localeCompare(b.date));
+  if (!outs.length) { toast('No outings in that date range', 'error'); return; }
+  const btn = document.getElementById('ex-go'); btn.disabled = true; btn.textContent = 'Preparing…';
+  let grades = {};
+  if (wantG) { try { const prev = {}; outs.forEach(o => prev[o.id] = 1);
+      // grade every outing that has enough pitches (same rule as the Outings tab)
+      grades = await getXArsenalByOuting(outs); } catch(e) { grades = {}; } }
+  const base = `${stripYearSuffix(currentAthlete?.name || 'pitcher').replace(/\s+/g, '_')}_${from || 'start'}_to_${to || 'end'}`;
+  const r1 = v => v === null || v === undefined || v === '' || isNaN(+v) ? '' : +(+v).toFixed(1);
+  const r2 = v => v === null || v === undefined || v === '' || isNaN(+v) ? '' : +(+v).toFixed(2);
+  const r3 = v => v === null || v === undefined || v === '' || isNaN(+v) ? '' : +(+v).toFixed(3);
+
+  if (wantO) {
+    const header = ['Date','Opponent','IP','Pitches','K','BB','HBP','H','HR','R','Whiff%','CSW%','Strike%','Zone%','Chase%','FB Velo','xArsenal'];
+    const rows = outs.map(o => {
+      const pm = o.pitch_stats || {}; const tot = Object.values(pm).reduce((a, s) => a + (s.count || 0), 0);
+      const csw = tot ? Object.values(pm).reduce((a, s) => a + (s.whiffs || 0) + (s.cstrikes || 0), 0) / tot * 100 : null;
+      const ff = pm.FF || pm.FA || pm.SI;
+      let sit = o.sit; if (!sit && o.sit_json) { try { sit = JSON.parse(o.sit_json); } catch(e) {} }
+      return [(o.date || '').toString().slice(0, 10), o.opponent || '', o.ip ? fmtIP(ipToOuts(o.ip)) : '', o.total_pitches || tot,
+        o.strikeouts ?? '', o.walks ?? '', o.hbp ?? '', o.hits ?? '', o.hrs ?? '', sit?.runs ?? '',
+        r1(o.whiffSwPct), r1(csw), r1(o.strike_pct), r1(o.zone_pct), r1(o.o_swing_pct), r1(ff?.avgVelo), grades[o.id]?.arsenalScore ?? ''];
+    });
+    downloadCSV(base + '_outings.csv', header, rows);
+  }
+  if (wantP) {
+    const header = ['Date','Opponent','Pitch','Count','Usage%','Velo','Peak Velo','Spin','IVB','HB','VAA','HAA','Rel Height','Rel Side','Extension','Arm Angle',
+                    'Whiff%','CSW%','xwOBA','Avg EV','Hard Hit%','vs LHH','vs RHH','Run Value','xArsenal','Graded As'];
+    const rows = [];
+    outs.forEach(o => {
+      const pm = o.pitch_stats || {}; const tot = Object.values(pm).reduce((a, s) => a + (s.count || 0), 0);
+      const g = {}; (grades[o.id]?.pitches || []).forEach(r => { g[r.key] = r; });
+      Object.entries(pm).filter(([, s]) => s && s.count).sort((a, b) => b[1].count - a[1].count).forEach(([pt, s]) => {
+        rows.push([(o.date || '').toString().slice(0, 10), o.opponent || '', pn(pt), s.count, r1(tot ? s.count / tot * 100 : null),
+          r1(s.avgVelo), r1(s.peakVelo), s.avgSpin ? Math.round(s.avgSpin) : '', r1(s.avgIVB), r1(s.avgHB), r2(s.avgVAA), r2(s.avgHAA),
+          r2(s.avgRelHeight), r2(s.avgRelSide), r2(s.avgExt), r1(s.avgArm),
+          r1(s.whiffPct), r1(s.count ? ((s.whiffs || 0) + (s.cstrikes || 0)) / s.count * 100 : null), r3(s.avgXwoba), r1(s.avgEV), r1(s.hardHitPct),
+          s.lhh?.count ?? '', s.rhh?.count ?? '', r2(s.rv), g[pt]?.score ?? '', g[pt]?.subtype ?? '']);
+      });
+    });
+    downloadCSV(base + '_pitches.csv', header, rows);
+  }
+  closeModal();
+  toast(`Exported ${outs.length} outing${outs.length !== 1 ? 's' : ''}`);
 }
 
 /* ==================== ADD OUTING ==================== */
@@ -2067,7 +2348,7 @@ function processOutingRows(rows) {
 
   rows.forEach(r => {
     const pt = r._pt;
-    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[], mv:[], swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0,
+    if (!pitchMap[pt]) pitchMap[pt] = { count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, xwobas:[], launch_speeds:[], pfx_xs:[], pfx_zs:[], rel_xs:[], rel_zs:[], exts:[], effSpeeds:[], rawRows:[], mv:[], rp:[], arms:[], swings:0, zoneN:0, outN:0, zSw:0, oSw:0, zCon:0,
       lhh:{count:0,whiffs:0,cstrikes:0,hip:0}, rhh:{count:0,whiffs:0,cstrikes:0,hip:0} };
     const s = pitchMap[pt];
     s.count++;
@@ -2079,6 +2360,8 @@ function processOutingRows(rows) {
     // Release point — release_pos_z (height, ft) / release_pos_x (side, ft)
     if (r.release_pos_z) s.rel_zs.push(pf(r.release_pos_z));
     if (r.release_pos_x) s.rel_xs.push(pf(r.release_pos_x));
+    if (r.release_pos_x && r.release_pos_z) s.rp.push([+pf(r.release_pos_x).toFixed(2), +pf(r.release_pos_z).toFixed(2)]);
+    if (r.arm_angle !== undefined && r.arm_angle !== '' && !isNaN(+r.arm_angle)) s.arms.push(+r.arm_angle);
     // Extension (ft) and perceived velo (Statcast effective_speed)
     if (r.release_extension) s.exts.push(pf(r.release_extension));
     if (r.effective_speed)   s.effSpeeds.push(pf(r.effective_speed));
@@ -2169,6 +2452,8 @@ function processOutingRows(rows) {
       hardHitPct:   s.launch_speeds.length ? +(s.launch_speeds.filter(v=>v>=95).length/s.launch_speeds.length*100).toFixed(1) : null,
       bbe: s.launch_speeds.length,
       mv: s.mv,
+      rp: s.rp,
+      avgArm: s.arms.length ? +avg(s.arms).toFixed(1) : null,
       rv: s.rv != null ? +s.rv.toFixed(2) : undefined,
       lhh: s.lhh.count ? { count:s.lhh.count, rv: s.lhh.rv != null ? +s.lhh.rv.toFixed(2) : undefined } : undefined,
       rhh: s.rhh.count ? { count:s.rhh.count, rv: s.rhh.rv != null ? +s.rhh.rv.toFixed(2) : undefined } : undefined,

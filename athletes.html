@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>8ctane — Athletes</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="athletes.css?v=20260930g">
+<link rel="stylesheet" href="athletes.css?v=20260930h">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -338,7 +338,21 @@
     </div>
 
     <div class="ptab-panel" id="ptab-outings">
-      <div class="section">
+      <div class="oc-toolbar">
+        <div class="loc-filter-row">
+          <button class="loc-filter-btn active" data-oview="card" onclick="setOutingView('card')">Outing card</button>
+          <button class="loc-filter-btn" data-oview="list" onclick="setOutingView('list')">All outings</button>
+        </div>
+        <div class="oc-picker" id="oc-picker">
+          <button class="btn-ghost oc-step" onclick="stepOuting(1)" title="Older outing">◀</button>
+          <select class="form-input" id="outing-select" onchange="selectOuting(this.value)"></select>
+          <button class="btn-ghost oc-step" onclick="stepOuting(-1)" title="Newer outing">▶</button>
+          <button class="btn-ghost" onclick="saveOutingCardImage()">Save as image</button>
+        </div>
+        <button class="btn-ghost" onclick="showExportData()">Export data</button>
+      </div>
+      <div id="outing-card-wrap"><div id="outing-card"></div></div>
+      <div class="section" id="outings-list-wrap" style="display:none">
         <div class="section-hd">All outings</div>
         <div id="outings-list"></div>
       </div>
@@ -395,6 +409,6 @@
 
 <script src="baselines-ref.js?v=20260527"></script>
 <script src="mlb-shape-match.js?v=20260725"></script>
-<script src="athletes-v2.js?v=20260930g"></script>
+<script src="athletes-v2.js?v=20260930h"></script>
 </body>
 </html>
