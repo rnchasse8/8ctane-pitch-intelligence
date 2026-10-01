@@ -954,3 +954,9 @@
 .oc-foot { display:flex; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin-top:.75rem; padding:.7rem 1rem; border-radius:10px; background:#0f1d33; color:#b9c6da; font-size:11px; }
 .oc-brand { font-family:'Barlow Condensed',sans-serif; font-weight:700; letter-spacing:.08em; color:#fff; }
 .ex-opt { display:flex; align-items:center; gap:.5rem; font-size:13px; margin:.35rem 0; cursor:pointer; }
+
+/* Outings list: keep the delete ✕ in the top-right corner instead of
+   wrapping onto its own line under the grade row */
+.outing-row { position: relative; padding-right: 2.75rem; row-gap: .6rem; }
+.outing-row .outing-delete-btn { position: absolute; top: .55rem; right: .55rem; }
+.outing-row .outing-xa { order: 10; }
