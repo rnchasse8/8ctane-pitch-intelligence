@@ -4036,31 +4036,12 @@ const PSSTUFF_DATA = {
   }
 };
 
-// Supplemental season stats from internal/org reports (not available in Statcast)
-const SEASON_STATS = {
-  'ryan chasse': {
-    lastUpdated: 'June 2026',
-    ip: 29.3, era: 2.45, fip: 2.21, whip: 1.12,
-    totalK: 37, totalBB: 12, totalHBP: 4, totalHR: 0, earnedRuns: 8,
-    kPct: 31.4, bbPct: 10.2, kMinusBB: 21.2,
-    whiffPct: 10.9, swingWhiffPct: 27.3,
-    // Pitch performance from org report
-    pitchData: {
-      FF: { total:208, avgVelo:92.2, strikePct:61.1, whiffPct:27.1, xba:.225, xslg:.275, xops:.642, gbPct:22.2, fbPct:25.9, ldPct:14.8,
-            rhh:{ total:136, avgVelo:92.3, strikePct:60.3, whiffPct:25.4, xba:.179, xslg:.214, xops:.517, gbPct:22.2, fbPct:22.2, ldPct:16.7 },
-            lhh:{ total:72,  avgVelo:91.9, strikePct:62.5, whiffPct:30.3, xba:.333, xslg:.417, xops:.917, gbPct:22.2, fbPct:33.3, ldPct:11.1 } },
-      CU: { total:87,  avgVelo:79.3, strikePct:60.9, whiffPct:40.0, xba:.278, xslg:.333, xops:.649, gbPct:72.7, fbPct:18.2, ldPct:0,
-            rhh:{ total:59, avgVelo:79.6, strikePct:62.7, whiffPct:30.0, xba:.267, xslg:.333, xops:.646, gbPct:77.8, fbPct:11.1, ldPct:0 },
-            lhh:{ total:28, avgVelo:78.7, strikePct:57.1, whiffPct:60.0, xba:.333, xslg:.333, xops:.667, gbPct:50.0, fbPct:50.0, ldPct:0 } },
-      SL: { total:143, avgVelo:84.5, strikePct:67.1, whiffPct:48.1, xba:.184, xslg:.211, xops:.436, gbPct:57.9, fbPct:21.1, ldPct:10.5,
-            rhh:{ total:83, avgVelo:84.7, strikePct:68.7, whiffPct:48.0, xba:.217, xslg:.261, xops:.541, gbPct:55.6, fbPct:22.2, ldPct:11.1 },
-            lhh:{ total:60, avgVelo:84.2, strikePct:65.0, whiffPct:48.3, xba:.133, xslg:.133, xops:.267, gbPct:60.0, fbPct:20.0, ldPct:10.0 } },
-      CH: { total:50,  avgVelo:82.8, strikePct:60.0, whiffPct:29.4, xba:.000, xslg:.000, xops:.000, gbPct:100, fbPct:0, ldPct:0,
-            rhh:{ total:50, avgVelo:82.8, strikePct:60.0, whiffPct:29.4, xba:.000, xslg:.000, xops:.000, gbPct:100, fbPct:0, ldPct:0 },
-            lhh:{ total:0,  avgVelo:0,    strikePct:0,    whiffPct:0,    xba:.000, xslg:.000, xops:.000, gbPct:0,   fbPct:0, ldPct:0 } },
-    }
-  }
-};
+// Supplemental season stats from internal/org reports. Anything here
+// OVERRIDES the imported outings (header FIP/WHIP/K%-BB%, Year-over-Year,
+// Season Insight), so only add a pitcher when the report is current for that
+// season. Ryan Chasse's June 2026 entry was removed (Sept 2026) — it froze
+// his numbers across every season.
+const SEASON_STATS = {};
 
 function renderPsStuffCards() {
   const section = document.getElementById('metrics-psstuff-section');
