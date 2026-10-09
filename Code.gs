@@ -3,8 +3,20 @@
 // Google Apps Script Backend
 // =============================================
 
-const SHEET_ID = '1DBLYIi4AtmdyJk5ihXR9Q-7ExTVpSE3X3o2Nh6ylcZM';
+// Secrets live in Script Properties (File > Project settings > Script properties):
+//   SHEET_ID   - the Google Sheet ID
+//   API_SECRET - shared secret checked on every request (generate with: openssl rand -hex 32)
+//   ANTHROPIC_KEY - Anthropic API key (already in use)
+const SHEET_ID = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
+const API_SECRET = PropertiesService.getScriptProperties().getProperty('API_SECRET');
 const ss = SpreadsheetApp.openById(SHEET_ID);
+
+function isAuthorized(e, body) {
+  const token = (body && body.token) || (e.parameter && e.parameter.token) || '';
+  // Constant-time comparison isn't critical here given Apps Script latency variance,
+  // but we avoid leaking via early-exit on empty values.
+  return !!(token && API_SECRET && token === API_SECRET);
+}
 
 function doGet(e)  { return handle(e); }
 function doPost(e) { return handle(e); }
@@ -15,7 +27,10 @@ function handle(e) {
     const p = e.parameter || {};
     const body = e.postData ? JSON.parse(e.postData.contents) : {};
     const action = p.action || body.action;
-    switch (action) {
+    // 'version' stays public as a lightweight deployment health-check.
+    if (action !== 'version' && !isAuthorized(e, body)) {
+      result = { error: 'Unauthorized', code: 'auth_required' };
+    } else switch (action) {
       case 'getAthletes':    result = getAthletes(); break;
       case 'addAthlete':     result = addAthlete(body); break;
       case 'updateAthlete':  result = updateAthlete(body); break;
@@ -24,12 +39,12 @@ function handle(e) {
       case 'addOuting':      result = addOuting(body); break;
       case 'deleteOuting':   result = deleteOuting(body); break;
       case 'analyze':        result = callClaude(body); break;
-      // Deployment check: open <worker URL>/?action=version — should say sitJson: true
-      case 'version':        result = { version: '2026-09-29k', sitJson: true, outingHeaders: OUTING_HEADERS.length }; break;
-      default: result = { error: 'Unknown action: ' + action };
+      case 'version':        result = { version: '2026-09-29k' }; break;
+      default: result = { error: 'Unknown action' };
     }
   } catch(err) {
-    result = { error: err.toString() };
+    console.error(err);
+    result = { error: 'Internal error' };
   }
   return ContentService
     .createTextOutput(JSON.stringify(result))
