@@ -1626,6 +1626,7 @@ async function getXArsenal(outings) {
 
 // 20-80 scouting scale: 50 = MLB average, 10 pts = 1 SD
 const xaClass = sc => sc == null ? 'v-num' : sc >= 60 ? 'v-good' : sc >= 50 ? 'v-num' : sc >= 40 ? 'v-warn' : 'v-bad';
+const xaShortLabel = sc => sc == null ? '' : sc >= 75 ? 'Elite' : sc >= 65 ? 'Plus-Plus' : sc >= 57.5 ? 'Plus' : sc >= 52.5 ? 'Above Avg' : sc >= 47.5 ? 'Avg' : sc >= 42.5 ? 'Fringe' : sc >= 37.5 ? 'Below Avg' : 'Poor';
 const xaMix = r => (r.subtypeMix && r.subtypeMix.length > 1) ? r.subtypeMix.map(m => `${m.subtype} ${m.share}%`).join(' / ') : r.subtype;
 const XA_METRIC_LBL = { velocity:'Velo', spinRate:'Spin', ivb:'IVB', hb:'HB', extension:'Ext', vaa:'VAA', spinEfficiency:'Spin eff',
   veloDiff:'Velo gap', ivbDiff:'IVB gap', hbDiff:'Run gap', spinDiff:'Spin gap',
@@ -1648,11 +1649,12 @@ async function fillXArsenal(root, outings, summaryEl) {
       if (!r) { el.innerHTML = '<span class="v-num">—</span>'; el.title = 'Not graded — too few pitches or pitch type not covered'; return; }
       el.className = (el.dataset.xaBase || '') + ' ' + xaClass(r.score);
       el.title = xaTitle(r);
-      el.innerHTML = `<b>${r.score}</b> <span class="xa-letter">${r.grade}</span>`;
+      // 20-80: show the score and its scouting label (the old A-/B- letter grades are gone)
+      el.innerHTML = `<b>${r.score}</b> <span class="xa-letter">${xaShortLabel(r.score)}</span>`;
     });
     if (summaryEl) {
       summaryEl.innerHTML = res && res.pitches.length
-        ? `<span class="xa-sum-lbl">xArsenal</span> <b class="${xaClass(res.arsenalScore)}">${res.arsenalScore}</b> <span class="xa-letter">${res.arsenalGrade}</span> <span class="xa-sum-sub">${res.arsenalLabel} · graded at ${res.compLevel} level</span>`
+        ? `<span class="xa-sum-lbl">xArsenal</span> <b class="${xaClass(res.arsenalScore)}">${res.arsenalScore}</b> <span class="xa-letter">${xaShortLabel(res.arsenalScore)}</span> <span class="xa-sum-sub">${res.arsenalLabel} · 20-80 · graded at ${res.compLevel} level</span>`
         : '';
     }
   } catch (e) {
@@ -1724,6 +1726,23 @@ function xaFitCard(res) {
       ${part('Speed layers', f.parts.speed, `${d.speedSpread ?? 0} mph spread${d.speedEvenness != null ? ` · ${d.speedEvenness}% even` : ''}`)}
       ${part('Redundancy', f.parts.redundancy, (d.duplicates && d.duplicates.length) ? `Same look: ${escapeHtml(d.duplicates.join(', '))}` : 'No duplicate shapes')}
     </div>
+  </div>`;
+}
+// Arsenal moves: up to 2 pitches to add, 1 to drop, 1 to rework
+function xaMovesCard(res) {
+  const m = res.moves; if (!m || (!m.add.length && !m.drop.length && !m.rework.length)) return '';
+  const side = hb => `${Math.abs(hb).toFixed(0)}" ${hb >= 0 ? 'arm-side' : 'glove-side'}`;
+  const sgn = n => (n > 0 ? '+' : '') + n;
+  const adds = m.add.map(a => `<li><span class="xa-move-tag xa-move-add">Add</span><b>${escapeHtml(a.label)}</b>
+      <span class="xa-muted">target ~${a.target.velo.toFixed(0)} mph · ${a.target.ivb.toFixed(0)}" IVB · ${side(a.target.hb)}</span>
+      <div class="xa-move-why">${escapeHtml(a.reason)} · Fit ${sgn(a.fitGain)}, arsenal ${sgn(a.gain)} (assumes an average version)</div></li>`).join('');
+  const drops = m.drop.map(d => `<li><span class="xa-move-tag xa-move-drop">Drop</span><b>${escapeHtml(pn(d.key))}</b> <span class="xa-muted">(${d.score})</span>
+      <div class="xa-move-why">${escapeHtml(d.reason)}${d.gain > 0 ? ` · arsenal ${sgn(d.gain)}` : ''}</div></li>`).join('');
+  const reworks = m.rework.map(w => `<li><span class="xa-move-tag xa-move-rework">Rework</span><b>${escapeHtml(pn(w.key))}</b> <span class="xa-muted">(${w.score})</span>
+      <div class="xa-move-why">${escapeHtml(w.reason)}${w.levers && w.levers.length ? ` · focus: ${w.levers.map(l => escapeHtml(l.direction)).join(', ')}` : ''}</div></li>`).join('');
+  return `<div class="xa-fit-card xa-moves">
+    <div class="xa-fit-hd">Arsenal moves <span class="xa-muted">· what would help this arsenal most</span></div>
+    <ul class="xa-move-list">${adds}${drops}${reworks}</ul>
   </div>`;
 }
 function xaValue(k, p, r) {
@@ -1809,6 +1828,7 @@ async function renderXArsenalTab() {
       </div>
     </div>
     ${xaFitCard(res)}
+    ${xaMovesCard(res)}
     <div class="xa-cards">${cards}</div>
     <div class="section" style="margin-top:1.5rem">
       <div class="section-hd">Grade by outing</div>
