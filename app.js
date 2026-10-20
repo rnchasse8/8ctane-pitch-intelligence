@@ -119,7 +119,7 @@ function buildPitchMap(rows) {
       count:0, velos:[], whiffs:0, cstrikes:0, balls:0, fouls:0, hip:0, swings:0,
       launch_speeds:[], xwobas:[], xbas:[], xslgs:[], events:[],
       pfx_xs:[], pfx_zs:[], spins:[], locations:[], spray:[],
-      pfx_x_raw:[], pfx_z_raw:[], rel_xs:[], rel_zs:[], exts:[], throws:[],
+      pfx_x_raw:[], pfx_z_raw:[], rel_xs:[], rel_zs:[], exts:[], throws:[], arms:[],
       lhh:{count:0,whiffs:0,cstrikes:0,hip:0,swings:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
       rhh:{count:0,whiffs:0,cstrikes:0,hip:0,swings:0,velos:[],xbas:[],xslgs:[],totalStrikes:0,gb:0,fb:0,ld:0,bip:0},
     };
@@ -136,6 +136,7 @@ function buildPitchMap(rows) {
     if (r.release_pos_x)      s.rel_xs.push(pf(r.release_pos_x));
     if (r.release_pos_z)      s.rel_zs.push(pf(r.release_pos_z));
     if (r.release_extension)  s.exts.push(pf(r.release_extension));
+    if (r.arm_angle !== undefined && r.arm_angle !== '' && !isNaN(+r.arm_angle)) s.arms.push(+r.arm_angle);
     if (r.p_throws)           s.throws.push(r.p_throws);
 
     const stand = (r.stand||'').toUpperCase();
@@ -435,11 +436,12 @@ async function fillAnalyzerXArsenal(pitchMap, total) {
   const hands = Object.values(pitchMap).flatMap(s => s.throws);
   const hand = hands.filter(h => h === 'L').length > hands.length / 2 ? 'L' : 'R';
   const pitches = Object.entries(pitchMap).filter(([, s]) => s.count >= 10 && s.count / (total||1) >= 0.03).map(([pt, s]) => ({
-    key: pt, code: pt,
+    key: pt, code: pt, count: s.count,
     velocity: mean(s.velos), spinRate: mean(s.spins),
     ivb: s.pfx_z_raw.length ? mean(s.pfx_z_raw) * 12 : null,
     hb:  s.pfx_x_raw.length ? -mean(s.pfx_x_raw) * 12 : null,   // same convention as the athlete app
     extension: mean(s.exts), vaa: s.vaas && s.vaas.length ? mean(s.vaas) : null,
+    armAngle: s.arms && s.arms.length ? mean(s.arms) : null, releaseHeight: mean(s.rel_zs), releaseSide: mean(s.rel_xs),
   }));
   const fail = msg => cells.forEach(el => { el.innerHTML = '<span class="v-num">—</span>'; el.title = msg; });
   if (!url || !/workers\.dev/.test(url)) return fail('Grades need the Cloudflare Worker URL set in ⚙ Configure');
@@ -451,8 +453,8 @@ async function fillAnalyzerXArsenal(pitchMap, total) {
     cells.forEach(el => {
       const r = by[el.dataset.xaPt];
       if (!r) { el.innerHTML = '<span class="v-num">—</span>'; el.title = 'Not graded — too few pitches or pitch type not covered'; return; }
-      el.className = r.score >= 70 ? 'v-good' : r.score >= 55 ? 'v-num' : r.score >= 45 ? 'v-warn' : 'v-bad';
-      el.title = `xArsenal ${r.score} (${r.grade}, ${r.gradeLabel}) · graded as ${r.subtype}` + (r.spinEffEstimated && r.spinEfficiency != null ? ` · spin eff ~${r.spinEfficiency}% (estimated)` : '');
+      el.className = r.score >= 60 ? 'v-good' : r.score >= 50 ? 'v-num' : r.score >= 40 ? 'v-warn' : 'v-bad';   // 20-80 scale
+      el.title = `xArsenal ${r.score} (${r.gradeLabel}, 20-80) · graded as ${(r.subtypeMix && r.subtypeMix.length > 1) ? r.subtypeMix.map(m => m.subtype + ' ' + m.share + '%').join(' / ') : r.subtype}` + (r.spinEffEstimated && r.spinEfficiency != null ? ` · spin eff ~${r.spinEfficiency}% (estimated)` : '');
       el.innerHTML = `<b>${r.score}</b> <span style="font-size:11px;color:var(--muted)">${r.grade}</span>`;
     });
   } catch (e) { fail('Could not load grades: ' + e.message); }
@@ -465,7 +467,7 @@ function renderArsenal() {
 
   // Update table headers to include MLB avg columns if baselines loaded
   document.querySelector('#arsenal-table thead tr').innerHTML = hasBaselines
-    ? `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th><th title="8ctane xArsenal pitch grade — 60 ≈ MLB average">Grade</th>
+    ? `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th><th title="8ctane xArsenal pitch grade — 20-80 scale, 50 = MLB average">Grade</th>
        <th>Whiff%</th><th>MLB avg</th><th>CSW%</th><th>MLB avg</th>
        <th>xwOBA</th><th>MLB avg</th><th>Avg EV</th>`
     : `<th>Pitch</th><th>N</th><th>Usage</th><th>Avg velo</th>

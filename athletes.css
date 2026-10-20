@@ -862,7 +862,7 @@
 .xa-mval { font-family:'DM Mono',monospace; color:var(--muted); font-size:11px; }
 .xa-mbar { position:relative; height:8px; background:var(--surface2); border-radius:4px; }
 .xa-mfill { height:100%; border-radius:4px; }
-.xa-mavg { position:absolute; top:-3px; bottom:-3px; left:56%; width:1px; background:var(--muted); opacity:.6; }
+.xa-mavg { position:absolute; top:-3px; bottom:-3px; left:50%; width:1px; background:var(--muted); opacity:.6; }
 .xa-mscore { font-family:'DM Mono',monospace; text-align:right; }
 .xa-mscore span { font-size:10px; color:var(--muted); }
 .xa-s-elite { background:#22c55e; } .xa-s-above { background:#84cc16; } .xa-s-avg { background:#9ca3af; }
@@ -983,3 +983,18 @@
 .oc-rel { position:relative; width:100%; height:0; overflow:hidden; border-radius:8px; }
 .oc-rel-layer { position:absolute; inset:0; width:100%; height:100%; }
 .oc-rel-img { position:absolute; max-width:none; pointer-events:none; filter:drop-shadow(0 4px 6px rgba(0,0,0,.45)); }
+
+/* xArsenal v3 — slot line + Arsenal Fit card */
+.xa-slot { margin-top:.35rem; font-size:.8rem; color:var(--muted); }
+.xa-fit-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:.9rem 1rem; margin:1rem 0; }
+.xa-fit-hd { font-weight:600; margin-bottom:.6rem; display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; }
+.xa-fit-score { font-size:1.15rem; font-weight:700; }
+.xa-fit-parts { display:grid; gap:.45rem; }
+.xa-fit-part { display:grid; grid-template-columns: 140px 1fr 36px; grid-template-rows:auto auto; column-gap:.6rem; align-items:center; }
+.xa-fit-lbl { font-size:.82rem; }
+.xa-fit-sc { font-weight:700; text-align:right; font-size:.85rem; }
+.xa-fit-note { grid-column: 1 / -1; font-size:.74rem; color:var(--muted); }
+.xa-fit-part .xa-mbar { position:relative; height:6px; border-radius:3px; background:rgba(255,255,255,.06); }
+.xa-fit-part .xa-mfill { height:100%; border-radius:3px; background:var(--muted); }
+.xa-fit-part .xa-good { background:#3fb950; } .xa-fit-part .xa-num { background:#8b949e; } .xa-fit-part .xa-warn { background:#d29922; } .xa-fit-part .xa-bad { background:#f85149; }
+@media (max-width: 520px) { .xa-fit-part { grid-template-columns: 110px 1fr 32px; } }
