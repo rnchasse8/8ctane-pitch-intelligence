@@ -1627,6 +1627,8 @@ async function getXArsenal(outings) {
 // 20-80 scouting scale: 50 = MLB average, 10 pts = 1 SD
 const xaClass = sc => sc == null ? 'v-num' : sc >= 60 ? 'v-good' : sc >= 50 ? 'v-num' : sc >= 40 ? 'v-warn' : 'v-bad';
 const xaShortLabel = sc => sc == null ? '' : sc >= 75 ? 'Elite' : sc >= 65 ? 'Plus-Plus' : sc >= 57.5 ? 'Plus' : sc >= 52.5 ? 'Above Avg' : sc >= 47.5 ? 'Avg' : sc >= 42.5 ? 'Fringe' : sc >= 37.5 ? 'Below Avg' : 'Poor';
+// 8-Stuff+ (100 = MLB avg pitch, 10 = 1 SD): green 110+, neutral 95–109, amber 85–94, red below
+const spClass = v => v == null ? 'v-num' : v >= 110 ? 'v-good' : v >= 95 ? 'v-num' : v >= 85 ? 'v-warn' : 'v-bad';
 const xaMix = r => (r.subtypeMix && r.subtypeMix.length > 1) ? r.subtypeMix.map(m => `${m.subtype} ${m.share}%`).join(' / ') : r.subtype;
 const XA_METRIC_LBL = { velocity:'Velo', spinRate:'Spin', ivb:'IVB', hb:'HB', extension:'Ext', vaa:'VAA', spinEfficiency:'Spin eff',
   veloDiff:'Velo gap', ivbDiff:'IVB gap', hbDiff:'Run gap', spinDiff:'Spin gap',
@@ -1650,11 +1652,11 @@ async function fillXArsenal(root, outings, summaryEl) {
       el.className = (el.dataset.xaBase || '') + ' ' + xaClass(r.score);
       el.title = xaTitle(r);
       // 20-80: show the score and its scouting label (the old A-/B- letter grades are gone)
-      el.innerHTML = `<b>${r.score}</b> <span class="xa-letter">${xaShortLabel(r.score)}</span>`;
+      el.innerHTML = `<b>${r.score}</b> <span class="xa-letter">${xaShortLabel(r.score)}</span>` + (r.stuffPlus != null ? ` <span class="xa-sp ${spClass(r.stuffPlus)}" title="8-Stuff+ (100 = MLB average pitch)">${r.stuffPlus}</span>` : '');
     });
     if (summaryEl) {
       summaryEl.innerHTML = res && res.pitches.length
-        ? `<span class="xa-sum-lbl">xArsenal</span> <b class="${xaClass(res.arsenalScore)}">${res.arsenalScore}</b> <span class="xa-letter">${xaShortLabel(res.arsenalScore)}</span> <span class="xa-sum-sub">${res.arsenalLabel} · 20-80 · graded at ${res.compLevel} level</span>`
+        ? `<span class="xa-sum-lbl">xArsenal</span> <b class="${xaClass(res.arsenalScore)}">${res.arsenalScore}</b> <span class="xa-letter">${xaShortLabel(res.arsenalScore)}</span> <span class="xa-sum-sub">${res.arsenalLabel} · 20-80 · graded at ${res.compLevel} level</span>` + (res.arsenalStuffPlus != null ? ` <span class="xa-sum-lbl">8-Stuff+</span> <b class="${spClass(res.arsenalStuffPlus)}">${res.arsenalStuffPlus}</b>` : '')
         : '';
     }
   } catch (e) {
@@ -1813,6 +1815,7 @@ async function renderXArsenalTab() {
         <span class="pitch-dot" style="background:${pc(r.key)}"></span><span class="xa-card-name">${pn(r.key)}</span>
         <span class="xa-card-score ${xaClass(r.score)}">${r.score}</span><span class="xa-card-grade">${r.grade}<br><small>${r.gradeLabel}</small></span>
       </div>
+      ${r.stuffPlus != null ? `<div class="xa-sp-line">8-Stuff+ <b class="${spClass(r.stuffPlus)}">${r.stuffPlus}</b>${r.stuffPlusType != null ? ` <span class="xa-muted">· ${r.stuffPlusType} vs. other ${escapeHtml(r.displayType || '')}s</span>` : ''}</div>` : ''}
       <div class="xa-why">${xaWhy(r)}</div>
       <div class="xa-mrows">${rows}</div>
       ${lev ? `<div class="xa-lev-hd">Biggest levers</div><ul class="xa-lev">${lev}</ul>` : '<div class="xa-lev-hd">Every key metric is already grading as good or better.</div>'}
@@ -1826,6 +1829,7 @@ async function renderXArsenalTab() {
         <div class="xa-sum-title">xArsenal ${res.arsenalGrade} · ${res.arsenalLabel} <span class="xa-muted">— ${seasonLabel()} · graded at ${res.compLevel} level</span></div>
         <div class="xa-sum-desc">${res.description || ''}</div>
         ${xaSlotLine(res)}
+        ${res.arsenalStuffPlus != null ? `<div class="xa-sp-line">8-Stuff+ <b class="${spClass(res.arsenalStuffPlus)}">${res.arsenalStuffPlus}</b> <span class="xa-muted">· trained on MLB run value · 100 = average</span></div>` : ''}
       </div>
     </div>
     ${xaFitCard(res)}

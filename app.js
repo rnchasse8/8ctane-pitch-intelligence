@@ -455,7 +455,7 @@ async function fillAnalyzerXArsenal(pitchMap, total) {
       if (!r) { el.innerHTML = '<span class="v-num">—</span>'; el.title = 'Not graded — too few pitches or pitch type not covered'; return; }
       el.className = r.score >= 60 ? 'v-good' : r.score >= 50 ? 'v-num' : r.score >= 40 ? 'v-warn' : 'v-bad';   // 20-80 scale
       el.title = `xArsenal ${r.score} (${r.gradeLabel}, 20-80) · graded as ${(r.subtypeMix && r.subtypeMix.length > 1) ? r.subtypeMix.map(m => m.subtype + ' ' + m.share + '%').join(' / ') : r.subtype}` + (r.spinEffEstimated && r.spinEfficiency != null ? ` · spin eff ~${r.spinEfficiency}% (estimated)` : '');
-      el.innerHTML = `<b>${r.score}</b> <span style="font-size:11px;color:var(--muted)">${r.gradeLabel || ''}</span>`;   // 20-80 label
+      el.innerHTML = `<b>${r.score}</b> <span style="font-size:11px;color:var(--muted)">${r.gradeLabel || ''}</span>` + (r.stuffPlus != null ? ` <span style="font-size:11px;color:var(--muted)" title="8-Stuff+">· S+ ${r.stuffPlus}</span>` : '');   // 20-80 label + 8-Stuff+
     });
   } catch (e) { fail('Could not load grades: ' + e.message); }
 }
