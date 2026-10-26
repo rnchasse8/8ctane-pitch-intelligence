@@ -1754,14 +1754,15 @@ function xaValue(k, p, r) {
   if (k === 'spinDiff') return g == null ? '—' : `${Math.round(g)} rpm${vs}`;
   if (k === 'pairVelo') return g == null ? '—' : `${g.toFixed(1)} mph apart${vs}`;
   if (k === 'pairIvb' || k === 'pairRun' || k === 'pairCut') return g == null ? '—' : `${g.toFixed(1)}"${vs}`;
-  const v = k === 'spinEfficiency' ? r.spinEfficiency : p?.[k];
+  const vaaEst = k === 'vaa' && (p?.vaa == null) && r.vaaEst != null;
+  const v = k === 'spinEfficiency' ? r.spinEfficiency : vaaEst ? r.vaaEst : p?.[k];
   if (v === null || v === undefined || isNaN(v)) return '—';
   if (k === 'velocity') return (+v).toFixed(1) + ' mph';
   if (k === 'spinRate') return Math.round(v) + ' rpm';
   if (k === 'ivb') return (+v).toFixed(1) + '"' + (r.ivbSlotAdj != null ? ` <span class="xa-muted">(${r.ivbSlotAdj.toFixed(1)}" slot-adj.)</span>` : '');
   if (k === 'hb') return aiHB(v, aiIsLefty());
   if (k === 'extension') return (+v).toFixed(1) + ' ft';
-  if (k === 'vaa') return (+v).toFixed(1) + '°';
+  if (k === 'vaa') return (+v).toFixed(1) + '°' + (vaaEst ? ' <span class="xa-muted">est.</span>' : '');
   if (k === 'spinEfficiency') return '~' + v + '%' + (r.spinEffEstimated ? ' est.' : '');
   return v;
 }
