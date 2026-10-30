@@ -3487,18 +3487,30 @@ function renderReport() {
   const hasVal = v => v !== null && v !== undefined && v !== '' && !isNaN(parseFloat(v));
   const outingBIP = o => Object.values(o.pitch_stats || {}).reduce((a,s)=>a+(+s.hip||0),0);
   const outingBBE = o => Object.values(o.pitch_stats || {}).reduce((a,s)=>a+(+(s.bbe ?? s.hip)||0),0);
+  // Older saves wrote a true 0% as a blank cell (Code.gs used `||''`).
+  // Recover those zeros: GB/FB/LD share one denominator, so if any of the three is
+  // stored for an outing, a blank sibling was really 0. Hard Hit% blank with an
+  // Avg EV present was also really 0.
+  const BB_FIELDS = ['gb_pct','fb_pct','ld_pct'];
+  const fieldVal = (o, field) => {
+    if (hasVal(o[field])) return parseFloat(o[field]);
+    if (BB_FIELDS.includes(field) && BB_FIELDS.some(f => hasVal(o[f]))) return 0;
+    if (field === 'hard_hit_pct' && hasVal(o.avg_ev) && parseFloat(o.avg_ev) > 0) return 0;
+    return null;
+  };
   const wAvgOutings = (field, wFn) => {
     let num = 0, den = 0, n = 0;
     athleteOutings.forEach(o => {
-      if (!hasVal(o[field])) return;
+      const v = fieldVal(o, field);
+      if (v === null) return;
       n++;
       const w = wFn(o);
-      if (w > 0) { num += parseFloat(o[field]) * w; den += w; }
+      if (w > 0) { num += v * w; den += w; }
     });
     if (!n) return null;
     if (den > 0) return num / den;
     // Older outings with no stored pitch_stats counts: plain mean, zeros included
-    const vals = athleteOutings.filter(o => hasVal(o[field])).map(o => parseFloat(o[field]));
+    const vals = athleteOutings.map(o => fieldVal(o, field)).filter(v => v !== null);
     return avg(vals);
   };
 

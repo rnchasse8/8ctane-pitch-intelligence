@@ -275,6 +275,8 @@ function addOuting(body) {
   const id = 'out_' + Date.now();
   // Write by header NAME, not position, so older sheets whose columns were
   // added in a different order (auto-migration) still line up.
+  // Keep real zeros: `x||''` turned a 0% rate into a blank cell.
+  const keep0 = x => (x === null || x === undefined || x === '') ? '' : x;
   const values = {
     id: id, athleteId: body.athleteId, date: body.date||'', opponent: body.opponent||'',
     inning_start: body.inning_start||'', notes: body.notes||'',
@@ -283,12 +285,12 @@ function addOuting(body) {
     pitch_stats_json: JSON.stringify(pm),
     ff_pct: pct('FF'), st_pct: pct('ST'), fs_pct: pct('FS'), fc_pct: pct('FC'), cu_pct: pct('CU'), sl_pct: pct('SL'), si_pct: pct('SI'), ch_pct: pct('CH'),
     ff_velo: ps('FF','avgVelo'), ff_whiff: ps('FF','whiffPct'), st_whiff: ps('ST','whiffPct'), fs_whiff: ps('FS','whiffPct'), cu_whiff: ps('CU','whiffPct'),
-    avg_ev: s.avgEV||'', hard_hit_pct: s.hardHitPct||'',
-    zone_pct: s.zonePct||'', o_swing_pct: s.oSwingPct||'', z_swing_pct: s.zSwingPct||'', z_contact_pct: s.zContactPct||'',
-    swing_pct: s.swingPct||'', strike_pct: s.strikePct||'',
-    gb_pct: s.gbPct||'', fb_pct: s.fbPct||'', ld_pct: s.ldPct||'',
-    fp_strike_pct: s.fpStrikePct||'', oon_strike_pct: s.oonStrikePct||'',
-    race2k_pct: s.race2kPct||'', putaway_pct: s.putawayPct||'',
+    avg_ev: keep0(s.avgEV), hard_hit_pct: keep0(s.hardHitPct),
+    zone_pct: keep0(s.zonePct), o_swing_pct: keep0(s.oSwingPct), z_swing_pct: keep0(s.zSwingPct), z_contact_pct: keep0(s.zContactPct),
+    swing_pct: keep0(s.swingPct), strike_pct: keep0(s.strikePct),
+    gb_pct: keep0(s.gbPct), fb_pct: keep0(s.fbPct), ld_pct: keep0(s.ldPct),
+    fp_strike_pct: keep0(s.fpStrikePct), oon_strike_pct: keep0(s.oonStrikePct),
+    race2k_pct: keep0(s.race2kPct), putaway_pct: keep0(s.putawayPct),
     createdAt: new Date().toISOString(),
     sit_json: body.sit ? JSON.stringify(body.sit) : '',
   };
