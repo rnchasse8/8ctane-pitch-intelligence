@@ -3481,9 +3481,29 @@ function renderReport() {
   const totalBB      = athleteOutings.reduce((a,o)=>a+(+o.walks||0),0);
   const totalK       = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0),0);
 
+  // Outing-level rates, weighted by each outing's batted balls.
+  // Keep real 0% outings (pf()/truthy checks used to drop them, inflating every rate);
+  // skip only blank/missing values.
+  const hasVal = v => v !== null && v !== undefined && v !== '' && !isNaN(parseFloat(v));
+  const outingBIP = o => Object.values(o.pitch_stats || {}).reduce((a,s)=>a+(+s.hip||0),0);
+  const outingBBE = o => Object.values(o.pitch_stats || {}).reduce((a,s)=>a+(+(s.bbe ?? s.hip)||0),0);
+  const wAvgOutings = (field, wFn) => {
+    let num = 0, den = 0, n = 0;
+    athleteOutings.forEach(o => {
+      if (!hasVal(o[field])) return;
+      n++;
+      const w = wFn(o);
+      if (w > 0) { num += parseFloat(o[field]) * w; den += w; }
+    });
+    if (!n) return null;
+    if (den > 0) return num / den;
+    // Older outings with no stored pitch_stats counts: plain mean, zeros included
+    const vals = athleteOutings.filter(o => hasVal(o[field])).map(o => parseFloat(o[field]));
+    return avg(vals);
+  };
+
   // Use outing-level hard_hit_pct — per-pitch is too noisy with small samples
-  const outingHHPs = athleteOutings.map(o=>pf(o.hard_hit_pct)).filter(v=>v>0);
-  const hardHitPctSeason = outingHHPs.length ? avg(outingHHPs) : 0;
+  const hardHitPctSeason = wAvgOutings('hard_hit_pct', outingBBE) ?? 0;
 
   const whiffPct   = outingsWhiffSw(athleteOutings) ?? 0;   // per swing
   const zWhiffSeason = zoneWhiffPct(athleteOutings.flatMap(o => Object.values(o.pitch_stats || {})));
@@ -3509,9 +3529,6 @@ function renderReport() {
     if (pf(o.z_contact_pct)) zContactVals.push(pf(o.z_contact_pct));
     if (pf(o.swing_pct))     swingVals.push(pf(o.swing_pct));
     if (pf(o.strike_pct))    strikeVals.push(pf(o.strike_pct));
-    if (pf(o.gb_pct))        gbVals.push(pf(o.gb_pct));
-    if (pf(o.fb_pct))        fbVals.push(pf(o.fb_pct));
-    if (pf(o.ld_pct))        ldVals.push(pf(o.ld_pct));
     if (pf(o.fp_strike_pct))  fpVals.push(pf(o.fp_strike_pct));
     if (pf(o.oon_strike_pct)) oonVals.push(pf(o.oon_strike_pct));
     if (pf(o.race2k_pct))     race2kVals.push(pf(o.race2k_pct));
@@ -3524,9 +3541,9 @@ function renderReport() {
   const zContactPct = zContactVals.length ? avg(zContactVals) : null;
   const swingPct    = swingVals.length    ? avg(swingVals)    : null;
   const strikePct   = strikeVals.length   ? avg(strikeVals)   : null;
-  const gbPct       = gbVals.length       ? avg(gbVals)       : null;
-  const fbPct       = fbVals.length       ? avg(fbVals)       : null;
-  const ldPct       = ldVals.length       ? avg(ldVals)       : null;
+  const gbPct       = wAvgOutings('gb_pct', outingBIP);
+  const fbPct       = wAvgOutings('fb_pct', outingBIP);
+  const ldPct       = wAvgOutings('ld_pct', outingBIP);
   const fpStrikePct  = fpVals.length      ? avg(fpVals)      : null;
   const oonStrikePct = oonVals.length     ? avg(oonVals)     : null;
   const race2kPct    = race2kVals.length  ? avg(race2kVals)  : null;
