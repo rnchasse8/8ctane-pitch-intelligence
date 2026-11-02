@@ -1039,136 +1039,6 @@ function parseCsvLine(line) {
   return result;
 }
 
-// ==================== OUTING COUNTS (exact season rates) ====================
-// Each outing saves raw numerators/denominators (counts_json) so season rates are
-// summed counts — never averages of per-outing percentages, which drop 0% outings
-// and over-weight tiny ones. Definitions follow 02-INTERPRETING-THE-DATA.md.
-const COUNTS_VERSION = 1;
-const NON_PA_EVENT = /^(caught_stealing|pickoff|stolen_base|wild_pitch|passed_ball|other_advance|runner_double_play|game_advisory|ejection|defensive_indiff)/;
-
-function statcastOutingCounts(rows) {
-  const ZONES = new Set(['1','2','3','4','5','6','7','8','9']);
-  const c = { v:COUNTS_VERSION, pitches:0, inZone:0, outZone:0, swings:0, zSw:0, oSw:0, zCon:0, strikes:0,
-    bip:0, gb:0, fb:0, ld:0, pu:0, bbe:0, hh:0, evSum:0,
-    fpN:0, fpS:0, ooN:0, ooS:0, pa:0, k:0, bb:0, hbp:0,
-    r2kN:0, r2kH:0, tsN:0, tsK:0, xwN:0, xwD:0 };
-  const paGroups = {};
-  rows.forEach(r => {
-    c.pitches++;
-    const desc = r.description || '';
-    const zone = String(r.zone ?? '').trim();
-    const inSZ = ZONES.has(zone);
-    const isSwing   = desc.includes('swinging_strike') || desc.includes('foul') || desc === 'hit_into_play';
-    const isContact = desc.includes('foul') || desc === 'hit_into_play';
-    const isStrike  = isSwing || desc.includes('called_strike');
-    if (inSZ) c.inZone++; else if (zone) c.outZone++;
-    if (isSwing) { c.swings++; if (inSZ) { c.zSw++; if (isContact) c.zCon++; } else if (zone) c.oSw++; }
-    if (isStrike) c.strikes++;
-    const bbt = (r.bb_type || '').toLowerCase();
-    if (bbt) { c.bip++; if (bbt==='ground_ball') c.gb++; else if (bbt==='fly_ball') c.fb++; else if (bbt==='line_drive') c.ld++; else if (bbt==='popup') c.pu++; }
-    if (desc === 'hit_into_play') {
-      const evl = parseFloat(r.launch_speed);
-      if (!isNaN(evl)) { c.bbe++; c.evSum += evl; if (evl >= 95) c.hh++; }
-    }
-    const b = parseInt(r.balls, 10), st = parseInt(r.strikes, 10);
-    const ev = (r.events || '').toLowerCase();
-    const isK = ev === 'strikeout' || ev === 'strikeout_double_play';
-    if (b===0 && st===0) { c.fpN++; if (isStrike) c.fpS++; }
-    if (b===1 && st===1) { c.ooN++; if (isStrike) c.ooS++; }
-    // Putaway% (02): 2-strike pitches that end in a K ÷ 2-strike pitches
-    if (st===2) { c.tsN++; if (isK) c.tsK++; }
-    if (ev && !NON_PA_EVENT.test(ev)) {
-      c.pa++;
-      if (isK) c.k++; else if (ev==='walk' || ev==='intent_walk') c.bb++; else if (ev==='hit_by_pitch') c.hbp++;
-    }
-    // True xwOBA (per PA): batted balls use estimated wOBA, K/BB/HBP use woba_value
-    const wd = parseFloat(r.woba_denom);
-    if (!isNaN(wd) && wd > 0) {
-      const est = parseFloat(r.estimated_woba_using_speedangle), wv = parseFloat(r.woba_value);
-      c.xwD += wd;
-      c.xwN += (desc === 'hit_into_play' && !isNaN(est)) ? est : (isNaN(wv) ? 0 : wv);
-    }
-    if (r.at_bat_number) {
-      const key = (r.game_pk || '') + '|' + r.at_bat_number;
-      (paGroups[key] = paGroups[key] || []).push([b, st]);
-    }
-  });
-  // Race to 2K (02): PA reaches 2 strikes before 2 balls
-  Object.values(paGroups).forEach(list => { c.r2kN++; if (list.some(([b, st]) => st === 2 && b < 2)) c.r2kH++; });
-  c.evSum = +c.evSum.toFixed(1); c.xwN = +c.xwN.toFixed(3);
-  return c;
-}
-
-function countsRates(c) {
-  const p = (n, d) => d ? n / d * 100 : null;
-  return {
-    zonePct: p(c.inZone, (c.inZone||0) + (c.outZone||0)), oSwingPct: p(c.oSw, c.outZone), zSwingPct: p(c.zSw, c.inZone),
-    zContactPct: p(c.zCon, c.zSw), swingPct: p(c.swings, c.pitches), strikePct: p(c.strikes, c.pitches),
-    fpStrikePct: p(c.fpS, c.fpN), oonStrikePct: p(c.ooS, c.ooN), race2kPct: p(c.r2kH, c.r2kN), putawayPct: p(c.tsK, c.tsN),
-    gbPct: p(c.gb, c.bip), fbPct: p(c.fb, c.bip), ldPct: p(c.ld, c.bip), puPct: p(c.pu, c.bip),
-    hardHitPct: p(c.hh, c.bbe), avgEV: c.bbe ? c.evSum / c.bbe : null, xwoba: c.xwD ? c.xwN / c.xwD : null,
-    kPct: p(c.k, c.pa), bbPct: p(c.bb, c.pa),
-  };
-}
-
-function outingCountsOf(o) {
-  let c = o && o.counts;
-  if (!c && o && o.counts_json) { try { c = JSON.parse(o.counts_json); } catch(e) { c = null; } }
-  return (c && typeof c === 'object' && c.v) ? c : null;
-}
-
-const _hasStat = v => v !== null && v !== undefined && v !== '' && !isNaN(parseFloat(v));
-
-// Season rates for a set of outings. Exact (summed counts) when every Statcast outing
-// has counts_json; otherwise a weighted fallback over stored outing percentages,
-// flagged so the UI can ask for a re-import.
-function seasonRates(outings) {
-  const tot = {}; let nCounts = 0; const legacy = [];
-  outings.forEach(o => {
-    const c = outingCountsOf(o);
-    if (c) { nCounts++; Object.keys(c).forEach(k => { if (k !== 'v') tot[k] = (tot[k] || 0) + (+c[k] || 0); }); }
-    else if (['zone_pct','strike_pct','gb_pct','fb_pct','ld_pct','swing_pct'].some(f => _hasStat(o[f]))) legacy.push(o);
-  });
-  if (!legacy.length) return { ...countsRates(tot), exact: nCounts > 0, legacyN: 0, totals: tot };
-
-  // ---- Legacy fallback (outings saved before counts_json) ----
-  const pmOf = o => { try { return (typeof o.pitch_stats === 'object' && o.pitch_stats) ? o.pitch_stats : JSON.parse(o.pitch_stats_json || '{}'); } catch(e) { return {}; } };
-  const bipOf = o => Object.values(pmOf(o)).reduce((a, s) => a + (+s.hip || 0), 0);
-  const bbeOf = o => Object.values(pmOf(o)).reduce((a, s) => a + (+(s.bbe ?? s.hip) || 0), 0);
-  const BB_FIELDS = ['gb_pct','fb_pct','ld_pct'];
-  // Old saves wrote a true 0% as a blank cell — recover those zeros
-  const fieldVal = (o, f) => {
-    if (_hasStat(o[f])) return parseFloat(o[f]);
-    if (BB_FIELDS.includes(f) && BB_FIELDS.some(x => _hasStat(o[x]))) return 0;
-    if (f === 'hard_hit_pct' && _hasStat(o.avg_ev) && parseFloat(o.avg_ev) > 0) return 0;
-    return null;
-  };
-  const wAvg = (f, wFn) => {
-    let num = 0, den = 0;
-    outings.forEach(o => { const v = fieldVal(o, f); if (v === null) return; const w = wFn(o); if (w > 0) { num += v * w; den += w; } });
-    return den ? num / den : null;
-  };
-  const byPitches = o => +o.total_pitches || 0;
-  let evNum = 0, evDen = 0, pa = 0, k = 0, bb = 0;
-  outings.forEach(o => {
-    Object.values(pmOf(o)).forEach(s => { const n = +(s.bbe ?? 0) || 0; if (n && _hasStat(s.avgEV)) { evNum += parseFloat(s.avgEV) * n; evDen += n; } });
-    k += +o.strikeouts || 0; bb += +o.walks || 0;
-    pa += (+o.strikeouts || 0) + (+o.walks || 0) + (+o.hbp || 0) + bipOf(o);
-  });
-  return {
-    zonePct: wAvg('zone_pct', byPitches), oSwingPct: wAvg('o_swing_pct', byPitches), zSwingPct: wAvg('z_swing_pct', byPitches),
-    zContactPct: wAvg('z_contact_pct', byPitches), swingPct: wAvg('swing_pct', byPitches), strikePct: wAvg('strike_pct', byPitches),
-    fpStrikePct: wAvg('fp_strike_pct', byPitches), oonStrikePct: wAvg('oon_strike_pct', byPitches),
-    race2kPct: wAvg('race2k_pct', byPitches),
-    putawayPct: null,   // old outings used a per-PA definition — needs re-import
-    gbPct: wAvg('gb_pct', bipOf), fbPct: wAvg('fb_pct', bipOf), ldPct: wAvg('ld_pct', bipOf), puPct: null,
-    hardHitPct: wAvg('hard_hit_pct', bbeOf), avgEV: evDen ? evNum / evDen : null,
-    xwoba: null,        // old outings only stored contact xwOBA — needs re-import
-    kPct: pa ? k / pa * 100 : null, bbPct: pa ? bb / pa * 100 : null,
-    exact: false, legacyN: legacy.length, totals: tot,
-  };
-}
-
 function parseStatcastBulk(rows) {
   const NORMALIZE = {FA:'FF',FO:'FS',CS:'CU',SV:'SL'};
   const VALID_PT  = new Set(['FF','SI','FC','SL','ST','CU','KC','FS','CH','OTHER']);
@@ -1344,8 +1214,6 @@ function parseStatcastBulk(rows) {
     // K / BB / HBP / H / HR / IP — full event list (strikeout double plays,
     // intentional walks, caught stealing and pickoffs were being missed)
     const line  = statcastLine(pitches);
-    const counts = statcastOutingCounts(pitches);
-    const cRates = countsRates(counts);
     const ks = line.ks, walks = line.walks, hbp = line.hbp;
     const hrs = line.hrs, hits = line.hits, ip = line.ip;
     const avgg = arr => arr.length ? arr.reduce((a,b)=>a+b)/arr.length : null;
@@ -1434,9 +1302,8 @@ function parseStatcastBulk(rows) {
       ldPct:      bipCount    ?+(ldCount/bipCount*100).toFixed(1):null,
       fpStrikePct: fp_total    ?+(fp_strikes/fp_total*100).toFixed(1):null,
       oonStrikePct:oneone_total?+(oneone_strikes/oneone_total*100).toFixed(1):null,
-      race2kPct:   cRates.race2kPct  != null ? +cRates.race2kPct.toFixed(1)  : null,
-      putawayPct:  cRates.putawayPct != null ? +cRates.putawayPct.toFixed(1) : null,
-      counts,
+      race2kPct:   race2k_total?+(race2k_hit/race2k_total*100).toFixed(1):null,
+      putawayPct:  putaway_total?+(putaway_k/putaway_total*100).toFixed(1):null,
       sit: computeSituational(pitches),
       pitchMap: flatMap,
     };
@@ -1611,7 +1478,6 @@ async function runBulkImport() {
           gbPct: o.gbPct, fbPct: o.fbPct, ldPct: o.ldPct,
           fpStrikePct: o.fpStrikePct, oonStrikePct: o.oonStrikePct,
           race2kPct: o.race2kPct, putawayPct: o.putawayPct,
-          counts: o.counts || null,
         }
       });
       row.className = 'bulk-outing-row done';
@@ -2864,14 +2730,6 @@ function processOutingRows(rows) {
       ldPct:         bipCount      ? +(ldCount/bipCount*100).toFixed(1) : null,
       fpStrikePct:   fp_total      ? +(fp_strikes/fp_total*100).toFixed(1) : null,
       oonStrikePct:  oneone_total  ? +(oneone_strikes/oneone_total*100).toFixed(1) : null,
-      ...(() => {
-        const counts = statcastOutingCounts(rows), cr = countsRates(counts);
-        return {
-          race2kPct:  cr.race2kPct  != null ? +cr.race2kPct.toFixed(1)  : null,
-          putawayPct: cr.putawayPct != null ? +cr.putawayPct.toFixed(1) : null,
-          counts,
-        };
-      })(),
     },
     sit: computeSituational(rows),
   };
@@ -3081,8 +2939,15 @@ async function renderSeasonInsight() {
     });
 
   // Zone/swing season averages
-  const SRi = seasonRates(athleteOutings);
-  const { zonePct, oSwingPct, zContactPct, gbPct, fpStrikePct, oonStrikePct, race2kPct, putawayPct } = SRi;
+  const zonePct     = avg(athleteOutings.map(o=>pf(o.zone_pct)).filter(Boolean));
+  const oSwingPct   = avg(athleteOutings.map(o=>pf(o.o_swing_pct)).filter(Boolean));
+  const zContactPct = avg(athleteOutings.map(o=>pf(o.z_contact_pct)).filter(Boolean));
+  const gbPct       = avg(athleteOutings.map(o=>pf(o.gb_pct)).filter(Boolean));
+
+  const fpStrikePct  = avg(athleteOutings.map(o=>pf(o.fp_strike_pct)).filter(Boolean)) || null;
+  const oonStrikePct = avg(athleteOutings.map(o=>pf(o.oon_strike_pct)).filter(Boolean)) || null;
+  const race2kPct    = avg(athleteOutings.map(o=>pf(o.race2k_pct)).filter(Boolean)) || null;
+  const putawayPct   = avg(athleteOutings.map(o=>pf(o.putaway_pct)).filter(Boolean)) || null;
 
   const pm_stored = (() => {
     let pm = currentAthlete.pitch_metrics || {};
@@ -3616,25 +3481,56 @@ function renderReport() {
   const totalBB      = athleteOutings.reduce((a,o)=>a+(+o.walks||0),0);
   const totalK       = athleteOutings.reduce((a,o)=>a+(+o.strikeouts||0),0);
 
-  // Season rates from summed outing counts (see seasonRates)
-  const SR = seasonRates(athleteOutings);
+  // Use outing-level hard_hit_pct — per-pitch is too noisy with small samples
+  const outingHHPs = athleteOutings.map(o=>pf(o.hard_hit_pct)).filter(v=>v>0);
+  const hardHitPctSeason = outingHHPs.length ? avg(outingHHPs) : 0;
 
   const whiffPct   = outingsWhiffSw(athleteOutings) ?? 0;   // per swing
   const zWhiffSeason = zoneWhiffPct(athleteOutings.flatMap(o => Object.values(o.pitch_stats || {})));
   const cswPct     = totalPitches ? (totalWhiffs+totalCS)/totalPitches*100 : 0;
-  const kPct       = SR.kPct  ?? (totalHIP+totalK+totalBB > 0 ? totalK/(totalHIP+totalK+totalBB)*100 : 0);
-  const bbPct      = SR.bbPct ?? (totalHIP+totalK+totalBB > 0 ? totalBB/(totalHIP+totalK+totalBB)*100 : 0);
-  const avgXwoba   = SR.xwoba;   // true per-PA xwOBA; null until outings carry counts
-  const avgEV      = SR.avgEV ?? (allEVs.length ? avg(allEVs) : null);
-  const hardHitPct = SR.hardHitPct ?? 0;
+  const kPct       = totalHIP+totalK+totalBB > 0 ? totalK/(totalHIP+totalK+totalBB)*100 : 0;
+  const bbPct      = totalHIP+totalK+totalBB > 0 ? totalBB/(totalHIP+totalK+totalBB)*100 : 0;
+  const avgXwoba   = allXwobas.length ? avg(allXwobas) : null;
+  const avgEV      = allEVs.length ? avg(allEVs) : null;
+  const hardHitPct = hardHitPctSeason;
   const ffMap      = combined['FF'] || combined['FA'];
   const avgVelo    = ffMap?.velos.length ? avg(ffMap.velos) : null;
   const swStrPct   = totalPitches ? totalWhiffs/totalPitches*100 : 0;
 
-  const { zonePct, oSwingPct, zSwingPct, zContactPct, swingPct, strikePct,
-          gbPct, fbPct, ldPct, fpStrikePct, oonStrikePct, race2kPct, putawayPct } = SR;
-  const seasonBIP = SR.exact ? (SR.totals.bip || 0) : null;
-  const seasonOO  = SR.exact ? (SR.totals.ooN || 0) : null;
+  // Aggregate zone/swing metrics from stored outing stats
+  const zoneVals=[], oSwingVals=[], zSwingVals=[], zContactVals=[],
+        swingVals=[], strikeVals=[], gbVals=[], fbVals=[], ldVals=[],
+        fpVals=[], oonVals=[], race2kVals=[], putawayVals=[];
+
+  athleteOutings.forEach(o => {
+    if (pf(o.zone_pct))      zoneVals.push(pf(o.zone_pct));
+    if (pf(o.o_swing_pct))   oSwingVals.push(pf(o.o_swing_pct));
+    if (pf(o.z_swing_pct))   zSwingVals.push(pf(o.z_swing_pct));
+    if (pf(o.z_contact_pct)) zContactVals.push(pf(o.z_contact_pct));
+    if (pf(o.swing_pct))     swingVals.push(pf(o.swing_pct));
+    if (pf(o.strike_pct))    strikeVals.push(pf(o.strike_pct));
+    if (pf(o.gb_pct))        gbVals.push(pf(o.gb_pct));
+    if (pf(o.fb_pct))        fbVals.push(pf(o.fb_pct));
+    if (pf(o.ld_pct))        ldVals.push(pf(o.ld_pct));
+    if (pf(o.fp_strike_pct))  fpVals.push(pf(o.fp_strike_pct));
+    if (pf(o.oon_strike_pct)) oonVals.push(pf(o.oon_strike_pct));
+    if (pf(o.race2k_pct))     race2kVals.push(pf(o.race2k_pct));
+    if (pf(o.putaway_pct))    putawayVals.push(pf(o.putaway_pct));
+  });
+
+  const zonePct     = zoneVals.length     ? avg(zoneVals)     : null;
+  const oSwingPct   = oSwingVals.length   ? avg(oSwingVals)   : null;
+  const zSwingPct   = zSwingVals.length   ? avg(zSwingVals)   : null;
+  const zContactPct = zContactVals.length ? avg(zContactVals) : null;
+  const swingPct    = swingVals.length    ? avg(swingVals)    : null;
+  const strikePct   = strikeVals.length   ? avg(strikeVals)   : null;
+  const gbPct       = gbVals.length       ? avg(gbVals)       : null;
+  const fbPct       = fbVals.length       ? avg(fbVals)       : null;
+  const ldPct       = ldVals.length       ? avg(ldVals)       : null;
+  const fpStrikePct  = fpVals.length      ? avg(fpVals)      : null;
+  const oonStrikePct = oonVals.length     ? avg(oonVals)     : null;
+  const race2kPct    = race2kVals.length  ? avg(race2kVals)  : null;
+  const putawayPct   = putawayVals.length ? avg(putawayVals) : null;
 
   // Peak velo
   const ffOutingPeaks = [];
@@ -3670,7 +3566,7 @@ function renderReport() {
     fpStrikePct:  { p10:52, p25:57,  p50:62,  p75:67,  p90:72,  hib:true  },
     oonStrikePct: { p10:50, p25:55,  p50:60,  p75:65,  p90:70,  hib:true  },
     race2kPct:    { p10:40, p25:47,  p50:54,  p75:61,  p90:68,  hib:true  },
-    putawayPct:   null,   // per-pitch Putaway% (02) — MLB baseline not built yet; shows raw value
+    putawayPct:   { p10:22, p25:28,  p50:34,  p75:40,  p90:48,  hib:true  },
   };
 
   function getPercentile(val, dist) {
@@ -3696,10 +3592,10 @@ function renderReport() {
   }
 
   function pctBar(label, val, displayVal, dist, unit='') {
-    if (!hasBaselines || !dist) {
+    if (!hasBaselines) {
       return `<div class="pct-row">
         <div class="pct-label">${label}</div>
-        <div class="pct-bar-track"${hasBaselines && !dist ? ' title="No MLB baseline for this metric yet"' : ''}>${hasBaselines && !dist ? '' : '<div class="pct-bar-fill-plain" style="width:50%;background:var(--cyan)"></div>'}</div>
+        <div class="pct-bar-track"><div class="pct-bar-fill-plain" style="width:50%;background:var(--cyan)"></div></div>
         <div class="pct-value">${displayVal !== null && displayVal !== undefined ? displayVal+unit : '—'}</div>
       </div>`;
     }
@@ -3742,7 +3638,6 @@ function renderReport() {
       </div>
 
       ${levelBadge}
-      ${SR.legacyN ? `<div class="report-note">${SR.legacyN} outing${SR.legacyN>1?'s were':' was'} saved before exact counts were stored, so plate-discipline and contact rates are approximate, and xwOBA and Putaway% are hidden. Re-import this athlete to fix.</div>` : ''}
 
       ${arsenalComps.length ? `<div class="arsenal-comp-banner">
         <span class="arsenal-comp-lbl">Arsenal comps (velo &amp; shape across the whole mix):</span>
@@ -3769,11 +3664,11 @@ function renderReport() {
       ${swingPct    !== null     ? pctBar('Swing%',        swingPct,     r(swingPct),     DIST.swingPct,    '%') : ''}
       ${strikePct   !== null     ? pctBar('Strike%',       strikePct,    r(strikePct),    DIST.strikePct,   '%') : ''}
       ${fpStrikePct !== null     ? pctBar('F-Strike%',     fpStrikePct,  r(fpStrikePct),  DIST.fpStrikePct, '%') : ''}
-      ${oonStrikePct!== null     ? pctBar(seasonOO !== null && seasonOO < 50 ? `1-1 Strike% <span style="opacity:.6">(n=${seasonOO})</span>` : '1-1 Strike%',   oonStrikePct, r(oonStrikePct), DIST.oonStrikePct,'%') : ''}
+      ${oonStrikePct!== null     ? pctBar('1-1 Strike%',   oonStrikePct, r(oonStrikePct), DIST.oonStrikePct,'%') : ''}
       ${race2kPct   !== null     ? pctBar('Race to 2K',    race2kPct,    r(race2kPct),    DIST.race2kPct,   '%') : ''}
       ${putawayPct  !== null     ? pctBar('Putaway%',      putawayPct,   r(putawayPct),   DIST.putawayPct,  '%') : ''}
 
-      <div class="pct-group-hd">Contact quality${seasonBIP !== null ? ` <span style="text-transform:none;letter-spacing:0;opacity:.7">· ${seasonBIP} BIP${seasonBIP < 50 ? ' — small sample' : ''}</span>` : ''}</div>
+      <div class="pct-group-hd">Contact quality</div>
       ${avgEV       !== null     ? pctBar('Avg EV',      avgEV,       r(avgEV),       DIST.avgEV,      ' mph') : ''}
       ${pctBar('Hard Hit%',       hardHitPct,  r(hardHitPct),  DIST.hardHitPct, '%')}
       ${gbPct       !== null     ? pctBar('GB%',         gbPct,       r(gbPct),       DIST.gbPct,      '%') : ''}
