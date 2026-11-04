@@ -449,13 +449,17 @@ async function fillAnalyzerXArsenal(pitchMap, total) {
     const res = await fetch(`${url}?action=scoreArsenal`, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },
       body: JSON.stringify({ hand, level:'MLB', veloWeighted:true, pitches }) }).then(r => r.json());
     if (res.error) return fail(res.error);
+    // Same 20-80 labels as the athlete app: label from the grade (score rounded to 5)
+    const grd = sc => Math.max(20, Math.min(80, Math.round(sc / 5) * 5));
+    const lbl = sc => { const g = grd(sc); return g >= 80 ? 'Elite' : g >= 70 ? 'Plus-Plus' : g >= 60 ? 'Plus' : g >= 55 ? 'Above Avg' : g >= 50 ? 'Average' : g >= 45 ? 'Fringe' : g >= 40 ? 'Below Avg' : 'Poor'; };
+    res.pitches.forEach(r => { if (r.score != null) { r.grade = String(grd(r.score)); r.gradeLabel = lbl(r.score); } });
     const by = {}; res.pitches.forEach(r => by[r.key] = r);
     cells.forEach(el => {
       const r = by[el.dataset.xaPt];
       if (!r) { el.innerHTML = '<span class="v-num">—</span>'; el.title = 'Not graded — too few pitches or pitch type not covered'; return; }
       el.className = r.score >= 60 ? 'v-good' : r.score >= 50 ? 'v-num' : r.score >= 40 ? 'v-warn' : 'v-bad';   // 20-80 scale
       el.title = `xArsenal ${r.score} (${r.gradeLabel}, 20-80) · graded as ${(r.subtypeMix && r.subtypeMix.length > 1) ? r.subtypeMix.map(m => m.subtype + ' ' + m.share + '%').join(' / ') : r.subtype}` + (r.spinEffEstimated && r.spinEfficiency != null ? ` · spin eff ~${r.spinEfficiency}% (estimated)` : '');
-      el.innerHTML = `<b>${r.score}</b> <span style="font-size:11px;color:var(--muted)">${r.gradeLabel || ''}</span>` + (r.stuffPlus != null ? ` <span style="font-size:11px;color:var(--muted)" title="8-Stuff+">· S+ ${r.stuffPlus}</span>` : '');   // 20-80 label + 8-Stuff+
+      el.innerHTML = `<b>${r.score}</b> <span style="font-size:11px;color:var(--muted)">${r.gradeLabel || ''}</span>` + (r.stuffPlus != null ? ` <span style="font-size:11px;color:var(--muted)" title="8-Stuff+ (8ctane run-value model, 100 = MLB avg) — not psStuff+">· S+ ${r.stuffPlus}</span>` : '');   // 20-80 label + 8-Stuff+
     });
   } catch (e) { fail('Could not load grades: ' + e.message); }
 }

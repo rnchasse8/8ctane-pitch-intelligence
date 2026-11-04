@@ -1620,13 +1620,34 @@ async function getXArsenal(outings) {
   if (!pitches.length) return null;
   const body = { hand: currentAthlete?.throws || 'R', level: currentAthlete?.level || '', veloWeighted: true, pitches };
   const key = JSON.stringify(body);
-  if (!xaCache[key]) xaCache[key] = api('scoreArsenal', body).catch(e => { delete xaCache[key]; throw e; });
+  if (!xaCache[key]) xaCache[key] = api('scoreArsenal', body).then(xaNormalize).catch(e => { delete xaCache[key]; throw e; });
   return xaCache[key];
 }
 
 // 20-80 scouting scale: 50 = MLB average, 10 pts = 1 SD
 const xaClass = sc => sc == null ? 'v-num' : sc >= 60 ? 'v-good' : sc >= 50 ? 'v-num' : sc >= 40 ? 'v-warn' : 'v-bad';
-const xaShortLabel = sc => sc == null ? '' : sc >= 75 ? 'Elite' : sc >= 65 ? 'Plus-Plus' : sc >= 57.5 ? 'Plus' : sc >= 52.5 ? 'Above Avg' : sc >= 47.5 ? 'Avg' : sc >= 42.5 ? 'Fringe' : sc >= 37.5 ? 'Below Avg' : 'Poor';
+// Grade = score rounded to the nearest 5 (20-80). The label comes from that grade so the
+// number and the word always agree: 40 below avg · 45 fringe · 50 avg · 55 above avg ·
+// 60-65 plus · 70-75 plus-plus · 80 elite. Overrides the Worker's own labels/description.
+const XA_LABELS = [[80,'Elite'],[70,'Plus-Plus'],[60,'Plus'],[55,'Above Avg'],[50,'Average'],[45,'Fringe'],[40,'Below Avg'],[-Infinity,'Poor']];
+const xaGrade = sc => (sc == null || isNaN(sc)) ? '' : String(Math.max(20, Math.min(80, Math.round(sc / 5) * 5)));
+const xaShortLabel = sc => (sc == null || isNaN(sc)) ? '' : XA_LABELS.find(([t]) => +xaGrade(sc) >= t)[1];
+const xaLabelText = l => ({ 'Above Avg':'above average', 'Below Avg':'below average' })[l] || String(l || '').toLowerCase();
+function xaDescribe(res) {
+  const ps = (res.pitches || []).filter(r => r.score != null).sort((a, b) => b.score - a.score);
+  if (!ps.length) return '';
+  const best = ps[0], worst = ps[ps.length - 1];
+  const b = `The ${pn(best.key)} is ${+best.grade >= 70 ? 'a weapon' : 'the best pitch'} (${best.grade}, ${xaLabelText(best.gradeLabel)})`;
+  const w = ps.length > 1 && best.score - worst.score >= 5 ? `; the ${pn(worst.key)} grades lowest (${worst.grade}, ${xaLabelText(worst.gradeLabel)})` : '';
+  return `${b}${w}. Overall the arsenal grades out ${xaLabelText(res.arsenalLabel)} (${res.arsenalGrade}).`;
+}
+function xaNormalize(res) {
+  if (!res || !Array.isArray(res.pitches)) return res;
+  res.pitches.forEach(r => { r.grade = xaGrade(r.score); r.gradeLabel = xaShortLabel(r.score); });
+  res.arsenalGrade = xaGrade(res.arsenalScore); res.arsenalLabel = xaShortLabel(res.arsenalScore);
+  res.description = xaDescribe(res);
+  return res;
+}
 // 8-Stuff+ (100 = MLB avg pitch, 10 = 1 SD): green 110+, neutral 95–109, amber 85–94, red below
 const spClass = v => v == null ? 'v-num' : v >= 110 ? 'v-good' : v >= 95 ? 'v-num' : v >= 85 ? 'v-warn' : 'v-bad';
 const xaMix = r => (r.subtypeMix && r.subtypeMix.length > 1) ? r.subtypeMix.map(m => `${m.subtype} ${m.share}%`).join(' / ') : r.subtype;
@@ -1652,11 +1673,11 @@ async function fillXArsenal(root, outings, summaryEl) {
       el.className = (el.dataset.xaBase || '') + ' ' + xaClass(r.score);
       el.title = xaTitle(r);
       // 20-80: show the score and its scouting label (the old A-/B- letter grades are gone)
-      el.innerHTML = `<b>${r.score}</b> <span class="xa-letter">${xaShortLabel(r.score)}</span>` + (r.stuffPlus != null ? ` <span class="xa-sp ${spClass(r.stuffPlus)}" title="8-Stuff+ (100 = MLB average pitch)">${r.stuffPlus}</span>` : '');
+      el.innerHTML = `<b>${r.score}</b> <span class="xa-letter">${xaShortLabel(r.score)}</span>` + (r.stuffPlus != null ? ` <span class="xa-sp ${spClass(r.stuffPlus)}" title="8-Stuff+ — 8ctane run-value model (100 = MLB average pitch, 10 = 1 SD). Not psStuff+.">${r.stuffPlus}</span>` : '');
     });
     if (summaryEl) {
       summaryEl.innerHTML = res && res.pitches.length
-        ? `<span class="xa-sum-lbl">xArsenal</span> <b class="${xaClass(res.arsenalScore)}">${res.arsenalScore}</b> <span class="xa-letter">${xaShortLabel(res.arsenalScore)}</span> <span class="xa-sum-sub">${res.arsenalLabel} · 20-80 · graded at ${res.compLevel} level</span>` + (res.arsenalStuffPlus != null ? ` <span class="xa-sum-lbl">8-Stuff+</span> <b class="${spClass(res.arsenalStuffPlus)}">${res.arsenalStuffPlus}</b>` : '')
+        ? `<span class="xa-sum-lbl">xArsenal</span> <b class="${xaClass(res.arsenalScore)}">${res.arsenalScore}</b> <span class="xa-letter">${xaShortLabel(res.arsenalScore)}</span> <span class="xa-sum-sub">20-80 · graded at ${res.compLevel} level</span>` + (res.arsenalStuffPlus != null ? ` <span class="xa-sum-lbl">8-Stuff+</span> <b class="${spClass(res.arsenalStuffPlus)}">${res.arsenalStuffPlus}</b>` : '')
         : '';
     }
   } catch (e) {
@@ -1676,7 +1697,7 @@ async function getXArsenalByOuting(outings) {
   if (!items.length) return {};
   const key = JSON.stringify(items);
   if (!xaOutingCache[key]) xaOutingCache[key] = api('scoreArsenal', { items })
-    .then(res => { const m = {}; (res.results || []).forEach(r => { m[r.id] = r; }); return m; })
+    .then(res => { const m = {}; (res.results || []).forEach(r => { m[r.id] = xaNormalize(r); }); return m; })
     .catch(e => { delete xaOutingCache[key]; throw e; });
   return xaOutingCache[key];
 }
@@ -1707,9 +1728,20 @@ async function fillOutingGrades() {
 /* ==================== xARSENAL TAB ==================== */
 let xaTabChart = null;
 // Slot line under the arsenal summary (display only — never changes a grade)
-function xaSlotLine(res) {
-  const s = res.slot; if (!s || s.armAngle == null) return '';
-  return `<div class="xa-slot">${escapeHtml(s.label)} · ${Math.round(s.armAngle)}° arm angle${s.source === 'estimated' ? ' <span class="xa-muted">(est. from release)</span>' : ''}</div>`;
+// Shows the count-weighted arm angle across all graded pitches (same number as the Outing
+// Card's Overall ARM°). If the Worker graded with a different slot angle, that is noted.
+const xaSlotName = a => a < 20 ? 'Sidearm' : a < 35 ? 'Low 3/4' : a < 50 ? '3/4' : a < 60 ? 'High 3/4' : 'Overhand';
+function xaSlotLine(res, inputs) {
+  const s = res.slot || {};
+  let sum = 0, w = 0;
+  Object.values(inputs || {}).forEach(p => { if (p.armAngle != null && p.count) { sum += p.armAngle * p.count; w += p.count; } });
+  const all = w ? sum / w : null;
+  const shown = all ?? s.armAngle;
+  if (shown == null) return '';
+  const note = all != null && s.armAngle != null && Math.round(all) !== Math.round(s.armAngle)
+    ? ` <span class="xa-muted">· grades use a ${Math.round(s.armAngle)}° slot</span>` : '';
+  const est = all == null && s.source === 'estimated' ? ' <span class="xa-muted">(est. from release)</span>' : '';
+  return `<div class="xa-slot">${xaSlotName(shown)} · ${Math.round(shown)}° arm angle${all != null ? ' <span class="xa-muted">(all pitches)</span>' : ''}${est}${note}</div>`;
 }
 // Arsenal Fit: how the pitches work together (20% of the arsenal grade)
 function xaFitCard(res) {
@@ -1828,8 +1860,8 @@ async function renderXArsenalTab() {
       <div>
         <div class="xa-sum-title">xArsenal ${res.arsenalGrade} · ${res.arsenalLabel} <span class="xa-muted">— ${seasonLabel()} · graded at ${res.compLevel} level</span></div>
         <div class="xa-sum-desc">${res.description || ''}</div>
-        ${xaSlotLine(res)}
-        ${res.arsenalStuffPlus != null ? `<div class="xa-sp-line">8-Stuff+ <b class="${spClass(res.arsenalStuffPlus)}">${res.arsenalStuffPlus}</b> <span class="xa-muted">· trained on MLB run value · 100 = average</span></div>` : ''}
+        ${xaSlotLine(res, inputs)}
+        ${res.arsenalStuffPlus != null ? `<div class="xa-sp-line">8-Stuff+ <b class="${spClass(res.arsenalStuffPlus)}">${res.arsenalStuffPlus}</b> <span class="xa-muted">· 8ctane model trained on MLB run value · 100 = MLB average · not psStuff+</span></div>` : ''}
       </div>
     </div>
     ${xaFitCard(res)}
@@ -2160,7 +2192,7 @@ async function gradeOutingForCard(o) {
   const body = { hand: currentAthlete?.throws || 'R', level: currentAthlete?.level || '', veloWeighted: true, pitches: xaSeasonShape([o], 1, 0) };
   if (!body.pitches.length) return null;
   const key = JSON.stringify(body);
-  if (!xaCardCache[key]) xaCardCache[key] = api('scoreArsenal', body).catch(e => { delete xaCardCache[key]; throw e; });
+  if (!xaCardCache[key]) xaCardCache[key] = api('scoreArsenal', body).then(xaNormalize).catch(e => { delete xaCardCache[key]; throw e; });
   return xaCardCache[key];
 }
 
