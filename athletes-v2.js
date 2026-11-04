@@ -29,6 +29,7 @@ function formatDate(dateStr) {
 }
 
 let SCRIPT_URL = localStorage.getItem('8ctane_script_url') || '';
+const AI_ENABLED = false;   // flip to true (and restore the tab buttons in athletes.html) to bring the AI tabs back
 let currentAthlete = null;
 let athleteOutings = [];     // outings for the selected season (what every tab renders)
 let athleteOutingsAll = [];  // every outing for this athlete, all seasons
@@ -73,8 +74,10 @@ function renderTab(name) {
   if (name === 'locations') renderLocations();
   if (name === 'yoy')       renderYoY();
   if (name === 'report') { renderReport(); setReportSub(reportSub); }
-  if (name === 'season-insight') renderSeasonInsight();
-  if (name === 'outing-insight') initOutingInsight();
+  // AI tabs (season-insight / outing-insight) are hidden while they are reworked; renderers kept below.
+  if (AI_ENABLED && name === 'season-insight') renderSeasonInsight();
+  if (AI_ENABLED && name === 'outing-insight') initOutingInsight();
+  if (name === 'addpitches') renderAddPitches();
   if (name === 'compare') populateCompareSelectors();
   if (name === 'history') renderYearOverYear();
   if (name === 'xarsenal') renderXArsenalTab();
@@ -1817,6 +1820,35 @@ function xaWhy(r) {
   return `Graded as a <b>${r.subtype}</b>${mix}. ` + parts.join(' ');
 }
 
+// One xArsenal pitch card (used by the xArsenal tab and Add Pitches).
+// p = the shape that was sent to the Worker; opts.name / opts.color override the defaults.
+const XA_ORDER = ['velocity','veloDiff','spinRate','spinDiff','ivb','ivbDiff','hb','hbDiff','extension','vaa','spinEfficiency','pairVelo','pairIvb','pairRun','pairCut'];
+const XA_IMP_RANK = { primary:0, secondary:1, minor:2 };
+function xaCardHTML(r, p, opts = {}) {
+  const order = XA_ORDER, impRank = XA_IMP_RANK;
+  const name = opts.name || pn(r.key), color = opts.color || pc(r.key);
+  const rows = order.filter(k => r.metrics[k] && r.metrics[k].importance && r.metrics[k].score !== null)
+      .sort((a, b) => impRank[r.metrics[a].importance] - impRank[r.metrics[b].importance])
+      .map(k => { const m = r.metrics[k];
+        return `<div class="xa-mrow">
+          <div class="xa-mlbl">${XA_METRIC_LBL[k]} <span class="xa-imp xa-imp-${m.importance}">${m.importance}</span></div>
+          <div class="xa-mval">${xaValue(k, p, r)}</div>
+          <div class="xa-mbar"><div class="xa-mfill ${xaStatusCls(m.score)}" style="width:${Math.max(0, Math.min(100, (m.score - 20) / 60 * 100))}%"></div><div class="xa-mavg"></div></div>
+          <div class="xa-mscore"><b>${m.score}</b> <span>${xaShortLabel(m.score)}</span></div>
+        </div>`; }).join('');
+    const lev = (r.levers || []).map(l => `<li><b class="delta-good">+${l.gain}</b> with ${l.direction}${l.metric === 'spinEfficiency' && r.spinEffEstimated ? ' <span class="xa-muted">(estimated metric)</span>' : ''}</li>`).join('');
+    return `<div class="xa-card" style="border-top-color:${color}">
+      <div class="xa-card-hd">
+        <span class="pitch-dot" style="background:${color}"></span><span class="xa-card-name">${escapeHtml(name)}</span>
+        <span class="xa-card-score ${xaClass(r.score)}">${r.score}</span><span class="xa-card-grade">${r.grade}<br><small>${r.gradeLabel}</small></span>
+      </div>
+      ${r.stuffPlus != null ? `<div class="xa-sp-line">8-Stuff+ <b class="${spClass(r.stuffPlus)}">${r.stuffPlus}</b>${r.stuffPlusType != null ? ` <span class="xa-muted">· ${r.stuffPlusType} vs. other ${escapeHtml(r.displayType || '')}s</span>` : ''}</div>` : ''}
+      <div class="xa-why">${xaWhy(r)}</div>
+      <div class="xa-mrows">${rows}</div>
+      ${lev ? `<div class="xa-lev-hd">Biggest levers</div><ul class="xa-lev">${lev}</ul>` : '<div class="xa-lev-hd">Every key metric is already grading as good or better.</div>'}
+    </div>`;
+}
+
 async function renderXArsenalTab() {
   const el = document.getElementById('xarsenal-content');
   el.innerHTML = '<div class="ai-loading"><div class="loading-spinner"></div><p>Grading arsenal...</p></div>';
@@ -1829,31 +1861,7 @@ async function renderXArsenalTab() {
   }
   if (!res || !res.pitches.length) { el.innerHTML = '<div class="empty-state">Not enough pitch data this season to grade.</div>'; return; }
 
-  const order = ['velocity','veloDiff','spinRate','spinDiff','ivb','ivbDiff','hb','hbDiff','extension','vaa','spinEfficiency','pairVelo','pairIvb','pairRun','pairCut'];
-  const impRank = { primary:0, secondary:1, minor:2 };
-  const cards = [...res.pitches].sort((a, b) => b.score - a.score).map(r => {
-    const p = inputs[r.key];
-    const rows = order.filter(k => r.metrics[k] && r.metrics[k].importance && r.metrics[k].score !== null)
-      .sort((a, b) => impRank[r.metrics[a].importance] - impRank[r.metrics[b].importance])
-      .map(k => { const m = r.metrics[k];
-        return `<div class="xa-mrow">
-          <div class="xa-mlbl">${XA_METRIC_LBL[k]} <span class="xa-imp xa-imp-${m.importance}">${m.importance}</span></div>
-          <div class="xa-mval">${xaValue(k, p, r)}</div>
-          <div class="xa-mbar"><div class="xa-mfill ${xaStatusCls(m.score)}" style="width:${Math.max(0, Math.min(100, (m.score - 20) / 60 * 100))}%"></div><div class="xa-mavg"></div></div>
-          <div class="xa-mscore"><b>${m.score}</b> <span>${xaShortLabel(m.score)}</span></div>
-        </div>`; }).join('');
-    const lev = (r.levers || []).map(l => `<li><b class="delta-good">+${l.gain}</b> with ${l.direction}${l.metric === 'spinEfficiency' && r.spinEffEstimated ? ' <span class="xa-muted">(estimated metric)</span>' : ''}</li>`).join('');
-    return `<div class="xa-card" style="border-top-color:${pc(r.key)}">
-      <div class="xa-card-hd">
-        <span class="pitch-dot" style="background:${pc(r.key)}"></span><span class="xa-card-name">${pn(r.key)}</span>
-        <span class="xa-card-score ${xaClass(r.score)}">${r.score}</span><span class="xa-card-grade">${r.grade}<br><small>${r.gradeLabel}</small></span>
-      </div>
-      ${r.stuffPlus != null ? `<div class="xa-sp-line">8-Stuff+ <b class="${spClass(r.stuffPlus)}">${r.stuffPlus}</b>${r.stuffPlusType != null ? ` <span class="xa-muted">· ${r.stuffPlusType} vs. other ${escapeHtml(r.displayType || '')}s</span>` : ''}</div>` : ''}
-      <div class="xa-why">${xaWhy(r)}</div>
-      <div class="xa-mrows">${rows}</div>
-      ${lev ? `<div class="xa-lev-hd">Biggest levers</div><ul class="xa-lev">${lev}</ul>` : '<div class="xa-lev-hd">Every key metric is already grading as good or better.</div>'}
-    </div>`;
-  }).join('');
+  const cards = [...res.pitches].sort((a, b) => b.score - a.score).map(r => xaCardHTML(r, inputs[r.key])).join('');
 
   el.innerHTML = `
     <div class="xa-summary-card">
@@ -1894,6 +1902,287 @@ async function renderXArsenalTab() {
                  x:{ ticks:{ color:'#72747c', maxRotation:0, autoSkip:true, maxTicksLimit:10 }, grid:{ display:false } } } }
     });
   } catch (e) {}
+}
+
+/* ==================== ADD PITCHES (arsenal sandbox) ==================== */
+// Test pitches the athlete doesn't throw yet. Enter a shape (or start from the
+// Worker's suggestion or a common MLB shape), optionally drop current pitches,
+// and grade the whole arsenal through the same Worker call as the xArsenal tab.
+// Compares against the current arsenal. Nothing is saved to the Sheet.
+const AP_CODES = ['FF','SI','FC','SL','ST','CU','KC','CH','FS'];
+const AP_MAX = 3;
+let apState = { athleteId: null, season: null, adds: [], drop: new Set(), seq: 0, base: null, lastKey: null };
+
+const apNum = v => (v === '' || v === null || v === undefined || isNaN(+v)) ? null : +v;
+const apSide = arm => `${Math.abs(arm).toFixed(0)}" ${arm >= 0 ? 'arm-side' : 'glove-side'}`;
+const apSgn = n => n == null ? '' : n > 0 ? `+${n}` : n < 0 ? `${n}` : '±0';
+const apDeltaCls = n => n == null || n === 0 ? 'ap-d0' : n > 0 ? 'ap-dpos' : 'ap-dneg';
+
+// Map a Worker "add" suggestion to an app pitch code
+function apCodeFromMove(a) {
+  if (a.code && AP_CODES.includes(a.code)) return a.code;
+  const l = String(a.label || '').toLowerCase();
+  if (/sweep/.test(l)) return 'ST';
+  if (/split/.test(l)) return 'FS';
+  if (/change|kick/.test(l)) return 'CH';
+  if (/cutter|cut\b/.test(l)) return 'FC';
+  if (/sinker|2-seam|two-seam/.test(l)) return 'SI';
+  if (/4-seam|four-seam|fastball/.test(l)) return 'FF';
+  if (/knuckle|k-curve/.test(l)) return 'KC';
+  if (/curve/.test(l)) return 'CU';
+  if (/slid|slutter|gyro/.test(l)) return 'SL';
+  return null;
+}
+
+// Current arsenal + the athlete's release (a new pitch comes out of the same slot)
+async function apLoadBase() {
+  const pitches = xaSeasonShape(athleteOutings);
+  const res = pitches.length ? await getXArsenal(athleteOutings) : null;
+  const wavg = k => { let s = 0, w = 0; pitches.forEach(p => { if (p[k] != null) { s += p[k] * p.count; w += p.count; } }); return w ? +(s / w).toFixed(2) : null; };
+  const fbs = pitches.filter(p => ['FF','SI','FA','FT'].includes(p.code)).sort((a, b) => b.count - a.count);
+  const fbVelo = fbs[0]?.velocity ?? (pitches.length ? Math.max(...pitches.map(p => p.velocity || 0)) || null : null);
+  return { pitches, res, fbVelo, fbCode: fbs[0]?.code || null,
+    slot: { extension: wavg('extension'), armAngle: wavg('armAngle'), releaseHeight: wavg('releaseHeight'), releaseSide: wavg('releaseSide') } };
+}
+
+// Starting shapes for a pitch type: Worker suggestion first, then common MLB shapes
+// (shape_baselines.json clusters). MLB velo is re-centered on this athlete's fastball.
+function apPresets(code) {
+  const base = apState.base, out = [];
+  (base?.res?.moves?.add || []).forEach(a => {
+    if (apCodeFromMove(a) === code && a.target) out.push({ label: `Suggested: ${a.label} · ~${a.target.velo.toFixed(0)} mph · ${a.target.ivb.toFixed(0)}" IVB · ${apSide(a.target.hb)}`,
+      velo: +a.target.velo.toFixed(1), ivb: +a.target.ivb.toFixed(1), arm: +a.target.hb.toFixed(1) });
+  });
+  const b = (typeof SHAPE_BASELINES !== 'undefined') ? SHAPE_BASELINES[code] : null;
+  if (b && b.clusters) {
+    const mlbFB = SHAPE_BASELINES.FF?.scaler_mean?.velo || 94.5;
+    b.clusters.filter(c => c.n >= b.n_total * 0.05).sort((x, y) => y.n - x.n).forEach((c, i) => {
+      const ivb = c.centroid.vb * 12, arm = -c.centroid.hb_norm * 12;   // baselines: feet, arm-side negative (as if RHP)
+      const velo = base?.fbVelo != null ? base.fbVelo + (c.centroid.velo - mlbFB) : c.centroid.velo;
+      out.push({ label: `Common MLB shape ${i + 1} · ${ivb.toFixed(0)}" IVB · ${apSide(arm)} · ${(c.centroid.velo - mlbFB).toFixed(0)} mph vs FB${c.metrics?.whiff_pct != null ? ` · ${c.metrics.whiff_pct}% whiff in MLB` : ''}`,
+        velo: +velo.toFixed(1), ivb: +ivb.toFixed(1), arm: +arm.toFixed(1) });
+    });
+  }
+  return out;
+}
+
+function apNewRow(code) {
+  const row = { id: ++apState.seq, code, velo: null, ivb: null, arm: null, spin: null, vaa: null, usage: 12 };
+  const pre = apPresets(code)[0];
+  if (pre) Object.assign(row, { velo: pre.velo, ivb: pre.ivb, arm: pre.arm });
+  return row;
+}
+
+async function renderAddPitches() {
+  const el = document.getElementById('addpitches-content');
+  if (!el) return;
+  const sameScope = apState.athleteId === currentAthlete?.id && apState.season === profileSeason;
+  if (apState.athleteId !== currentAthlete?.id) apState = { athleteId: currentAthlete?.id, season: profileSeason, adds: [], drop: new Set(), seq: 0, base: null, lastKey: null };
+  apState.season = profileSeason;
+  el.innerHTML = '<div class="ai-loading"><div class="loading-spinner"></div><p>Grading current arsenal...</p></div>';
+  try { apState.base = await apLoadBase(); }
+  catch (e) { el.innerHTML = `<div class="empty-state">Could not load grades: ${escapeHtml(e.message)}</div>`; return; }
+  if (!apState.base.res || !apState.base.pitches.length) { el.innerHTML = '<div class="empty-state">Not enough pitch data this season to grade. Pick a season with more outings.</div>'; return; }
+  const codes = new Set(apState.base.pitches.map(p => p.key));
+  apState.drop.forEach(k => { if (!codes.has(k)) apState.drop.delete(k); });
+  if (!apState.adds.length) {
+    const firstMove = (apState.base.res.moves?.add || []).map(apCodeFromMove).find(Boolean);
+    apState.adds.push(apNewRow(firstMove || AP_CODES.find(c => !codes.has(c)) || 'CH'));
+  }
+  el.innerHTML = `
+    <div class="ap-intro">
+      <div class="ap-title">Add Pitches</div>
+      <div class="ap-sub">Try a new pitch inside ${escapeHtml(currentAthlete?.name || 'this athlete')}'s current arsenal and see how the grades move. Shapes come out of his current release (${apState.base.slot.extension != null ? apState.base.slot.extension.toFixed(1) + ' ft extension' : 'extension unknown'}${apState.base.slot.armAngle != null ? ` · ${Math.round(apState.base.slot.armAngle)}° arm angle` : ''}). Nothing here is saved.</div>
+    </div>
+    <div class="ap-cur">
+      <div class="ap-cur-hd">Current arsenal <span class="xa-muted">· ${seasonLabel()} · xArsenal ${apState.base.res.arsenalScore} · uncheck a pitch to test dropping it</span></div>
+      <div class="ap-chips">${apState.base.res.pitches.slice().sort((a, b) => b.score - a.score).map(r => `
+        <label class="ap-chip${apState.drop.has(r.key) ? ' ap-chip-off' : ''}"><input type="checkbox" ${apState.drop.has(r.key) ? '' : 'checked'} onchange="apToggleDrop('${r.key}', !this.checked)">
+          <span class="pitch-dot" style="background:${pc(r.key)}"></span>${escapeHtml(pn(r.key))} <b class="${xaClass(r.score)}">${r.score}</b></label>`).join('')}</div>
+    </div>
+    <div id="ap-rows" class="ap-rows"></div>
+    <div class="ap-actions">
+      <button class="btn-ghost" id="ap-add-btn" onclick="apAddRow()">+ Add another pitch</button>
+      <button class="btn-primary" onclick="apRun()">Grade with these changes</button>
+    </div>
+    <div id="ap-result"></div>
+    <div class="chart-footnote">Grades the shape you enter at the athlete's level against the same private benchmarks as the xArsenal tab. It can't tell you whether he can throw the pitch, command it, or keep his other pitches intact while learning it. Off-speed is graded on its gaps from the primary fastball, so adding or dropping a fastball can move the off-speed grades too. Spin and VAA are optional; leave them blank and the Worker works without them (VAA is estimated).</div>`;
+  apRenderRows();
+  if (sameScope && apState.lastKey) apRun();
+}
+
+function apRenderRows() {
+  const wrap = document.getElementById('ap-rows'); if (!wrap) return;
+  wrap.innerHTML = apState.adds.map(a => {
+    const presets = apPresets(a.code);
+    const field = (k, lbl, unit, step, ph = '') => `<label class="ap-field"><span>${lbl}</span>
+      <span class="ap-inwrap"><input type="number" step="${step}" value="${a[k] ?? ''}" placeholder="${ph}" oninput="apSet(${a.id}, '${k}', this.value)">${unit ? `<i>${unit}</i>` : ''}</span></label>`;
+    return `<div class="ap-row" style="border-left-color:${pc(a.code)}">
+      <div class="ap-row-hd">
+        <select class="sel-input ap-code" onchange="apSetCode(${a.id}, this.value)" aria-label="Pitch type">
+          ${AP_CODES.map(c => `<option value="${c}" ${c === a.code ? 'selected' : ''}>New ${pn(c)}</option>`).join('')}
+        </select>
+        <select class="sel-input ap-preset" onchange="apApplyPreset(${a.id}, this.value)" aria-label="Starting shape">
+          <option value="">Start from a shape…</option>
+          ${presets.map((p, i) => `<option value="${i}">${escapeHtml(p.label)}</option>`).join('')}
+        </select>
+        <button class="ap-remove" onclick="apRemoveRow(${a.id})" title="Remove this pitch" aria-label="Remove this pitch">✕</button>
+      </div>
+      <div class="ap-fields">
+        ${field('velo', 'Velo', 'mph', '0.1')}
+        ${field('ivb', 'IVB', 'in', '0.1')}
+        <label class="ap-field"><span>HB</span>
+          <span class="ap-inwrap"><input type="number" step="0.1" min="0" value="${a.arm == null ? '' : Math.abs(a.arm)}" oninput="apSetHB(${a.id}, this.value, null)"><i>in</i>
+          <select class="ap-dir" onchange="apSetHB(${a.id}, null, this.value)" aria-label="Break direction">
+            <option value="arm" ${a.arm == null || a.arm >= 0 ? 'selected' : ''}>arm-side</option>
+            <option value="glove" ${a.arm != null && a.arm < 0 ? 'selected' : ''}>glove-side</option>
+          </select></span></label>
+        ${field('spin', 'Spin', 'rpm', '10', 'optional')}
+        ${field('vaa', 'VAA', '°', '0.1', 'optional')}
+        ${field('usage', 'Usage', '%', '1')}
+      </div>
+      <div class="ap-row-err" id="ap-err-${a.id}"></div>
+    </div>`;
+  }).join('');
+  const btn = document.getElementById('ap-add-btn'); if (btn) btn.disabled = apState.adds.length >= AP_MAX;
+}
+
+function apStale() { const r = document.getElementById('ap-result'); if (r && r.innerHTML) r.classList.add('ap-stale'); }
+function apSet(id, k, v) { const a = apState.adds.find(x => x.id === id); if (!a) return; a[k] = apNum(v); apStale(); }
+function apSetHB(id, mag, dir) {
+  const a = apState.adds.find(x => x.id === id); if (!a) return;
+  const curDir = a.arm != null && a.arm < 0 ? 'glove' : 'arm';
+  const m = mag !== null ? apNum(mag) : (a.arm == null ? null : Math.abs(a.arm));
+  const d = dir || curDir;
+  a.arm = m == null ? null : (d === 'glove' ? -Math.abs(m) : Math.abs(m));
+  apStale();
+}
+function apSetCode(id, code) {
+  const i = apState.adds.findIndex(x => x.id === id); if (i < 0) return;
+  const keep = apState.adds[i].usage;
+  apState.adds[i] = Object.assign(apNewRow(code), { id, usage: keep });
+  apRenderRows(); apStale();
+}
+function apApplyPreset(id, idx) {
+  const a = apState.adds.find(x => x.id === id); if (!a || idx === '') return;
+  const p = apPresets(a.code)[+idx]; if (!p) return;
+  Object.assign(a, { velo: p.velo, ivb: p.ivb, arm: p.arm });
+  apRenderRows(); apStale();
+}
+function apAddRow() {
+  if (apState.adds.length >= AP_MAX) return;
+  const have = new Set([...apState.base.pitches.map(p => p.key), ...apState.adds.map(a => a.code)]);
+  apState.adds.push(apNewRow(AP_CODES.find(c => !have.has(c)) || 'CH'));
+  apRenderRows(); apStale();
+}
+function apRemoveRow(id) { apState.adds = apState.adds.filter(x => x.id !== id); apRenderRows(); apStale(); }
+function apToggleDrop(key, off) {
+  off ? apState.drop.add(key) : apState.drop.delete(key);
+  document.querySelectorAll('.ap-chip input').forEach(cb => cb.closest('.ap-chip').classList.toggle('ap-chip-off', !cb.checked));
+  apStale();
+}
+
+// Build the scenario payload: kept pitches (as-is) + new pitches at the chosen usage
+function apScenario() {
+  const base = apState.base, lefty = aiIsLefty();
+  const keep = base.pitches.filter(p => !apState.drop.has(p.key));
+  const total = keep.reduce((t, p) => t + p.count, 0) || 100;
+  const errors = {};
+  const ok = apState.adds.filter(a => {
+    const miss = ['velo', 'ivb', 'arm'].filter(k => a[k] == null);
+    if (miss.length) { errors[a.id] = 'Needs velo, IVB and HB to grade.'; return false; }
+    if (a.velo < 50 || a.velo > 105) { errors[a.id] = 'Velo should be between 50 and 105 mph.'; return false; }
+    return true;
+  });
+  const sumU = ok.reduce((t, a) => t + Math.max(0, a.usage || 0), 0);
+  const denom = Math.max(10, 100 - Math.min(sumU, 90));
+  const added = ok.map(a => ({
+    key: `${a.code}_new${a.id}`, code: a.code,
+    count: Math.max(1, Math.round(total * Math.max(1, a.usage || 0) / denom)),   // usage share drives primary-fastball choice
+    velocity: a.velo, spinRate: a.spin, ivb: a.ivb,
+    hb: +(a.arm * (lefty ? -1 : 1)).toFixed(2),   // Worker expects the RHP sign convention (stored HB); it flips lefties itself
+    extension: base.slot.extension, vaa: a.vaa,
+    armAngle: base.slot.armAngle, releaseHeight: base.slot.releaseHeight, releaseSide: base.slot.releaseSide,
+  }));
+  return { keep, added, errors };
+}
+
+async function apRun() {
+  const out = document.getElementById('ap-result'); if (!out || !apState.base) return;
+  const { keep, added, errors } = apScenario();
+  apState.adds.forEach(a => { const e = document.getElementById(`ap-err-${a.id}`); if (e) e.textContent = errors[a.id] || ''; });
+  if (!added.length && !apState.drop.size) { out.className = ''; out.innerHTML = '<div class="empty-state">Fill in at least one new pitch, or uncheck a current pitch to test dropping it.</div>'; return; }
+  if (!keep.length && !added.length) { out.className = ''; out.innerHTML = '<div class="empty-state">Keep at least one pitch in the arsenal.</div>'; return; }
+  const body = { hand: currentAthlete?.throws || 'R', level: currentAthlete?.level || '', veloWeighted: true, pitches: [...keep, ...added] };
+  const key = JSON.stringify(body);
+  apState.lastKey = key;
+  out.className = ''; out.innerHTML = '<div class="ai-loading"><div class="loading-spinner"></div><p>Grading the new arsenal...</p></div>';
+  let res;
+  try {
+    if (!xaCache[key]) xaCache[key] = api('scoreArsenal', body).then(xaNormalize).catch(e => { delete xaCache[key]; throw e; });
+    res = await xaCache[key];
+  } catch (e) { out.innerHTML = `<div class="empty-state">Could not grade this arsenal: ${escapeHtml(e.message)}</div>`; return; }
+  if (apState.lastKey !== key) return;   // a newer run started
+  out.innerHTML = apResultHTML(apState.base.res, res, added);
+}
+
+function apResultHTML(before, after, added) {
+  const newKeys = new Map(added.map(p => [p.key, p]));
+  const nameOf = k => newKeys.has(k) ? `New ${pn(newKeys.get(k).code)}` : pn(k);
+  const colorOf = k => pc(newKeys.has(k) ? newKeys.get(k).code : k);
+  const d = (a, b) => (a == null || b == null) ? null : b - a;
+  const bf = before.arsenalFit?.parts || {}, af = after.arsenalFit?.parts || {};
+  const line = (lbl, a, b, note = '') => { const dd = d(a, b); return `<tr><td>${lbl}${note ? ` <span class="xa-muted">${note}</span>` : ''}</td><td class="mono">${a ?? '—'}</td><td class="mono">${b ?? '—'}</td><td class="mono ${apDeltaCls(dd)}">${dd == null ? '—' : apSgn(dd)}</td></tr>`; };
+  const totalD = d(before.arsenalScore, after.arsenalScore);
+
+  const bByKey = Object.fromEntries(before.pitches.map(r => [r.key, r]));
+  const aByKey = Object.fromEntries(after.pitches.map(r => [r.key, r]));
+  const keys = [...new Set([...after.pitches.map(r => r.key), ...before.pitches.map(r => r.key)])]
+    .sort((x, y) => (aByKey[y]?.score ?? -1) - (aByKey[x]?.score ?? -1));
+  const pitchRows = keys.map(k => {
+    const b = bByKey[k], a = aByKey[k], isNew = newKeys.has(k), dropped = !a && apState.drop.has(k);
+    const dd = (b && a) ? a.score - b.score : null;
+    return `<tr${dropped ? ' class="ap-dropped"' : ''}><td><span class="pitch-dot" style="background:${colorOf(k)}"></span> ${escapeHtml(nameOf(k))}${isNew ? ' <span class="ap-tag">new</span>' : ''}</td>
+      <td class="mono">${b ? `${b.score} <span class="xa-muted">${b.gradeLabel}</span>` : '—'}</td>
+      <td class="mono">${a ? `<span class="${xaClass(a.score)}">${a.score}</span> <span class="xa-muted">${a.gradeLabel}</span>` : dropped ? '<span class="xa-muted">dropped</span>' : '—'}</td>
+      <td class="mono ${apDeltaCls(dd)}">${dd == null ? '' : apSgn(dd)}</td></tr>`;
+  }).join('');
+
+  const newCards = after.pitches.filter(r => newKeys.has(r.key)).map(r => xaCardHTML(r, newKeys.get(r.key), { name: nameOf(r.key), color: colorOf(r.key) })).join('');
+  const missing = added.filter(p => !aByKey[p.key]).map(p => `New ${pn(p.code)}`);
+
+  return `
+    <div class="ap-verdict">
+      <div class="ap-v-side"><div class="ap-v-lbl">Now</div><div class="ap-v-num ${xaClass(before.arsenalScore)}">${before.arsenalScore}</div><div class="ap-v-grade">${before.arsenalGrade} · ${before.arsenalLabel}</div></div>
+      <div class="ap-v-arrow ${apDeltaCls(totalD)}">${totalD == null ? '→' : apSgn(totalD)}</div>
+      <div class="ap-v-side"><div class="ap-v-lbl">With changes</div><div class="ap-v-num ${xaClass(after.arsenalScore)}">${after.arsenalScore}</div><div class="ap-v-grade">${after.arsenalGrade} · ${after.arsenalLabel}</div></div>
+    </div>
+    ${missing.length ? `<div class="ap-warn">The Worker didn't grade: ${escapeHtml(missing.join(', '))}. Check the shape.</div>` : ''}
+    <div class="ap-grid">
+      <div class="xa-fit-card">
+        <div class="xa-fit-hd">What moved</div>
+        <div class="table-scroll"><table class="data-table ap-table">
+          <thead><tr><th></th><th>Now</th><th>With changes</th><th>Change</th></tr></thead>
+          <tbody>
+            ${line('xArsenal', before.arsenalScore, after.arsenalScore)}
+            ${line('Pitch grades', before.arsenalPitchScore, after.arsenalPitchScore, '80%')}
+            ${line('Arsenal Fit', before.arsenalFit?.score, after.arsenalFit?.score, '20%')}
+            ${line('· Movement coverage', bf.coverage, af.coverage)}
+            ${line('· Platoon coverage', bf.platoon, af.platoon)}
+            ${line('· Speed layers', bf.speed, af.speed)}
+            ${line('· Redundancy', bf.redundancy, af.redundancy)}
+            ${before.arsenalStuffPlus != null || after.arsenalStuffPlus != null ? line('8-Stuff+ (arsenal)', before.arsenalStuffPlus, after.arsenalStuffPlus) : ''}
+          </tbody></table></div>
+      </div>
+      <div class="xa-fit-card">
+        <div class="xa-fit-hd">Pitch by pitch</div>
+        <div class="table-scroll"><table class="data-table ap-table">
+          <thead><tr><th>Pitch</th><th>Now</th><th>With changes</th><th>Change</th></tr></thead>
+          <tbody>${pitchRows}</tbody></table></div>
+      </div>
+    </div>
+    ${newCards ? `<div class="section-hd" style="margin-top:1.25rem">New pitch grades</div><div class="xa-cards">${newCards}</div>` : ''}
+    ${xaMovesCard(after).replace('Arsenal moves', 'Next moves with these changes')}`;
 }
 
 /* ==================== PITCH USAGE BY BATTER SIDE (Savant-style) ==================== */

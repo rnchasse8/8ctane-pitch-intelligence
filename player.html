@@ -192,8 +192,7 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
     <button class="ptab" data-tab="splits">Splits</button>
     <button class="ptab" data-tab="locations">Locations</button>
     <button class="ptab" data-tab="report">Report</button>
-    <button class="ptab" data-tab="season-insight">Season Insight</button>
-    <button class="ptab" data-tab="outing-insight">Outing Insight</button>
+    <!-- AI tabs hidden while they are reworked: Season Insight, Outing Insight -->
   </nav>
 
   <div class="player-content">
@@ -238,6 +237,7 @@ body{background:var(--bg);color:var(--text);font-family:'Barlow',sans-serif;font
 
 <script src="baselines-ref.js"></script>
 <script>
+const AI_ENABLED=false;   // flip to true to bring the AI insight tabs back
 // FIX (bug #3): this used to be `localStorage.getItem('8ctane_script_url')`
 // only. That works fine on YOUR browser because you already pasted the
 // Apps Script URL in once via athletes.html. But a shared link is, by
@@ -323,7 +323,7 @@ async function init(){
     renderHero();renderOverview();renderSplits();renderReport();populateOutingSelect();
     document.getElementById('loading').style.display='none';
     document.getElementById('app').style.display='';
-    renderSeasonInsight();
+    if(AI_ENABLED)renderSeasonInsight();   // AI insights hidden while they are reworked
   }catch(e){
     document.getElementById('loading').innerHTML=`<div style="color:#E24B4A;font-size:13px">Error: ${e.message}</div>`;
   }

@@ -1,3 +1,4 @@
+const AI_ENABLED = false;   // flip to true to bring the AI Insight tab back
 /* =============================================
    8CTANE BASEBALL — PITCH INTELLIGENCE
    app.js
@@ -391,7 +392,7 @@ function buildSingleReport(rawRows) {
   renderMovement();
   renderHardContact();
   renderLocations();
-  renderAIInsight();
+  if (AI_ENABLED) renderAIInsight();   // AI insight hidden while it is reworked
 
   document.getElementById('upload-single').style.display = 'none';
   document.getElementById('report-single').style.display = '';
