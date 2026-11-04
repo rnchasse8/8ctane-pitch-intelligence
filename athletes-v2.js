@@ -1800,8 +1800,9 @@ function xaValue(k, p, r) {
   if (k === 'spinEfficiency') return '~' + v + '%' + (r.spinEffEstimated ? ' est.' : '');
   return v;
 }
-const XA_STATUS_LBL = { elite:'Elite', above_avg:'Above avg', avg:'Average', below_avg:'Below avg', poor:'Poor' };
-const XA_STATUS_CLS = { elite:'xa-s-elite', above_avg:'xa-s-above', avg:'xa-s-avg', below_avg:'xa-s-below', poor:'xa-s-poor' };
+// Metric status comes from the metric's own 20-80 score (same cut as pitch grades), not the
+// Worker's status band, so a 65 reads "Plus" everywhere and never "Elite".
+const xaStatusCls = sc => { const g = +xaGrade(sc); return g >= 70 ? 'xa-s-elite' : g >= 55 ? 'xa-s-above' : g >= 50 ? 'xa-s-avg' : g >= 40 ? 'xa-s-below' : 'xa-s-poor'; };
 
 function xaWhy(r) {
   const ms = Object.entries(r.metrics).filter(([, m]) => m.score !== null && (m.importance === 'primary' || m.importance === 'secondary'));
@@ -1838,8 +1839,8 @@ async function renderXArsenalTab() {
         return `<div class="xa-mrow">
           <div class="xa-mlbl">${XA_METRIC_LBL[k]} <span class="xa-imp xa-imp-${m.importance}">${m.importance}</span></div>
           <div class="xa-mval">${xaValue(k, p, r)}</div>
-          <div class="xa-mbar"><div class="xa-mfill ${XA_STATUS_CLS[m.status]}" style="width:${Math.max(0, Math.min(100, (m.score - 20) / 60 * 100))}%"></div><div class="xa-mavg"></div></div>
-          <div class="xa-mscore"><b>${m.score}</b> <span>${XA_STATUS_LBL[m.status]}</span></div>
+          <div class="xa-mbar"><div class="xa-mfill ${xaStatusCls(m.score)}" style="width:${Math.max(0, Math.min(100, (m.score - 20) / 60 * 100))}%"></div><div class="xa-mavg"></div></div>
+          <div class="xa-mscore"><b>${m.score}</b> <span>${xaShortLabel(m.score)}</span></div>
         </div>`; }).join('');
     const lev = (r.levers || []).map(l => `<li><b class="delta-good">+${l.gain}</b> with ${l.direction}${l.metric === 'spinEfficiency' && r.spinEffEstimated ? ' <span class="xa-muted">(estimated metric)</span>' : ''}</li>`).join('');
     return `<div class="xa-card" style="border-top-color:${pc(r.key)}">
