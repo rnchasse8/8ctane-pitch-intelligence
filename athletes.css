@@ -1013,7 +1013,10 @@
 .xa-sp-line { font-size:.8rem; margin:.25rem 0 .1rem; }
 
 /* ---- ROSTER: dense tile grid (more athletes per row) ---- */
-#view-roster { max-width: 1400px; }
+/* body is a flex column, so auto margins shrink a view to its content (one card wide).
+   width:100% lets each view fill the screen up to its max-width. */
+.view { width: 100%; box-sizing: border-box; }
+#view-roster { max-width: 1600px; }
 .athlete-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .75rem; }
 .athlete-grid > .loading-state, .athlete-grid > .empty-state { grid-column: 1 / -1; }
 .athlete-grid .athlete-card { padding: .9rem 1rem; }
